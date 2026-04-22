@@ -19,9 +19,24 @@
   "unscheduled_qty",
   "status",
   "risk_status",
+  "flow_step",
+  "next_step_hint",
+  "blocking_reason",
+  "copy_mold_parallel",
+  "family_mold_result",
+  "primary_mould_reference",
+  "selected_moulds",
+  "schedule_explanation",
+  "family_output_summary",
   "is_urgent",
   "is_locked",
   "is_manual",
+  "actual_status",
+  "actual_progress_qty",
+  "actual_start_time",
+  "actual_end_time",
+  "delay_minutes",
+  "last_execution_sync_on",
   "notes",
   "segments"
  ],
@@ -103,7 +118,7 @@
    "fieldtype": "Select",
    "in_list_view": 1,
    "label": "Status",
-   "options": "\nDraft\nPlanned\nRisk\nApproved\nSynced\nReleased\nBlocked"
+   "options": "\nDraft\nPlanned\nRisk\nApproved\nWork Order Proposed\nShift Proposed\nApplied\nBlocked"
   },
   {
    "fieldname": "risk_status",
@@ -111,6 +126,60 @@
    "in_list_view": 1,
    "label": "Risk Status",
    "options": "\nNormal\nAttention\nCritical\nBlocked"
+  },
+  {
+   "fieldname": "flow_step",
+   "fieldtype": "Data",
+   "label": "Flow Step",
+   "read_only": 1
+  },
+  {
+   "fieldname": "next_step_hint",
+   "fieldtype": "Data",
+   "label": "Next Step Hint",
+   "read_only": 1
+  },
+  {
+   "fieldname": "blocking_reason",
+   "fieldtype": "Small Text",
+   "label": "Blocking Reason",
+   "read_only": 1
+  },
+  {
+   "fieldname": "copy_mold_parallel",
+   "fieldtype": "Check",
+   "label": "Copy Mold Parallel",
+   "read_only": 1
+  },
+  {
+   "fieldname": "family_mold_result",
+   "fieldtype": "Check",
+   "label": "Family Mold Result",
+   "read_only": 1
+  },
+  {
+   "fieldname": "primary_mould_reference",
+   "fieldtype": "Data",
+   "label": "Primary Mould Reference",
+   "read_only": 1
+  },
+  {
+   "fieldname": "selected_moulds",
+   "fieldtype": "Small Text",
+   "label": "Selected Moulds",
+   "read_only": 1
+  },
+  {
+   "fieldname": "schedule_explanation",
+   "fieldtype": "Small Text",
+   "label": "Schedule Explanation",
+   "read_only": 1
+  },
+  {
+   "fieldname": "family_output_summary",
+   "fieldtype": "Small Text",
+   "label": "Family Output Summary",
+   "read_only": 1
   },
   {
    "fieldname": "is_urgent",
@@ -126,6 +195,43 @@
    "fieldname": "is_manual",
    "fieldtype": "Check",
    "label": "Manual"
+  },
+  {
+   "fieldname": "actual_status",
+   "fieldtype": "Select",
+   "label": "Actual Status",
+   "options": "\nNot Started\nRunning\nCompleted\nDelayed\nSlow Progress\nNo Recent Update\nOverproduced",
+   "read_only": 1
+  },
+  {
+   "fieldname": "actual_progress_qty",
+   "fieldtype": "Float",
+   "label": "Actual Progress Qty",
+   "read_only": 1
+  },
+  {
+   "fieldname": "actual_start_time",
+   "fieldtype": "Datetime",
+   "label": "Actual Start Time",
+   "read_only": 1
+  },
+  {
+   "fieldname": "actual_end_time",
+   "fieldtype": "Datetime",
+   "label": "Actual End Time",
+   "read_only": 1
+  },
+  {
+   "fieldname": "delay_minutes",
+   "fieldtype": "Float",
+   "label": "Delay Minutes",
+   "read_only": 1
+  },
+  {
+   "fieldname": "last_execution_sync_on",
+   "fieldtype": "Datetime",
+   "label": "Last Execution Sync On",
+   "read_only": 1
   },
   {
    "fieldname": "notes",

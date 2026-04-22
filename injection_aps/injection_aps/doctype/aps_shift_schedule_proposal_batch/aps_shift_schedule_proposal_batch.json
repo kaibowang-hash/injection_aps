@@ -1,33 +1,36 @@
 {
  "actions": [],
  "allow_rename": 1,
- "autoname": "APS-RUN-.#####",
+ "autoname": "APS-SSP-.#####",
  "doctype": "DocType",
  "engine": "InnoDB",
  "field_order": [
+  "planning_run",
   "company",
   "plant_floor",
-  "planning_date",
-  "horizon_days",
-  "horizon_start",
-  "horizon_end",
-  "run_type",
+  "work_order_proposal_batch",
+  "proposal_date",
   "status",
   "approval_state",
   "approved_by",
   "approved_on",
-  "total_net_requirement_qty",
-  "total_scheduled_qty",
-  "total_unscheduled_qty",
-  "exception_count",
-  "result_count",
-  "notes"
+  "proposal_count",
+  "applied_count",
+  "notes",
+  "items"
  ],
  "fields": [
   {
-   "fieldname": "company",
+   "fieldname": "planning_run",
    "fieldtype": "Link",
    "in_list_view": 1,
+   "label": "Planning Run",
+   "options": "APS Planning Run",
+   "reqd": 1
+  },
+  {
+   "fieldname": "company",
+   "fieldtype": "Link",
    "label": "Company",
    "options": "Company",
    "reqd": 1
@@ -35,40 +38,21 @@
   {
    "fieldname": "plant_floor",
    "fieldtype": "Link",
-   "in_list_view": 1,
    "label": "Plant Floor",
    "options": "Plant Floor"
   },
   {
+   "fieldname": "work_order_proposal_batch",
+   "fieldtype": "Link",
+   "label": "Work Order Proposal Batch",
+   "options": "APS Work Order Proposal Batch"
+  },
+  {
    "default": "Today",
-   "fieldname": "planning_date",
+   "fieldname": "proposal_date",
    "fieldtype": "Date",
-   "in_list_view": 1,
-   "label": "Planning Date",
+   "label": "Proposal Date",
    "reqd": 1
-  },
-  {
-   "default": "14",
-   "fieldname": "horizon_days",
-   "fieldtype": "Int",
-   "label": "Horizon Days"
-  },
-  {
-   "fieldname": "horizon_start",
-   "fieldtype": "Datetime",
-   "label": "Horizon Start"
-  },
-  {
-   "fieldname": "horizon_end",
-   "fieldtype": "Datetime",
-   "label": "Horizon End"
-  },
-  {
-   "default": "Trial",
-   "fieldname": "run_type",
-   "fieldtype": "Select",
-   "label": "Run Type",
-   "options": "\nTrial\nFormal\nLocal Replan\nMachine Replan"
   },
   {
    "default": "Draft",
@@ -76,7 +60,7 @@
    "fieldtype": "Select",
    "in_list_view": 1,
    "label": "Status",
-   "options": "\nDraft\nPlanned\nApproved\nWork Order Proposed\nShift Proposed\nApplied\nClosed"
+   "options": "\nDraft\nReady For Review\nPartially Reviewed\nReviewed\nApplied\nCancelled"
   },
   {
    "default": "Pending",
@@ -100,44 +84,32 @@
    "read_only": 1
   },
   {
-   "fieldname": "total_net_requirement_qty",
-   "fieldtype": "Float",
-   "label": "Total Planning Qty",
-   "read_only": 1
-  },
-  {
-   "fieldname": "total_scheduled_qty",
-   "fieldtype": "Float",
-   "label": "Total Scheduled Qty",
-   "read_only": 1
-  },
-  {
-   "fieldname": "total_unscheduled_qty",
-   "fieldtype": "Float",
-   "label": "Total Unscheduled Qty",
-   "read_only": 1
-  },
-  {
-   "fieldname": "exception_count",
+   "fieldname": "proposal_count",
    "fieldtype": "Int",
-   "label": "Exception Count",
+   "label": "Proposal Count",
    "read_only": 1
   },
   {
-   "fieldname": "result_count",
+   "fieldname": "applied_count",
    "fieldtype": "Int",
-   "label": "Result Count",
+   "label": "Applied Count",
    "read_only": 1
   },
   {
    "fieldname": "notes",
    "fieldtype": "Small Text",
    "label": "Notes"
+  },
+  {
+   "fieldname": "items",
+   "fieldtype": "Table",
+   "label": "Shift Schedule Proposals",
+   "options": "APS Shift Schedule Proposal Item"
   }
  ],
  "links": [],
  "module": "Injection APS",
- "name": "APS Planning Run",
+ "name": "APS Shift Schedule Proposal Batch",
  "permissions": [
   {
    "create": 1,
@@ -168,14 +140,6 @@
    "print": 1,
    "read": 1,
    "report": 1,
-   "role": "Sales User",
-   "share": 1
-  },
-  {
-   "export": 1,
-   "print": 1,
-   "read": 1,
-   "report": 1,
    "role": "Stock Manager",
    "share": 1
   }
@@ -184,3 +148,4 @@
  "sort_order": "DESC",
  "track_changes": 1
 }
+

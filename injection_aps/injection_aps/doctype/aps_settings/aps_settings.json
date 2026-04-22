@@ -11,6 +11,10 @@
   "default_setup_minutes",
   "default_first_article_minutes",
   "default_hourly_capacity_qty",
+  "minimum_parallel_split_qty",
+  "minimum_run_window_hours",
+  "mold_change_penalty_minutes",
+  "missing_cycle_fallback_seconds",
   "item_food_grade_field",
   "item_first_article_field",
   "item_color_field",
@@ -74,6 +78,30 @@
    "fieldname": "default_hourly_capacity_qty",
    "fieldtype": "Float",
    "label": "Default Hourly Capacity Qty"
+  },
+  {
+   "default": "0",
+   "fieldname": "minimum_parallel_split_qty",
+   "fieldtype": "Float",
+   "label": "Minimum Parallel Split Qty"
+  },
+  {
+   "default": "1",
+   "fieldname": "minimum_run_window_hours",
+   "fieldtype": "Float",
+   "label": "Minimum Run Window Hours"
+  },
+  {
+   "default": "30",
+   "fieldname": "mold_change_penalty_minutes",
+   "fieldtype": "Float",
+   "label": "Mold Change Penalty Minutes"
+  },
+  {
+   "default": "60",
+   "fieldname": "missing_cycle_fallback_seconds",
+   "fieldtype": "Float",
+   "label": "Missing Cycle Fallback Seconds"
   },
   {
    "default": "custom_food_grade",

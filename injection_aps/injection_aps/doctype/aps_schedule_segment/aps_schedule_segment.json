@@ -9,11 +9,29 @@
   "end_time",
   "planned_qty",
   "sequence_no",
+  "lane_key",
+  "parallel_group",
+  "family_group",
+  "segment_kind",
+  "primary_item_code",
+  "co_product_item_code",
   "setup_minutes",
   "changeover_minutes",
   "mould_reference",
+  "schedule_explanation",
+  "manual_change_note",
+  "segment_note",
   "risk_flags",
   "segment_status",
+  "linked_work_order",
+  "linked_work_order_scheduling",
+  "linked_scheduling_item",
+  "actual_status",
+  "actual_completed_qty",
+  "actual_start_time",
+  "actual_end_time",
+  "delay_minutes",
+  "last_execution_sync_on",
   "color_code",
   "material_code",
   "is_locked",
@@ -61,6 +79,39 @@
    "label": "Sequence No"
   },
   {
+   "fieldname": "lane_key",
+   "fieldtype": "Data",
+   "label": "Lane Key"
+  },
+  {
+   "fieldname": "parallel_group",
+   "fieldtype": "Data",
+   "label": "Parallel Group"
+  },
+  {
+   "fieldname": "family_group",
+   "fieldtype": "Data",
+   "label": "Family Group"
+  },
+  {
+   "fieldname": "segment_kind",
+   "fieldtype": "Select",
+   "label": "Segment Kind",
+   "options": "\nPrimary\nFamily Co-Product\nManual"
+  },
+  {
+   "fieldname": "primary_item_code",
+   "fieldtype": "Link",
+   "label": "Primary Item Code",
+   "options": "Item"
+  },
+  {
+   "fieldname": "co_product_item_code",
+   "fieldtype": "Link",
+   "label": "Co-Product Item Code",
+   "options": "Item"
+  },
+  {
    "fieldname": "setup_minutes",
    "fieldtype": "Float",
    "label": "Setup Minutes"
@@ -76,6 +127,21 @@
    "label": "Mould Reference"
   },
   {
+   "fieldname": "schedule_explanation",
+   "fieldtype": "Small Text",
+   "label": "Schedule Explanation"
+  },
+  {
+   "fieldname": "manual_change_note",
+   "fieldtype": "Small Text",
+   "label": "Manual Change Note"
+  },
+  {
+   "fieldname": "segment_note",
+   "fieldtype": "Small Text",
+   "label": "Segment Note"
+  },
+  {
    "fieldname": "risk_flags",
    "fieldtype": "Small Text",
    "label": "Risk Flags"
@@ -85,7 +151,61 @@
    "fieldtype": "Select",
    "in_list_view": 1,
    "label": "Segment Status",
-   "options": "\nPlanned\nRisk\nApproved\nSynced\nReleased\nCompleted\nBlocked"
+   "options": "\nPlanned\nRisk\nApproved\nWork Order Proposed\nShift Proposed\nApplied\nCompleted\nBlocked"
+  },
+  {
+   "fieldname": "linked_work_order",
+   "fieldtype": "Link",
+   "label": "Linked Work Order",
+   "options": "Work Order"
+  },
+  {
+   "fieldname": "linked_work_order_scheduling",
+   "fieldtype": "Link",
+   "label": "Linked Work Order Scheduling",
+   "options": "Work Order Scheduling"
+  },
+  {
+   "fieldname": "linked_scheduling_item",
+   "fieldtype": "Data",
+   "label": "Linked Scheduling Item"
+  },
+  {
+   "fieldname": "actual_status",
+   "fieldtype": "Select",
+   "label": "Actual Status",
+   "options": "\nNot Started\nRunning\nCompleted\nDelayed\nSlow Progress\nNo Recent Update\nOverproduced",
+   "read_only": 1
+  },
+  {
+   "fieldname": "actual_completed_qty",
+   "fieldtype": "Float",
+   "label": "Actual Completed Qty",
+   "read_only": 1
+  },
+  {
+   "fieldname": "actual_start_time",
+   "fieldtype": "Datetime",
+   "label": "Actual Start Time",
+   "read_only": 1
+  },
+  {
+   "fieldname": "actual_end_time",
+   "fieldtype": "Datetime",
+   "label": "Actual End Time",
+   "read_only": 1
+  },
+  {
+   "fieldname": "delay_minutes",
+   "fieldtype": "Float",
+   "label": "Delay Minutes",
+   "read_only": 1
+  },
+  {
+   "fieldname": "last_execution_sync_on",
+   "fieldtype": "Datetime",
+   "label": "Last Execution Sync On",
+   "read_only": 1
   },
   {
    "fieldname": "color_code",

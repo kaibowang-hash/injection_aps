@@ -1,0 +1,114 @@
+{
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "result_reference",
+  "item_code",
+  "customer",
+  "required_delivery_date",
+  "action",
+  "proposed_qty",
+  "existing_work_order",
+  "existing_qty",
+  "target_work_order",
+  "target_start_time",
+  "target_end_time",
+  "review_status",
+  "review_note"
+ ],
+ "fields": [
+  {
+   "fieldname": "result_reference",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "APS Result",
+   "options": "APS Schedule Result",
+   "reqd": 1
+  },
+  {
+   "fieldname": "item_code",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Item Code",
+   "options": "Item",
+   "reqd": 1
+  },
+  {
+   "fieldname": "customer",
+   "fieldtype": "Link",
+   "label": "Customer",
+   "options": "Customer"
+  },
+  {
+   "fieldname": "required_delivery_date",
+   "fieldtype": "Date",
+   "label": "Required Delivery Date"
+  },
+  {
+   "fieldname": "action",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Action",
+   "options": "\nNew\nIncrease\nDecrease\nCancel\nKeep Existing",
+   "reqd": 1
+  },
+  {
+   "fieldname": "proposed_qty",
+   "fieldtype": "Float",
+   "in_list_view": 1,
+   "label": "Proposed Qty",
+   "reqd": 1
+  },
+  {
+   "fieldname": "existing_work_order",
+   "fieldtype": "Link",
+   "label": "Existing Work Order",
+   "options": "Work Order"
+  },
+  {
+   "fieldname": "existing_qty",
+   "fieldtype": "Float",
+   "label": "Existing Qty",
+   "read_only": 1
+  },
+  {
+   "fieldname": "target_work_order",
+   "fieldtype": "Link",
+   "label": "Target Work Order",
+   "options": "Work Order",
+   "read_only": 1
+  },
+  {
+   "fieldname": "target_start_time",
+   "fieldtype": "Datetime",
+   "label": "Target Start Time"
+  },
+  {
+   "fieldname": "target_end_time",
+   "fieldtype": "Datetime",
+   "label": "Target End Time"
+  },
+  {
+   "default": "Pending",
+   "fieldname": "review_status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Review Status",
+   "options": "\nPending\nApproved\nRejected\nApplied\nSkipped"
+  },
+  {
+   "fieldname": "review_note",
+   "fieldtype": "Small Text",
+   "label": "Review Note"
+  }
+ ],
+ "istable": 1,
+ "links": [],
+ "module": "Injection APS",
+ "name": "APS Work Order Proposal Item",
+ "permissions": [],
+ "sort_field": "idx",
+ "sort_order": "ASC"
+}
+

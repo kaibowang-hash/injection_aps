@@ -9,7 +9,11 @@ required_apps = ["erpnext", "zelin_pp", "light_mes"]
 
 doctype_js = {
 	"APS Planning Run": "public/js/aps_planning_run.js",
+	"APS Work Order Proposal Batch": "public/js/aps_work_order_proposal_batch.js",
+	"APS Shift Schedule Proposal Batch": "public/js/aps_shift_schedule_proposal_batch.js",
 	"Customer Delivery Schedule": "public/js/customer_delivery_schedule.js",
+	"APS Schedule Import Batch": "public/js/aps_schedule_import_batch.js",
+	"APS Release Batch": "public/js/aps_release_batch.js",
 }
 
 after_install = "injection_aps.install.after_install"

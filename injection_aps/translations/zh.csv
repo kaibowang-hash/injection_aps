@@ -308,14 +308,14 @@ Freeze Days cannot be negative.,冻结天数不能为负数。
 Horizon End cannot be earlier than Horizon Start.,计划结束时间不能早于开始时间。
 Segment end time cannot be earlier than start time.,排程段结束时间不能早于开始时间。
 "Result {0} has risk state {1} and unscheduled qty {2}.",排程结果 {0} 的风险状态为 {1}，且仍有未排数量 {2}。
-Review the planned sequence, capacity and frozen segments.,请检查排程顺序、产能和冻结段设置。
+"Review the planned sequence, capacity and frozen segments.",请检查排程顺序、产能和冻结段设置。
 "Demand {0} - available stock {1} - open work orders {2} + safety gap {3} - overstock suppression {4}; minimum batch {5}; planning qty {6}.","需求 {0} - 可用库存 {1} - 未完工工单 {2} + 安全库存缺口 {3} - 超库存抑制 {4}；最小经济批量 {5}；建议排产数量 {6}。"
 "No eligible APS machine capability rows were found for {0}.",产品 {0} 未找到可用的 APS 机台能力配置。
 Maintain APS Machine Capability or relax mould-machine constraints.,请维护 APS 机台能力配置，或放宽模具机台匹配限制。
 "Workstation {0} risk category {1} cannot run FDA requirement for {2}.",机台 {0} 的风险类别 {1} 不允许排产 FDA 要求产品 {2}。
 Select an FDA-capable workstation or change the risk mapping.,请选择 FDA 合规机台，或调整风险类别映射。
 "Only {0} of {1} can be scheduled before the current horizon for {2}.",在当前计划视窗内，产品 {2} 仅能排入 {0}/{1}。
-Extend the horizon, rebalance machines or split the requirement.,请延长计划视窗、平衡机台负荷或拆分需求。
+"Extend the horizon, rebalance machines or split the requirement.",请延长计划视窗、平衡机台负荷或拆分需求。
 "Color transition {0} -> {1} has penalty {2}.",颜色从 {0} 切换到 {1} 的换色惩罚为 {2}。
 Group similar colors to reduce changeover cost.,建议按相近颜色顺排，减少换色损失。
 "Material changeover is required on workstation {0}.",机台 {0} 需要换料。
@@ -335,3 +335,542 @@ Skipped Rows,跳过行数
 Additional warnings,其余预警
 "Item reference {0} could not be resolved to an Item record.",物料引用 {0} 无法解析到有效的物料档案。
 "Skipped {0} {1} because item reference {2} could not be resolved to an Item record.","已跳过 {0} {1}，因为物料引用 {2} 无法解析到有效的物料档案。"
+(blank),（空）
+(none),（无）
+APS Result,APS 结果
+APS Segment,APS 排程段
+APS Shift Proposal {0},APS 白夜班建议批次 {0}
+APS Shift Schedule Proposal Item,APS 白夜班排产建议明细
+APS Work Order Proposal Batch,APS 工单建议批次
+APS Work Order Proposal Item,APS 工单建议明细
+APS is processing {0}...,APS 正在处理 {0}...
+APS is processing...,APS 正在处理中...
+APS is still processing the last request. Please wait.,APS 上一笔请求仍在处理中，请稍候。
+APS is still processing the previous request. Please wait.,APS 上一笔操作尚未完成，请稍候。
+APS processing failed. Please review the error and try again.,APS 处理失败，请检查错误后重试。
+"APS skipped automatic action {0} for result {1}.",APS 已跳过结果 {1} 的自动动作 {0}。
+"APS split {0} across {1} mold-machine lanes to protect delivery.",APS 为保证交付，将 {0} 拆分到 {1} 条模具-机台产线并行排产。
+"APS stays as a planning layer. Formal documents are created only after proposal review: work orders first, then white / night shift scheduling, then execution feedback rolls back into APS.",APS 保持为计划层。只有在建议审核通过后才会生成正式单据：先工单，再白班/晚班排产，最后再把执行反馈回写 APS。
+APS trial run created.,APS 试算已创建。
+APS trial run created. Redirecting to the run form...,APS 试算已创建，正在跳转到运算单。
+Action,动作
+"Action {0} requires manual handling to preserve traceability.",动作 {0} 需要人工处理，以保留完整追溯。
+Actions,操作
+Active,生效中
+Active Versions,生效版本
+Actual,实际
+Actual Completed Qty,实际完成数量
+Actual End Time,实际结束时间
+Actual Progress Qty,实际完成量
+Actual Qty,实际数量
+Actual Start Time,实际开始时间
+Actual Status,实际状态
+Added,新增
+Adjust sequence or machine assignment before formal approval.,请在正式审批前调整排程顺序或机台分配。
+Advance,提前
+Advanced,提前
+"All candidate lanes for {0} were blocked by mold, FDA or setup constraints.",产品 {0} 的所有候选产线均被模具、FDA 或准备约束阻断。
+Analyzed,已分析
+Analyzing insert order impact...,正在分析插单影响...
+Applied,已应用
+Applied Count,已应用数量
+Applied Logs,应用日志
+"Applied to formal Work Order Scheduling {0}.",已应用到正式工单排产单 {0}。
+Apply,应用
+Apply Shift Schedule Proposals,应用白夜班排产建议
+Apply Work Order Proposals,应用工单建议
+Apply a work order proposal batch before generating shift schedule proposals.,请先应用工单建议批次，再生成白夜班排产建议。
+Apply formal documents,应用正式单据
+Applying manual override...,正在应用人工 override...
+Applying manual schedule adjustment...,正在应用人工排程调整...
+Applying reviewed white / night shift proposals...,正在应用已审核的白班/晚班建议...
+Applying reviewed work order proposals...,正在应用已审核的工单建议...
+Approval State,审批状态
+Approve Run,审批 Run
+Approve the APS Planning Run before generating work order proposals.,请先审批 APS 运算单，再生成工单建议。
+Approved,已审批
+Approving planning run...,正在审批 APS 运算...
+Avoid short runs immediately after a mould change when future FC can be batched.,如果后续 FC 可合批，建议避免换模后立刻只排很短的一批。
+B,B
+Batch,批次
+Blocked / Risk Demands,阻断 / 风险需求
+Blocking Reason,阻断原因
+Blue,蓝色
+Cancel,取消
+Cancelled,已取消
+Cavity,穴数
+"Check Mold status, Mold Product mapping and submitted mold master data.",请检查模具状态、Mold Product 映射和已提交的模具主数据。
+Choose Planning Run,选择 APS 运算
+Choose Run,选择运算单
+Choose another workstation or maintain a non-blocking color transition.,请改选其他机台，或维护非阻断型换色规则。
+Close,关闭
+Closed,已关闭
+Co-Product Item Code,联产物料编码
+Code,编码
+Color,颜色
+"Color transition {0} -> {1} is configured as blocking.",颜色切换 {0} -> {1} 被配置为阻断。
+Company,公司
+Comparing schedule version...,正在比较排期版本...
+Completed,已完成
+Confirm contamination controls and approval before execution.,执行前请确认防污染措施和审批已完成。
+Consider batching this item with the next FC window if delivery promise allows.,如果交付允许，建议将该物料与下一版 FC 合批生产。
+Continue with manual override?,是否继续执行人工 override？
+Copy Mold Parallel,复制模并行
+"Covered {0} by prior Family Mold co-production.",已由前序 Family Mold 联产覆盖 {0}。
+Create Trial Run,创建 APS 试算
+Create residual replan instead of overwriting frozen shift scheduling.,请改做残量重排，不要覆盖已冻结的正式班次排产。
+Creating APS trial run...,正在创建 APS 试算...
+Critical,严重
+Critical / Blocked,严重 / 已阻断
+Current Step,当前步骤
+Current live version volume,当前生效版本总量
+Customer,客户
+Customer Ref,客户参考号
+Customer Short Name Field,客户简称字段
+"Cycle {0}s; cavities/output {1}/{2}.",周期 {0} 秒；穴数/产出 {1}/{2}。
+Days,天
+Decrease,减量
+Decrease Qty,减少数量
+Default Company,默认公司
+Default First Article Minutes,默认首件确认分钟数
+Default Hourly Capacity Qty,默认小时产能
+Default Plant Floor,默认生产车间
+Default Setup Minutes,默认准备时间(分钟)
+Delay,延期
+Delay Minutes,延误分钟数
+Delayed,已延误
+Delta quantity was split into a new APS work order instead of rewriting the existing one.,增量已拆分为新的 APS 工单，而不是直接改写现有工单。
+Demand / net requirement rebuilt.,需求池 / 净需求已重建。
+Demand Sources,需求来源
+Demand pool and net requirement rebuilt.,需求池和净需求已重建。
+Demand pool and net requirements rebuilt.,需求池和净需求已重建。
+"Demand pool, stock, WIP, safety stock and minimum batch uplift are compressed here. Rebuild from the active schedule, then push the filtered context straight into a trial run.",这里集中展示需求池、库存、在制、安全库存和最小经济批量补齐结果。请从生效排期重建后，再把筛选上下文直接推进到 Trial Run。
+Disabled,已禁用
+Draft,草稿
+"Drag a segment to another qualified machine lane or in front of another segment. APS will preview the move against tonnage, FDA, mold usage, family co-production and frozen constraints before saving.",可将排程段拖到其他合格机台，或拖到另一段之前。保存前 APS 会先校验吨位、FDA、模具占用、Family 联产和冻结约束。
+Drawing,图纸
+Effective,有效
+Effective Rows,有效行数
+End Time,结束时间
+Exec,执行
+Execution,执行
+Execution feedback synced.,执行反馈已同步。
+Execution feedback synced. Refreshing center...,执行反馈已同步，正在刷新中心...
+"Execution status for result {0} is {1}.",结果 {0} 的执行状态为 {1}。
+Existing Qty,现有数量
+Existing Work Order,现有工单
+Existing Work Order linked to APS result without qty rewrite.,已将现有工单绑定到 APS 结果，不改写工单数量。
+Explanation,说明
+"Extend the horizon, release additional copy molds or split the requirement.",请延长计划视窗、释放更多复制模，或拆分该需求。
+F,F
+FDA,FDA
+Failed,失败
+Failed to load proposal / execution center.,建议 / 执行中心加载失败。
+Family,Family
+Family Co-Product,Family 联产
+Family Co-Product segment cannot be adjusted directly. Move the primary segment instead.,Family 联产段不能直接调整，请改动主段。
+Family Group,Family 组
+Family Mold,Family Mold
+Family Mold Result,Family Mold 结果
+"Family Mold co-produces {0} together with {1}.",Family Mold 会与 {1} 同步联产 {0}。
+Family Output Summary,Family 联产汇总
+Fix mold master blockers before applying work order proposals.,请先处理模具主数据阻断项，再应用工单建议。
+Fix mold master blockers before generating work order proposals.,请先处理模具主数据阻断项，再生成工单建议。
+Flow,流程
+Flow Step,流程步骤
+Formal Apply Logs,正式落地日志
+Formal Import + Demand Rebuild,正式导入并重建需求
+"Formal Work Order Scheduling updated.",正式工单排产单已更新。
+"Formal Work Order {0} created by APS review flow.",正式工单 {0} 已由 APS 审核流程创建。
+Formal work order / shift scheduling apply logs,正式工单 / 白夜班排产应用日志
+Formal work orders / shift schedulings have not been applied yet.,正式工单 / 白夜班排产尚未应用。
+Formal work orders created.,正式工单已创建。
+Formalized Results,已转正式流程结果
+Freeze Days,冻结天数
+Future Batch Hint,未来合批建议
+Gantt,Gantt
+Generate APS Trial Run,生成 APS 试算
+Generate Shift Proposals,生成白夜班建议
+Generate Shift Schedule Proposals,生成白夜班排产建议
+Generate WO Proposals,生成工单建议
+Generate Work Order Proposals,生成工单建议
+Generate a manual replan suggestion if the formal shift schedule needs to change.,如果正式班次排产需要变更，请生成一条人工重排建议。
+Generate proposal rows first.,请先生成建议行。
+Generate shift proposal rows first.,请先生成白夜班建议行。
+"Generated from APS Planning Run {0}. Review each row before formal Work Order creation.",由 APS 运算 {0} 生成。请逐行审核后再创建正式工单。
+"Generated from APS work order proposal batch {0}. Review by date / shift before writing formal Work Order Scheduling.",由 APS 工单建议批次 {0} 生成。请按日期 / 班次审核后再写入正式工单排产单。
+Generating white / night shift proposal batch...,正在生成白班 / 晚班建议批次...
+Generating work order proposal batch...,正在生成工单建议批次...
+Global,全局
+High,高
+Impact Summary,影响摘要
+Import Batch,导入批次
+Import has not been completed yet.,导入尚未完成。
+Imported,已导入
+Imported Rows,导入行数
+Importing customer schedule...,正在导入客户排期...
+Importing schedule and rebuilding demand / net requirements...,正在导入排期并重建需求 / 净需求...
+Increase,增量
+Increased,增加
+Info,信息
+Insert Order,插单
+Insert Order Impact,插单影响
+Item,物料
+Item Code,物料编码
+Item Color Field,物料颜色字段
+Item First Article Field,物料首件字段
+Item Food Grade Field,物料食品级字段
+Item Material Field,物料材料字段
+Item Max Stock Field,物料最大库存字段
+Item Min Batch Field,物料最小批量字段
+Item Safety Stock Field,物料安全库存字段
+"Item {0} belongs to item group {1}. Injection APS only schedules {2}.",物料 {0} 属于物料组 {1}。注塑 APS 仅排产 {2}。
+"Item {0} has no approved Mold / Mold Product master data for APS scheduling.",物料 {0} 缺少已批准的 Mold / Mold Product 主数据，无法正式 APS 排产。
+Keep Existing,保留现有工单
+L,L
+Lane,产线
+Lane Key,产线键
+Lanes,产线数
+Last Execution Sync On,最近执行同步时间
+Latest imports,最近导入
+Linked Scheduling Item,关联排产明细
+Linked Work Order,关联工单
+Linked Work Order Scheduling,关联工单排产单
+Loading proposal / execution center...,正在加载建议 / 执行中心...
+Loading segment detail...,正在加载排程段详情...
+Locked,已锁定
+Low,低
+Machine,机台
+Machine / Mold Schedule Board,机台 / 模具排程看板
+Machine Exception,机台异常
+Maintain Mold / Mold Product master data before formal APS approval.,请先维护 Mold / Mold Product 主数据，再执行正式 APS 审批。
+Maintain Mold Product cycle_time_seconds and output_qty for more accurate scheduling.,请维护 Mold Product 的 cycle_time_seconds 和 output_qty，以提高排程准确度。
+Manual Change Note,人工改排原因
+Manual FDA override was applied.,已应用人工 FDA override。
+Manual Move Blocked,人工移动被阻止
+Manual adjustment applied.,人工排程调整已应用。
+Manual adjustment applied. Refreshing Gantt...,人工排程调整已应用，正在刷新 Gantt...
+Manual adjustment is blocked.,人工排程调整被阻止。
+"Manual adjustment placed {0} on {1} with FDA override.",人工调整已将 {0} 放到 {1}，并采用 FDA override。
+Manual move preview is ready.,人工移动预检已完成。
+"Manual move to {0} with mold {1}.",人工移动到 {0}，使用模具 {1}。
+"Manual override accepted FDA risk on workstation {0}.",人工 override 已接受机台 {0} 的 FDA 风险。
+Manual override applied.,人工 override 已应用。
+Manual override applied. Refreshing Gantt...,人工 override 已应用，正在刷新 Gantt...
+Manufacture Entry,生产入库单
+Material,材料
+Medium,中
+Minimum Parallel Split Qty,最小并行拆分数量
+Minimum Run Window Hours,最小连续排产窗口(小时)
+Missing Cycle Fallback Seconds,缺少周期时的回退秒数
+Modified,修改时间
+Mold,模具
+Mold Basis,模具依据
+Mold Change Penalty Minutes,换模惩罚分钟数
+"Mold changeover is required on workstation {0}.",机台 {0} 需要换模。
+"Mold {0} is currently {1}.",模具 {0} 当前状态为 {1}。
+"Mold {0} is missing a valid cycle time or output qty; APS used fallback cycle seconds.",模具 {0} 缺少有效周期或产出数量；APS 已使用回退周期秒数估算。
+"Mold {0} is missing cycle time or effective output qty.",模具 {0} 缺少周期时间或有效产出数量。
+"Mold {0} is not available from Mold Product master data for {1}.",模具 {0} 未在 {1} 的 Mold Product 主数据中生效。
+"Mold {0} on {1}; setup {2} min; hourly capacity {3}.",模具 {0} 在机台 {1}；准备时间 {2} 分钟；小时产能 {3}。
+Monitor Execution Drift,监控执行偏差
+Monitor execution feedback,监控执行反馈
+Move segment to {0} with mold {1}?,是否将该排程段移动到 {0} 并使用模具 {1}？
+"Moved segment would overlap the target sequence anchor {0}.",移动后的排程段会与目标顺序锚点 {0} 发生重叠。
+Name,名称
+Need manual review before formal changes,正式变更前需人工审核
+Net Qty,净数量
+Net Req,净需求
+Net Requirement,净需求
+Net Requirement Ready,净需求已就绪
+New,新建
+Next,下一步
+Next Step,下一步
+Next Step Hint,下一步提示
+"Next open demand is {0} qty on {1} ({2}).",下一笔未关闭需求为 {0}，数量 {1}，日期 {2}。
+"Next-action context is not supported for {0}.",暂不支持 {0} 的下一步动作上下文。
+"No BOM was found for {0}.",产品 {0} 未找到有效 BOM。
+No Mold,无模具
+No Recent Update,近期无更新
+No Update,无更新
+"No active mold is available for {0}.",产品 {0} 没有可用模具。
+No additional quantity is required.,无需新增数量。
+No demand source rows were linked back for this result.,该结果未回链到任何需求来源行。
+No difference summary,暂无差异汇总
+"No eligible machine lane is available for {0}.",产品 {0} 没有可用机台产线。
+No mold detail was available for this result.,该结果没有可用模具详情。
+No open exception rows were found for this result.,该结果没有未关闭异常。
+No pending preview to import.,没有待正式导入的预览结果。
+No primary schedule segments were found.,未找到主排程段。
+No scheduled segments for this view.,当前视图没有排程段。
+"No segment could be placed inside the current planning horizon for {0}.",产品 {0} 在当前计划视窗内无法排入任何排程段。
+No shift proposal rows are marked Approved. Review the batch before formal scheduling.,当前没有标记为 Approved 的白夜班建议行，请先审核批次。
+"No unique mold-machine lanes remain for {0}.",产品 {0} 没有剩余可用的唯一模具-机台产线。
+No work order proposal rows are marked Approved. Review the batch before formal creation.,当前没有标记为 Approved 的工单建议行，请先审核批次。
+Normal,正常
+Not Started,未开始
+Notes,备注
+One active version per customer / company,每个客户 / 公司组合仅允许一个生效版本
+Only active schedules can drive APS.,只有生效中的客户排期才能驱动 APS。
+"Only {0} of {1} can be scheduled inside the current horizon for {2}.",产品 {2} 在当前视窗内仅能排入 {0}/{1}。
+Open,打开
+Open Execution Center,打开执行中心
+Open Gantt,打开 Gantt
+Open Net Requirement Workbench,打开净需求工作台
+Open Release Center,打开释放中心
+Open Work Order Scheduling,打开工单排产单
+Output/Cycle,产出/周期
+Overproduced,超产
+Parallel Group,并行组
+Partially Reviewed,部分已审核
+Pending,待处理
+Planned,已计划
+Planned End Time,计划结束时间
+Planned Qty,计划数量
+Planned Start Time,计划开始时间
+Planning,计划
+Planning Date,计划日期
+Planning Horizon Days,计划视窗天数
+Planning Run,APS 运算
+Planning Warnings,运算预警
+Planning run completed. Refreshing the run console...,APS 运算已完成，正在刷新运算控制台...
+Plant Floor,生产车间
+Plant Floor FG Warehouse Field,车间成品仓字段
+Plant Floor Scrap Warehouse Field,车间废料仓字段
+Plant Floor Source Warehouse Field,车间来源仓字段
+Plant Floor WIP Warehouse Field,车间在制仓字段
+Posting Date,排产日期
+Preview -> formal import -> rebuild demand pool / net requirement. Keep only one active version for each customer and push the planner directly to the next step.,先预览，再正式导入，再重建需求池 / 净需求。每个客户只保留一个生效版本，并将计划员直接推进到下一步。
+Preview Completed,预览已完成
+"Preview completed. Review changes, then import and rebuild demand.",预览完成，请检查差异后再正式导入并重建需求。
+Preview ready. Primary action now imports and rebuilds demand / net requirement.,预览已就绪，主按钮现在会执行正式导入并重建需求 / 净需求。
+Previewing customer schedule import...,正在预览客户排期导入...
+Previewing manual schedule adjustment...,正在预检人工排程调整...
+Primary,主段
+Primary Item Code,主物料编码
+Primary Mould Reference,主模具引用
+Promote To Net Requirement,推进到净需求
+Proposal & Execution Center,建议与执行中心
+Proposal / execution center refreshed.,建议 / 执行中心已刷新。
+Proposal Count,建议数量
+Proposal Date,建议日期
+Proposed Qty,建议数量
+Provide result_name or segment_name to update notes.,请提供 result_name 或 segment_name 以更新备注。
+Qty,数量
+Ready For Review,待审核
+Rebuild Demand -> Net,重建需求 -> 净需求
+Rebuilding APS exceptions...,正在重建 APS 异常...
+Rebuilding demand pool and net requirements...,正在重建需求池和净需求...
+Red,红色
+Reduced,减少
+Refresh Gantt,刷新 Gantt
+Rejected,已驳回
+Released,已释放
+Remark,备注
+Requested,已请求
+Required Delivery Date,要求交期
+Resolve overlap and mold blockers before applying shift schedule proposals.,请先处理重叠和模具阻断项，再应用白夜班建议。
+Result Note,结果备注
+Result note saved.,结果备注已保存。
+"Result {0} has no primary APS schedule segment.",结果 {0} 没有主 APS 排程段。
+"Result {0} is missing a selected mold reference.",结果 {0} 缺少已选模具引用。
+Results already reviewed into proposal / execution flow,已进入建议 / 执行流程的结果
+Review / Apply Shift Schedule Proposals,审核 / 应用白夜班建议
+Review / Apply Work Order Proposals,审核 / 应用工单建议
+Review Note,审核备注
+Review Status,审核状态
+Review override approval before syncing or releasing.,在同步或释放前请先复核 override 审批。
+Review proposal rows and apply formal work orders,审核建议行并应用正式工单
+Review quantity decrease / cancel manually before changing formal work orders.,在变更正式工单前，请先人工审核减量 / 取消动作。
+Review the copy-mold split and lock the sequence if the shop agrees.,请复核复制模拆分方案，若现场认可请锁定排产顺序。
+Review white / night shift rows and apply formal scheduling,审核白班 / 晚班建议行并应用正式排产
+Risk / Override,风险 / Override
+Risk Flags,风险标识
+Run,运行
+Run Not Selected,未选择 Run
+Run Planning,执行 APS 运算
+Run Trial -> Approve -> Work Order Proposal Review -> Shift Proposal Review -> Formal Scheduling -> Execution Feedback. The console keeps each run in a dense list with the next action visible instead of forcing extra clicks.,Trial Run -> 审批 -> 工单建议审核 -> 白夜班建议审核 -> 正式排产 -> 执行反馈。该控制台用高密度列表保留每次 run，并直接显示下一步动作，减少来回点击。
+"Run insert-order analysis to see displaced segments, parallelization and family side outputs.",执行插单影响分析后，可查看被挤占的排程段、并行拆分和 Family 联产副产出。
+Run preview before import.,请先预览，再正式导入。
+Running APS planning...,正在执行 APS 运算...
+Running APS trial planning...,正在执行 APS 试算...
+Sales Order,销售订单
+Save Result Note,保存结果备注
+Save Segment Note,保存段备注
+Saving result note...,正在保存结果备注...
+Saving segment note...,正在保存段备注...
+Schedule Date,排期日期
+Schedule Explanation,排程说明
+Schedule imported successfully.,排期导入成功。
+Schedule imported. Demand pool and net requirements were rebuilt.,排期已导入，需求池和净需求已重建。
+"Scheduled {0} on {1} lane(s); molds {2}; due {3}.",已在 {1} 条产线上排入 {0}；模具 {2}；需求日期 {3}。
+Scheduling Item Risk Field,排产明细风险字段
+Segment,排程段
+Segment Kind,排程段类型
+Segment Note,段备注
+Segment Status,段状态
+Segment detail loaded.,排程段详情已加载。
+Segment note saved.,段备注已保存。
+"Segment {0} is locked or already applied to formal execution.",排程段 {0} 已锁定或已下推到正式执行层。
+Segments,排程段数
+Selected Moulds,已选模具
+Sequence No,顺序号
+Severity,严重级别
+Shift Proposal,白夜班建议
+Shift Proposed,已生成白夜班建议
+Shift Schedule Proposal Batches,白夜班建议批次
+Shift Schedule Proposals,白夜班排产建议
+Shift Type,班次
+Shift proposal batch generated.,白夜班建议批次已生成。
+Shift schedule proposals applied.,白夜班建议已应用。
+Skipped,已跳过
+"Skipped {0} {1} because item {2} belongs to item group {3}. APS only schedules {4}.","已跳过 {0} {1}，因为物料 {2} 属于物料组 {3}，APS 仅排产 {4}。"
+Slow Progress,进度偏慢
+Source,来源
+Start Time,开始时间
+Status,状态
+Stock,库存
+Switch to Machine view before drag re-sequencing.,请先切换到机台视图，再拖拽调整顺序。
+Sync Execution Feedback,同步执行反馈
+Syncing execution feedback back to APS...,正在将执行反馈同步回 APS...
+Target End Time,目标结束时间
+Target Scheduling,目标排产单
+Target Start Time,目标开始时间
+Target Work Order,目标工单
+"Target workstation {0} violates FDA restriction.",目标机台 {0} 违反 FDA 限制。
+Tasks,任务
+There are {0} APS exceptions to review.,当前有 {0} 条 APS 异常待复核。
+This APS action is already running.,该 APS 动作正在执行中。
+This move requires risk override.,本次移动需要风险 override。
+Today,今天
+Today Manufacture,今日生产入库
+Tonnage,吨位
+Unchanged,无变化
+"Unscheduled qty remains: {0}.",仍有未排数量：{0}。
+Uploaded File,上传文件
+Urgent,紧急
+User,用户
+Version,版本
+Version Diff,版本差异
+Version No,版本号
+View,视图
+View Version Diff,查看版本差异
+WO Batch,工单批次
+WO Proposal,工单建议
+Waiting For Preview,待预览
+Window,窗口
+Work Order,工单
+Work Order Proposal Batch,工单建议批次
+Work Order Proposal Batches,工单建议批次
+Work Order Proposals,工单建议
+Work Order Proposed,已生成工单建议
+Work Order Scheduling,工单排产单
+Work Order Scheduling is not available in this site.,当前站点没有启用 Work Order Scheduling。
+"Work Order Scheduling {0} already belongs to APS run {1}.",工单排产单 {0} 已归属 APS Run {1}。
+"Work Order Scheduling {0} is already frozen by execution.",工单排产单 {0} 已因执行而冻结。
+"Work Order Scheduling {0} is already in execution status {1}.",工单排产单 {0} 已进入执行状态 {1}。
+Work order proposal batch generated.,工单建议批次已生成。
+Work order proposals applied.,工单建议已应用。
+Workstation,机台
+Workstation Risk Field,机台风险字段
+"Workstation {0} has overlapping primary segments {1} and {2}.",机台 {0} 上的主排程段 {1} 与 {2} 发生时间重叠。
+"Workstation {0} is currently {1}.",机台 {0} 当前状态为 {1}。
+"Workstation {0} is not a valid lane for {1}.",机台 {0} 不是 {1} 的有效产线。
+"Workstation {0} is not enabled in APS Machine Capability for plant floor {1}.",机台 {0} 未在车间 {1} 的 APS Machine Capability 中启用。
+"Workstation {0} tonnage {1}T does not meet the minimum mold tonnage {2}T required for {3}.",机台 {0} 的吨位 {1}T 不满足 {3} 所需模具最小吨位 {2}T。
+"Workstation {0} violates FDA restriction for {1}. Use manual risk override only if approved.",机台 {0} 对 {1} 违反 FDA 限制。只有在审批通过后才可使用人工风险 override。
+Yellow,黄色
+"{0} has a small run quantity {1} against changeover {2} minutes. {3}",{0} 的本次排产数量仅 {1}，但对应切换损失为 {2} 分钟。{3}
+Primary Segment Overlap,主排程段重叠
+Mold Master Missing,模具主数据缺失
+Mold Product Missing,Mold Product 映射缺失
+Mold Cycle Missing,模具周期缺失
+Mold Reference Empty,模具引用为空
+Mold Status Blocked,模具状态阻断
+Primary Segment Missing,主排程段缺失
+Manual Work Order Review,人工工单审核
+Shift Scheduling Frozen,班次排产已冻结
+Delayed Execution,执行延误
+Actual Output Mismatch,实际产出不匹配
+FDA Override,FDA Override
+Color Transition Blocked,换色阻断
+Mould Changeover,换模切换
+Copy Mold Parallelized,复制模并行
+Low Qty High Changeover Risk,低批量高换模风险
+Generate Work Order Proposals,生成工单建议
+Generate Shift Schedule Proposals,生成白夜班排产建议
+Review and apply work order proposals,审核并应用工单建议
+Review and apply white / night shift proposals,审核并应用白班 / 晚班建议
+Formal Work Orders Ready,正式工单已就绪
+Formal Schedule Applied,正式排产已应用
+Work Order Proposal Review,工单建议审核
+Shift Schedule Proposal Review,白夜班建议审核
+Plan Approved,计划已审批
+Trial Planned,试算已完成
+Risk Review,风险复核
+Review Exceptions,复核异常
+Review Gantt and Exceptions,查看 Gantt 与异常
+Open Run,打开 Run
+Open Execution Center,打开执行中心
+Apply reviewed work order proposals,应用已审核的工单建议
+Apply reviewed white / night shift proposals,应用已审核的白班 / 晚班建议
+"APS Mould-Machine Rule does not allow item {0} on workstation {1}.",APS 模具机台匹配规则不允许物料 {0} 排到机台 {1}。
+"APS Schedule Segment {0} was not found.",未找到 APS 排程段 {0}。
+"APS stays as a planning layer. Formal documents are created only after proposal review: work orders first, then white / night shift scheduling, then execution feedback rolls back into APS.",APS 保持为计划层。只有在建议审核通过后才会生成正式单据：先工单，再白班 / 晚班排产，最后再把执行反馈回写 APS。
+"All candidate lanes for {0} were blocked by mold, FDA or setup constraints.",产品 {0} 的所有候选产线都被模具、FDA 或准备约束阻断。
+"Check Mold status, Mold Product mapping and submitted mold master data.",请检查模具状态、Mold Product 映射关系以及已提交的模具主数据。
+"Demand pool, stock, WIP, safety stock and minimum batch uplift are compressed here. Rebuild from the active schedule, then push the filtered context straight into a trial run.",这里集中展示需求池、库存、在制、安全库存缺口和最小经济批量补齐结果。请从生效排期重建后，再把筛选上下文直接推进到 Trial Run。
+"Drag a segment to another qualified machine lane or in front of another segment. APS will preview the move against tonnage, FDA, mold usage, family co-production and frozen constraints before saving.",可将排程段拖到其他合格机台，或拖到另一段之前。保存前 APS 会先预检吨位、FDA、模具占用、Family 联产和冻结约束。
+"Extend the horizon, release additional copy molds or split the requirement.",请延长计划视窗、释放额外复制模，或拆分该需求。
+"Preview completed. Review changes, then import and rebuild demand.",预览完成，请检查差异后正式导入并重建需求。
+"Review the planned sequence, capacity and frozen segments.",请检查当前排程顺序、产能占用和冻结排程段。
+"Run insert-order analysis to see displaced segments, parallelization and family side outputs.",执行插单影响分析后，可查看被挤占的排程段、并行拆分方案和 Family 联产副产出。
+Export Excel,导出 Excel
+No rows available to export.,暂无可导出的数据。
+Generated On,生成时间
+Excel export ready.,Excel 导出文件已生成。
+Preparing Excel export...,正在准备 Excel 导出...
+Failed to export Excel.,Excel 导出失败。
+Excel Export Failed,Excel 导出失败
+Work Order Proposal Review,工单建议审核
+WO Proposal,工单建议
+Formal work-order suggestions pending manual review.,待人工审核的正式工单建议。
+Shift Schedule Proposal Review,白夜班排产建议审核
+Shift Proposal,班次排产建议
+White/night shift scheduling suggestions pending review.,待审核的白班/夜班排产建议。
+APS Formal Apply Log,APS 正式下推日志
+Release Log,下推日志
+Applied work orders and scheduling downstream logs.,已正式下推的工单与排产日志。
+APS Exception Review,APS 异常审核
+Exceptions,异常
+Blocking and warning rows for manual analysis.,供人工分析的阻断与预警记录。
+Impact Plan,影响方案
+Parallelization plan generated from insert-order analysis.,插单影响分析生成的并行排产方案。
+Customer Delivery Schedule Overview,客户交付排期总览
+Active customer schedule versions currently driving APS.,当前正在驱动 APS 的客户排期版本。
+Schedule Import Batch Review,排期导入批次审核
+Import Batches,导入批次
+Imported customer schedule batches and next recommended steps.,已导入的客户排期批次及建议下一步。
+Schedule Import Preview,排期导入预览
+Preview Diff,预览差异
+Preview rows before formally importing customer schedule data.,客户排期正式导入前的预览数据。
+APS Planning Run Console,APS 运算控制台
+Planning Runs,计划运算
+Planning runs with execution health and next-step summary.,包含执行健康度与下一步建议的 APS 运算清单。
+APS Net Requirement Workbench,APS 净需求工作台
+Net requirement rows for manual planning analysis.,供人工计划分析使用的净需求明细。
+Result,结果
+Item Name,物料名称
+Requested Date,需求日期
+Demand Source,需求来源
+Risk Status,风险状态
+Exception Types,异常类型汇总
+Rows currently blocked or carrying high scheduling risk.,当前被阻断或高风险的需求行。
+Source Doctype,来源单据类型
+Source Name,来源单据编号
+Demand Date,需求日期
+Mold Name,模具名称
+Machine Tonnage,模具最小配机吨位
+Effective Output Qty,有效单模产出
+Cycle Time Seconds,周期秒数
+Family Mold,Family Mold 联产

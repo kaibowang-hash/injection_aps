@@ -1,0 +1,115 @@
+{
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "result_reference",
+  "segment_reference",
+  "item_code",
+  "work_order",
+  "posting_date",
+  "shift_type",
+  "workstation",
+  "planned_start_time",
+  "planned_end_time",
+  "planned_qty",
+  "target_scheduling",
+  "review_status",
+  "review_note"
+ ],
+ "fields": [
+  {
+   "fieldname": "result_reference",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "APS Result",
+   "options": "APS Schedule Result",
+   "reqd": 1
+  },
+  {
+   "fieldname": "segment_reference",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "APS Segment",
+   "reqd": 1
+  },
+  {
+   "fieldname": "item_code",
+   "fieldtype": "Link",
+   "label": "Item Code",
+   "options": "Item",
+   "reqd": 1
+  },
+  {
+   "fieldname": "work_order",
+   "fieldtype": "Link",
+   "label": "Work Order",
+   "options": "Work Order",
+   "reqd": 1
+  },
+  {
+   "fieldname": "posting_date",
+   "fieldtype": "Date",
+   "label": "Posting Date",
+   "reqd": 1
+  },
+  {
+   "fieldname": "shift_type",
+   "fieldtype": "Select",
+   "label": "Shift Type",
+   "options": "\u767d\u73ed\n\u665a\u73ed",
+   "reqd": 1
+  },
+  {
+   "fieldname": "workstation",
+   "fieldtype": "Link",
+   "label": "Workstation",
+   "options": "Workstation",
+   "reqd": 1
+  },
+  {
+   "fieldname": "planned_start_time",
+   "fieldtype": "Datetime",
+   "label": "Planned Start Time"
+  },
+  {
+   "fieldname": "planned_end_time",
+   "fieldtype": "Datetime",
+   "label": "Planned End Time"
+  },
+  {
+   "fieldname": "planned_qty",
+   "fieldtype": "Float",
+   "label": "Planned Qty",
+   "reqd": 1
+  },
+  {
+   "fieldname": "target_scheduling",
+   "fieldtype": "Link",
+   "label": "Target Scheduling",
+   "options": "Work Order Scheduling",
+   "read_only": 1
+  },
+  {
+   "default": "Pending",
+   "fieldname": "review_status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Review Status",
+   "options": "\nPending\nApproved\nRejected\nApplied\nSkipped"
+  },
+  {
+   "fieldname": "review_note",
+   "fieldtype": "Small Text",
+   "label": "Review Note"
+  }
+ ],
+ "istable": 1,
+ "links": [],
+ "module": "Injection APS",
+ "name": "APS Shift Schedule Proposal Item",
+ "permissions": [],
+ "sort_field": "idx",
+ "sort_order": "ASC"
+}
+

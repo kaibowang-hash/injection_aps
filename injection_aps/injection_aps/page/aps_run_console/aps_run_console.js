@@ -35,13 +35,12 @@ class InjectionAPSRunConsole {
 			change: () => this.refresh(),
 		});
 		this.page.set_primary_action(__("Run Trial"), () => this.openRunDialog());
-		this.page.add_action_item(__("Planning Runs"), () => frappe.set_route("List", "APS Planning Run"));
 
 		this.page.main.html(`
 			<div class="ia-page">
 				<div class="ia-banner">
 					<h3>${__("APS Run Console")}</h3>
-					<p>${__("Run a planning pass, review the proposed load, then approve and release from the form when the sequence is stable.")}</p>
+					<p>${__("Run Trial -> Approve -> Work Order Proposal Review -> Shift Proposal Review -> Formal Scheduling -> Execution Feedback. The console keeps each run in a dense list with the next action visible instead of forcing extra clicks.")}</p>
 				</div>
 				<div class="ia-feedback"></div>
 				<div class="ia-panel">
@@ -61,50 +60,127 @@ class InjectionAPSRunConsole {
 				company: this.companyField.get_value() || undefined,
 				plant_floor: this.plantFloorField.get_value() || undefined,
 			});
-			injection_aps.ui.render_table(
-				this.table,
-				[
-					{ label: __("Run"), fieldname: "name" },
-					{ label: __("Company"), fieldname: "company" },
-					{ label: __("Plant Floor"), fieldname: "plant_floor" },
-					{ label: __("Planning Date"), fieldname: "planning_date" },
-					{ label: __("Status"), fieldname: "status" },
-					{ label: __("Approval"), fieldname: "approval_state" },
-					{ label: __("Plan Qty"), fieldname: "total_net_requirement_qty" },
-					{ label: __("Scheduled"), fieldname: "total_scheduled_qty" },
-					{ label: __("Unscheduled"), fieldname: "total_unscheduled_qty" },
-					{ label: __("Exceptions"), fieldname: "exception_count" },
-				],
-				data.runs || [],
-				(column, value, row) => {
-					if (column.fieldname === "name") {
-						return injection_aps.ui.route_link(value, `aps-planning-run/${encodeURIComponent(value)}`);
-					}
-					if (column.fieldname === "status") {
-						const tone = ["Approved", "Synced", "Released", "Partially Released"].includes(value)
-							? "green"
-							: value === "Planned"
-								? "orange"
-								: "blue";
-						return injection_aps.ui.pill(injection_aps.ui.translate(value), tone);
-					}
-					if (column.fieldname === "approval_state") {
-						return injection_aps.ui.pill(injection_aps.ui.translate(value), value === "Approved" ? "green" : "orange");
-					}
-					if (["total_net_requirement_qty", "total_scheduled_qty", "total_unscheduled_qty"].includes(column.fieldname)) {
-						return frappe.format(value || 0, { fieldtype: "Float" });
-					}
-					if (column.fieldname === "planning_date") {
-						return injection_aps.ui.format_date(value);
-					}
-					return frappe.utils.escape_html(value == null ? "" : String(value));
-				}
-			);
+			this.renderRuns(data.runs || []);
 			injection_aps.ui.set_feedback(this.feedback, __("Run console refreshed."));
 		} catch (error) {
 			console.error(error);
 			injection_aps.ui.set_feedback(this.feedback, __("Failed to load planning runs."), "error");
 		}
+	}
+
+	renderRuns(rows) {
+		if (!rows.length) {
+			injection_aps.ui.render_table(this.table, [{ label: __("Info"), fieldname: "message" }], []);
+			return;
+		}
+
+		const columns = [
+			{ label: __("Run"), fieldname: "name" },
+			{ label: __("Plant Floor"), fieldname: "plant_floor" },
+			{ label: __("Planning Date"), fieldname: "planning_date" },
+			{ label: __("Status"), fieldname: "status" },
+			{ label: __("Approval"), fieldname: "approval_state" },
+			{ label: __("Plan Qty"), fieldname: "total_net_requirement_qty" },
+			{ label: __("Scheduled"), fieldname: "total_scheduled_qty" },
+			{ label: __("Unscheduled"), fieldname: "total_unscheduled_qty" },
+			{ label: __("Exceptions"), fieldname: "exception_count" },
+			{ label: __("Exec"), fieldname: "execution_health" },
+			{ label: __("Next Step"), fieldname: "next_step" },
+			{ label: __("Actions"), fieldname: "actions_html" },
+		];
+
+		injection_aps.ui.render_table(
+			this.table,
+			columns,
+			rows,
+			(column, value, row) => {
+				if (column.fieldname === "name") {
+					return injection_aps.ui.route_link(value, `aps-planning-run/${encodeURIComponent(value)}`);
+				}
+				if (column.fieldname === "status") {
+					const tone = ["Approved", "Work Order Proposed", "Shift Proposed", "Applied"].includes(value)
+						? "green"
+						: value === "Planned"
+							? "orange"
+							: "blue";
+					return injection_aps.ui.pill(injection_aps.ui.translate(value), tone);
+				}
+				if (column.fieldname === "approval_state") {
+					return injection_aps.ui.pill(injection_aps.ui.translate(value), value === "Approved" ? "green" : "orange");
+				}
+				if (column.fieldname === "planning_date") {
+					return injection_aps.ui.format_date(value);
+				}
+				if (["total_net_requirement_qty", "total_scheduled_qty", "total_unscheduled_qty"].includes(column.fieldname)) {
+					return frappe.format(value || 0, { fieldtype: "Float" });
+				}
+				if (column.fieldname === "next_step") {
+					return injection_aps.ui.escape(row.next_actions?.next_step || "");
+				}
+				if (column.fieldname === "execution_health") {
+					const health = row.execution_health || {};
+					return `${__("Run")}:${health.running || 0} / ${__("Delay")}:${health.delayed || 0} / ${__("No Update")}:${health.no_recent_update || 0}`;
+				}
+				if (column.fieldname === "actions_html") {
+					const displayActions = (row.next_actions?.actions || [])
+						.filter((action) => !["open_gantt", "open_release_center"].includes(action.action_key))
+						.sort((left, right) => Number(right.enabled || 0) - Number(left.enabled || 0))
+						.slice(0, 2);
+					return `
+						<div class="ia-chip-row">
+							<button class="btn btn-xs btn-default" data-run-action="open_gantt" data-run-name="${injection_aps.ui.escape(row.name)}">${__("Gantt")}</button>
+							<button class="btn btn-xs btn-default" data-run-action="open_release" data-run-name="${injection_aps.ui.escape(row.name)}">${__("Execution")}</button>
+							${displayActions
+								.map(
+									(action, index) => `
+										<button
+											class="btn btn-xs ${index === 0 ? "btn-primary" : "btn-default"}"
+											data-inline-action='${encodeURIComponent(JSON.stringify(action))}'
+											${Number(action.enabled || 0) === 1 ? "" : "disabled"}
+										>${injection_aps.ui.escape(action.label || "")}</button>
+									`
+								)
+								.join("")}
+						</div>
+					`;
+				}
+				return injection_aps.ui.escape(value);
+			},
+			{
+				exportable: true,
+				export_title: __("APS Planning Run Console"),
+				export_sheet_name: __("Planning Runs"),
+				export_file_name: "aps_planning_runs",
+				export_subtitle: __("Planning runs with execution health and next-step summary."),
+			}
+		);
+
+		$(this.table)
+			.find("[data-inline-action]")
+			.each((_, node) => {
+				node.addEventListener("click", async () => {
+					const action = JSON.parse(decodeURIComponent(node.dataset.inlineAction || ""));
+					const response = await injection_aps.ui.run_action(action);
+					injection_aps.ui.show_warnings(response, __("Planning Warnings"), "preflight_warning_count");
+					await this.refresh();
+				});
+			});
+
+		$(this.table)
+			.find("[data-run-action='open_gantt']")
+			.each((_, node) => {
+				node.addEventListener("click", () => {
+					injection_aps.ui.go_to(`aps-schedule-gantt?run_name=${encodeURIComponent(node.dataset.runName || "")}`);
+				});
+			});
+
+		$(this.table)
+			.find("[data-run-action='open_release']")
+			.each((_, node) => {
+				node.addEventListener("click", () => {
+					injection_aps.ui.go_to(`aps-release-center?run_name=${encodeURIComponent(node.dataset.runName || "")}`);
+				});
+			});
 	}
 
 	openRunDialog() {
@@ -117,35 +193,25 @@ class InjectionAPSRunConsole {
 			],
 			primary_action_label: __("Run Trial"),
 			primary_action: async (values) => {
-				const result = await frappe.xcall("injection_aps.api.app.run_planning_run", values);
-				showApsWarnings(result, __("Planning Precheck Warnings"));
+				const result = await injection_aps.ui.xcall(
+					{
+						message: __("Running APS trial planning..."),
+						success_message: __("Planning run completed."),
+						busy_key: `run-console-trial:${values.company || "all"}:${values.plant_floor || "all"}`,
+						feedback_target: this.feedback,
+						success_feedback: __("Planning run completed. Refreshing the run console..."),
+					},
+					"injection_aps.api.app.run_planning_run",
+					values
+				);
+				if (!result) {
+					return;
+				}
+				injection_aps.ui.show_warnings(result, __("Planning Precheck Warnings"), "preflight_warning_count");
 				dialog.hide();
-				frappe.show_alert({ message: __("Planning run completed."), indicator: "green" });
 				await this.refresh();
 			},
 		});
-		dialog.show();
+			dialog.show();
 	}
-}
-
-function showApsWarnings(result, title) {
-	if (!result || !result.preflight_warning_count) {
-		return;
-	}
-
-	const warnings = result.preflight_warnings || [];
-	const extraCount = Math.max((result.preflight_warning_count || 0) - warnings.length, 0);
-	const rows = warnings
-		.map((row) => `<li>${frappe.utils.escape_html(row.message || "")}</li>`)
-		.join("");
-
-	frappe.msgprint({
-		title: title || __("APS Warnings"),
-		message: `
-			<div>${__("Warnings")}: <b>${result.preflight_warning_count || 0}</b></div>
-			<ul style="margin-top:8px; padding-left:18px;">${rows}</ul>
-			${extraCount ? `<div class="text-muted" style="margin-top:8px;">${__("Additional warnings")}: ${extraCount}</div>` : ""}
-		`,
-		wide: true,
-	});
 }

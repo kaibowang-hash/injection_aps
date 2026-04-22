@@ -15,6 +15,9 @@ APS_TRANSACTION_DOCTYPES = (
 	"APS Demand Pool",
 	"APS Net Requirement",
 	"APS Schedule Result",
+	"APS Work Order Proposal Batch",
+	"APS Shift Schedule Proposal Batch",
+	"APS Change Request",
 	"APS Release Batch",
 	"APS Exception Log",
 )
@@ -31,8 +34,12 @@ def ensure_default_settings():
 	settings.planning_horizon_days = settings.planning_horizon_days or 14
 	settings.release_horizon_days = settings.release_horizon_days or 3
 	settings.freeze_days = settings.freeze_days or 2
+	settings.minimum_parallel_split_qty = settings.minimum_parallel_split_qty or 500
+	settings.minimum_run_window_hours = settings.minimum_run_window_hours or 2
 	settings.default_setup_minutes = settings.default_setup_minutes or 30
 	settings.default_first_article_minutes = settings.default_first_article_minutes or 45
+	settings.mold_change_penalty_minutes = settings.mold_change_penalty_minutes or 30
+	settings.missing_cycle_fallback_seconds = settings.missing_cycle_fallback_seconds or 60
 	settings.default_hourly_capacity_qty = settings.default_hourly_capacity_qty or 120
 	settings.item_food_grade_field = settings.item_food_grade_field or "custom_food_grade"
 	settings.item_first_article_field = settings.item_first_article_field or "custom_is_first_article"

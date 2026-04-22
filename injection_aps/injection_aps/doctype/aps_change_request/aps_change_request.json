@@ -1,0 +1,143 @@
+{
+ "actions": [],
+ "allow_rename": 1,
+ "autoname": "APS-CR-.#####",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "planning_run",
+  "company",
+  "plant_floor",
+  "change_type",
+  "item_code",
+  "customer",
+  "required_date",
+  "qty",
+  "status",
+  "approval_state",
+  "impact_summary",
+  "notes"
+ ],
+ "fields": [
+  {
+   "fieldname": "planning_run",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Planning Run",
+   "options": "APS Planning Run"
+  },
+  {
+   "fieldname": "company",
+   "fieldtype": "Link",
+   "label": "Company",
+   "options": "Company",
+   "reqd": 1
+  },
+  {
+   "fieldname": "plant_floor",
+   "fieldtype": "Link",
+   "label": "Plant Floor",
+   "options": "Plant Floor"
+  },
+  {
+   "fieldname": "change_type",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Change Type",
+   "options": "\nInsert Order\nAdvance\nDelay\nDecrease Qty\nCancel\nMachine Exception",
+   "reqd": 1
+  },
+  {
+   "fieldname": "item_code",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Item Code",
+   "options": "Item",
+   "reqd": 1
+  },
+  {
+   "fieldname": "customer",
+   "fieldtype": "Link",
+   "label": "Customer",
+   "options": "Customer"
+  },
+  {
+   "fieldname": "required_date",
+   "fieldtype": "Date",
+   "label": "Required Date",
+   "reqd": 1
+  },
+  {
+   "fieldname": "qty",
+   "fieldtype": "Float",
+   "label": "Qty",
+   "reqd": 1
+  },
+  {
+   "default": "Draft",
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Status",
+   "options": "\nDraft\nAnalyzed\nApproved\nApplied\nRejected\nCancelled"
+  },
+  {
+   "default": "Pending",
+   "fieldname": "approval_state",
+   "fieldtype": "Select",
+   "label": "Approval State",
+   "options": "\nPending\nApproved\nRejected"
+  },
+  {
+   "fieldname": "impact_summary",
+   "fieldtype": "Small Text",
+   "label": "Impact Summary",
+   "read_only": 1
+  },
+  {
+   "fieldname": "notes",
+   "fieldtype": "Small Text",
+   "label": "Notes"
+  }
+ ],
+ "links": [],
+ "module": "Injection APS",
+ "name": "APS Change Request",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Manufacturing Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Sales User",
+   "share": 1
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "track_changes": 1
+}

@@ -1,63 +1,102 @@
+frappe.require("/assets/injection_aps/js/injection_aps_shared.js");
+
 frappe.ui.form.on("Customer Delivery Schedule", {
-	refresh(frm) {
-		if (!frm.doc.customer || !frm.doc.company) {
-			return;
-		}
-
-		frm.add_custom_button(__("Preview Current Rows"), async () => {
-			const preview = await frappe.xcall("injection_aps.api.app.preview_customer_delivery_schedule", {
-				customer: frm.doc.customer,
-				company: frm.doc.company,
-				version_no: frm.doc.version_no || frm.doc.name,
-				rows_json: JSON.stringify(
-					(frm.doc.items || []).map((row) => ({
-						sales_order: row.sales_order,
-						item_code: row.item_code,
-						customer_part_no: row.customer_part_no,
-						schedule_date: row.schedule_date,
-						qty: row.qty,
-						remark: row.remark,
-					}))
-				),
-			});
-			frappe.msgprint({
-				title: __("Preview Summary"),
-				message: `
-					<div>${__("Rows")}: <b>${preview.row_count || 0}</b></div>
-					<div>${__("Changes")}: <pre style="margin-top:8px;">${frappe.utils.escape_html(JSON.stringify(preview.summary || {}, null, 2))}</pre></div>
-				`,
-				wide: true,
-			});
-		});
-
-		frm.add_custom_button(__("Rebuild Demand Pool"), async () => {
-			const result = await frappe.xcall("injection_aps.api.app.rebuild_demand_pool", {
-				company: frm.doc.company,
-			});
-			showApsWarnings(result, __("Demand Pool Warnings"));
-			frappe.show_alert({ message: __("Demand pool rebuilt."), indicator: "green" });
-		});
+	async refresh(frm) {
+		injection_aps.ui.ensure_styles();
+		await render_flow(frm);
+		add_actions(frm);
 	},
 });
 
-function showApsWarnings(result, title) {
-	if (!result || !result.warning_count) {
+async function render_flow(frm) {
+	if (frm.is_new()) {
+		return;
+	}
+	try {
+		const context = await frappe.xcall("injection_aps.api.app.get_next_actions_for_context", {
+			doctype: frm.doctype,
+			docname: frm.doc.name,
+		});
+		const status = document.createElement("div");
+		injection_aps.ui.render_status_line(status, context);
+		frm.dashboard.set_headline(status.outerHTML);
+	} catch (error) {
+		console.error(error);
+	}
+}
+
+function add_actions(frm) {
+	if (!frm.doc.customer || !frm.doc.company) {
 		return;
 	}
 
-	const warnings = result.warnings || [];
-	const extraCount = Math.max((result.warning_count || 0) - warnings.length, 0);
-	const rows = warnings
-		.map((row) => `<li>${frappe.utils.escape_html(row.message || "")}</li>`)
-		.join("");
+	frm.add_custom_button(__("Preview Current Rows"), async () => {
+		await show_version_diff(frm);
+	});
 
+	frm.add_custom_button(__("Rebuild Demand Pool"), async () => {
+		const result = await injection_aps.ui.xcall(
+			{
+				message: __("Rebuilding demand pool and net requirements..."),
+				success_message: __("Demand pool and net requirement rebuilt."),
+				busy_key: `schedule-rebuild:${frm.doc.name}`,
+			},
+			"injection_aps.api.app.promote_schedule_import_to_net_requirement",
+			{
+				schedule: frm.doc.name,
+				company: frm.doc.company,
+			}
+		);
+		if (!result) {
+			return;
+		}
+		injection_aps.ui.show_warnings(result.demand_pool, __("Demand Pool Warnings"), "warning_count");
+		injection_aps.ui.show_warnings(result.net_requirement, __("Net Requirement Warnings"), "warning_count");
+	});
+
+	frm.add_custom_button(__("Open Net Requirement Workbench"), () => {
+		injection_aps.ui.go_to("aps-net-requirement-workbench");
+	});
+
+	frm.add_custom_button(__("View Version Diff"), () => {
+		show_version_diff(frm);
+	});
+}
+
+async function show_version_diff(frm) {
+	const preview = await injection_aps.ui.xcall(
+		{
+			message: __("Comparing schedule version..."),
+			busy_key: `schedule-diff:${frm.doc.name}`,
+		},
+		"injection_aps.api.app.preview_customer_delivery_schedule",
+		{
+			customer: frm.doc.customer,
+			company: frm.doc.company,
+			version_no: frm.doc.version_no || frm.doc.name,
+			rows_json: JSON.stringify(
+				(frm.doc.items || []).map((row) => ({
+					sales_order: row.sales_order,
+					item_code: row.item_code,
+					customer_part_no: row.customer_part_no,
+					schedule_date: row.schedule_date,
+					qty: row.qty,
+					remark: row.remark,
+				}))
+			),
+		}
+	);
+	if (!preview) {
+		return;
+	}
+	const summary = Object.entries(preview.summary || {})
+		.map(([label, value]) => `${label}: ${value}`)
+		.join(" | ");
 	frappe.msgprint({
-		title: title || __("APS Warnings"),
+		title: __("Version Diff"),
 		message: `
-			<div>${__("Skipped Rows")}: <b>${result.skipped_rows || result.warning_count || 0}</b></div>
-			<ul style="margin-top:8px; padding-left:18px;">${rows}</ul>
-			${extraCount ? `<div class="text-muted" style="margin-top:8px;">${__("Additional warnings")}: ${extraCount}</div>` : ""}
+			<div>${__("Rows")}: <b>${preview.row_count || 0}</b></div>
+			<div style="margin-top:6px;">${frappe.utils.escape_html(summary || __("No difference summary"))}</div>
 		`,
-		wide: true,
 	});
 }

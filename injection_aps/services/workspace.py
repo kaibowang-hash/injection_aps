@@ -128,8 +128,8 @@ async function loadDashboard() {
 		]);
 		renderCards(secondary, [
 			{ label: __('Risk Exceptions'), value: data.blocking_exceptions || 0, note: __('Blocking and critical issues') },
-			{ label: __('Released Batches'), value: data.released_batches || 0, note: __('APS release batches created') },
-			{ label: __('Synced Schedules'), value: data.synced_results || 0, note: __('Results already pushed downstream') },
+			{ label: __('Applied Logs'), value: data.released_batches || 0, note: __('Formal work order / shift scheduling apply logs') },
+			{ label: __('Formalized Results'), value: data.synced_results || 0, note: __('Results already reviewed into proposal / execution flow') },
 			{ label: __('Machines Configured'), value: data.machine_capabilities || 0, note: __('APS machine capability rows') }
 		]);
 		feedback.textContent = __('APS workspace refreshed.');
