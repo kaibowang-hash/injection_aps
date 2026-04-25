@@ -130,39 +130,52 @@
 	white-space: nowrap;
 }
 
-.ia-table-filter-strip {
+.ia-table-search-strip {
 	display: flex;
 	align-items: center;
-	gap: 6px;
+	gap: 8px;
 	min-width: 0;
 }
 
-.ia-table-filter-field,
-.ia-table-filter-check {
+.ia-table-search-field {
 	display: inline-flex;
 	align-items: center;
-	gap: 4px;
 	margin: 0;
-	color: #475569;
-	font-size: 10px;
-	font-weight: 600;
+}
+
+.ia-table-search-input.form-control {
+	width: 240px;
+	height: 36px;
+	min-height: 36px;
+	border: 0;
+	border-radius: 16px;
+	background: #f3f4f6;
+	box-shadow: none;
+	padding: 0 18px;
+	color: #334155;
+	font-size: 14px;
+}
+
+.ia-table-search-input.form-control::placeholder {
+	color: #94a3b8;
+	opacity: 1;
+}
+
+.ia-table-search-button {
+	height: 36px;
+	border: 0;
+	border-radius: 14px;
+	background: #f3f4f6;
+	color: #374151;
+	padding: 0 20px;
+	font-size: 14px;
+	line-height: 36px;
 	white-space: nowrap;
 }
 
-.ia-table-filter-field .form-control {
-	width: 128px;
-	height: 26px;
-	min-height: 26px;
-	padding: 3px 7px;
-	font-size: 11px;
-}
-
-.ia-table-filter-search .form-control {
-	width: 168px;
-}
-
-.ia-table-filter-check input {
-	margin: 0;
+.ia-table-search-button:hover,
+.ia-table-search-button:focus {
+	background: #e8ebef;
 }
 
 .ia-table-count {
@@ -1551,18 +1564,14 @@
 	.ia-action-strip,
 	.ia-toolbar,
 	.ia-gantt-tool-actions,
-	.ia-table-filter-strip,
+	.ia-table-search-strip,
 	.ia-table-actions {
 		overflow-x: auto;
 		padding-bottom: 2px;
 	}
 
-	.ia-table-filter-field .form-control {
-		width: 120px;
-	}
-
-	.ia-table-filter-search .form-control {
-		width: 150px;
+	.ia-table-search-input.form-control {
+		width: 190px;
 	}
 
 	.ia-gantt-timeline,

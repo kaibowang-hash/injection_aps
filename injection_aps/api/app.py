@@ -558,6 +558,9 @@ def get_net_requirement_page_data(
 		filters["demand_date"] = ("<=", date_to)
 	if frappe.utils.cint(positive_only):
 		filters["net_requirement_qty"] = (">", 0)
+	search = (search_text or "").strip()
+	if search and not item_code:
+		filters["item_code"] = ("like", f"%{search}%")
 	row_limit = min(max(frappe.utils.cint(limit or 500), 50), 1000)
 	rows = frappe.get_all(
 		"APS Net Requirement",
@@ -584,15 +587,12 @@ def get_net_requirement_page_data(
 		order_by="demand_date asc, item_code asc",
 		limit_page_length=row_limit,
 	)
-	search = (search_text or "").strip().lower()
-	if search:
+	if search and item_code:
+		search_lower = search.lower()
 		rows = [
 			row
 			for row in rows
-			if any(
-				search in str(row.get(field) or "").lower()
-				for field in ("name", "item_code", "customer", "reason_text")
-			)
+			if search_lower in str(row.get("item_code") or "").lower()
 		]
 	return {
 		"rows": rows,

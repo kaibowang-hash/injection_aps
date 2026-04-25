@@ -20,9 +20,6 @@ class InjectionAPSNetRequirementWorkbench {
 		this.suppressFilterRefresh = false;
 		this.tableFilterState = {
 			search_text: "",
-			date_from: "",
-			date_to: "",
-			positive_only: 0,
 		};
 		this.page = frappe.ui.make_app_page({
 			parent: wrapper,
@@ -178,9 +175,6 @@ class InjectionAPSNetRequirementWorkbench {
 			company: this.companyField.get_value() || undefined,
 			item_code: this.itemField.get_value() || undefined,
 			customer: this.customerField.get_value() || undefined,
-			date_from: this.tableFilterState.date_from || undefined,
-			date_to: this.tableFilterState.date_to || undefined,
-			positive_only: this.tableFilterState.positive_only ? 1 : 0,
 			search_text: this.tableFilterState.search_text || undefined,
 		};
 	}
@@ -191,9 +185,6 @@ class InjectionAPSNetRequirementWorkbench {
 		this.itemField.set_value("");
 		this.tableFilterState = {
 			search_text: "",
-			date_from: "",
-			date_to: "",
-			positive_only: 0,
 		};
 		this.suppressFilterRefresh = false;
 		this.refresh();
@@ -202,88 +193,32 @@ class InjectionAPSNetRequirementWorkbench {
 	getTableFilterHtml() {
 		const state = this.tableFilterState || {};
 		return `
-			<div class="ia-table-filter-strip" data-ia-net-filters="1">
-				<label class="ia-table-filter-field ia-table-filter-search">
-					<span>${__("Search")}</span>
+			<form class="ia-table-search-strip" data-ia-net-search="1">
+				<label class="ia-table-search-field">
 					<input
 						type="search"
-						class="form-control input-sm"
+						class="form-control input-sm ia-table-search-input"
 						value="${injection_aps.ui.escape(state.search_text || "")}"
-						placeholder="${injection_aps.ui.escape(__("Search item code"))}"
-						data-ia-net-filter="search_text"
+						placeholder="${injection_aps.ui.escape(__("Search Item Code"))}"
+						data-ia-net-search-input="1"
 					>
 				</label>
-				<label class="ia-table-filter-field">
-					<span>${__("Date From")}</span>
-					<input
-						type="date"
-						class="form-control input-sm"
-						value="${injection_aps.ui.escape(state.date_from || "")}"
-						data-ia-net-filter="date_from"
-					>
-				</label>
-				<label class="ia-table-filter-field">
-					<span>${__("Date To")}</span>
-					<input
-						type="date"
-						class="form-control input-sm"
-						value="${injection_aps.ui.escape(state.date_to || "")}"
-						data-ia-net-filter="date_to"
-					>
-				</label>
-				<label class="ia-table-filter-check">
-					<input
-						type="checkbox"
-						${state.positive_only ? "checked" : ""}
-						data-ia-net-filter="positive_only"
-					>
-					<span>${__("Positive Only")}</span>
-				</label>
-				${injection_aps.ui.icon_button("x", __("Clear Filters"), { "data-ia-net-clear-filters": "1" })}
-			</div>
+				<button type="submit" class="ia-table-search-button">${__("Find")}</button>
+			</form>
 		`;
 	}
 
 	bindTableFilters(target) {
-		const filterRoot = target.querySelector("[data-ia-net-filters='1']");
-		if (!filterRoot) {
+		const searchForm = target.querySelector("[data-ia-net-search='1']");
+		if (!searchForm) {
 			return;
 		}
-		const refreshFromToolbar = (delay) => {
-			clearTimeout(this.tableFilterTimer);
-			this.tableFilterTimer = setTimeout(() => this.refresh(), delay == null ? 250 : delay);
-		};
-		filterRoot.querySelectorAll("[data-ia-net-filter]").forEach((input) => {
-			const fieldname = input.dataset.iaNetFilter;
-			if (fieldname === "positive_only") {
-				input.addEventListener("change", () => {
-					this.tableFilterState.positive_only = input.checked ? 1 : 0;
-					refreshFromToolbar(0);
-				});
-				return;
-			}
-			const updateValue = () => {
-				this.tableFilterState[fieldname] = input.value || "";
-			};
-			input.addEventListener("change", () => {
-				updateValue();
-				refreshFromToolbar(0);
-			});
-			input.addEventListener("input", () => {
-				updateValue();
-				refreshFromToolbar(fieldname === "search_text" ? 300 : 0);
-			});
-			input.addEventListener("keydown", (event) => {
-				if (event.key === "Enter") {
-					updateValue();
-					refreshFromToolbar(0);
-				}
-			});
+		searchForm.addEventListener("submit", (event) => {
+			event.preventDefault();
+			const input = searchForm.querySelector("[data-ia-net-search-input='1']");
+			this.tableFilterState.search_text = (input && input.value ? input.value : "").trim();
+			this.refresh();
 		});
-		const clearButton = filterRoot.querySelector("[data-ia-net-clear-filters='1']");
-		if (clearButton) {
-			clearButton.addEventListener("click", () => this.clearFilters());
-		}
 	}
 
 	getRowContextMenu(row) {
@@ -292,7 +227,7 @@ class InjectionAPSNetRequirementWorkbench {
 		}
 		const items = [
 			{
-				label: __("Open Detail"),
+				label: __("View Detail"),
 				icon: "external-link",
 				handler: () => injection_aps.ui.go_to(`Form/APS Net Requirement/${encodeURIComponent(row.name)}`),
 			},

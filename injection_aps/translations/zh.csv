@@ -1326,6 +1326,7 @@ Positive Only,仅净需求 > 0
 Date From,开始日期
 Date To,结束日期
 Search,搜索
+Search Item Code,搜索物料号
 Search item code,搜索物料号
 No.,序号
 Delete Preview Row,删除预览明细行
