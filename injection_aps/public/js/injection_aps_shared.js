@@ -31,6 +31,8 @@ frappe.provide("injection_aps.ui");
 		update_schedule_notes: ["System Manager", "GMC", "PMC", "Manufacturing Manager"],
 		sync_execution: ["System Manager", "GMC", "PMC", "Manufacturing Manager", "Manufacturing User"],
 		rebuild_exceptions: ["System Manager", "GMC", "PMC", "Manufacturing Manager"],
+		edit_net_requirement: ["System Manager", "GMC", "PMC", "Manufacturing Manager"],
+		delete_net_requirement: ["System Manager", "GMC", "PMC", "Manufacturing Manager"],
 	};
 
 	injection_aps.ui.ensure_styles = function () {
@@ -46,6 +48,35 @@ frappe.provide("injection_aps.ui");
 
 	injection_aps.ui.escape = function (value) {
 		return frappe.utils.escape_html(value == null ? "" : String(value));
+	};
+
+	injection_aps.ui.__local_icons = new Set([
+		"download",
+		"edit",
+		"external-link",
+		"filter",
+		"search",
+		"trash-2",
+		"x",
+	]);
+
+	injection_aps.ui.icon = function (iconName, size) {
+		const name = iconName || "download";
+		const sizeClass = size ? ` ia-aps-icon-${injection_aps.ui.escape(size)}` : "";
+		if (injection_aps.ui.__local_icons.has(name)) {
+			return `<svg class="ia-aps-icon${sizeClass}" aria-hidden="true"><use href="/assets/injection_aps/icons/aps-icons.svg#${injection_aps.ui.escape(name)}"></use></svg>`;
+		}
+		if (frappe.utils && frappe.utils.icon) {
+			try {
+				const icon = frappe.utils.icon(name, size || "xs");
+				if (icon) {
+					return icon;
+				}
+			} catch (error) {
+				// Fall through to a stable local icon if the ERPNext build does not ship this symbol.
+			}
+		}
+		return `<svg class="ia-aps-icon${sizeClass}" aria-hidden="true"><use href="/assets/injection_aps/icons/aps-icons.svg#filter"></use></svg>`;
 	};
 
 	injection_aps.ui.translate = function (value) {
@@ -213,7 +244,7 @@ frappe.provide("injection_aps.ui");
 				title="${injection_aps.ui.escape(title || "")}"
 				aria-label="${injection_aps.ui.escape(title || "")}"
 				${safeAttrs}
-			>${frappe.utils.icon(iconName || "download", "xs")}</button>
+			>${injection_aps.ui.icon(iconName || "download", "xs")}</button>
 		`;
 	};
 
@@ -607,39 +638,14 @@ frappe.provide("injection_aps.ui");
 
 	injection_aps.ui.render_table = function (target, columns, rows, formatter, options) {
 		const settings = Object.assign({}, options || {});
-		if (!rows || !rows.length) {
-			target.innerHTML = `
-				<div class="ia-table-empty">
-					<div class="ia-empty-title">${__("No rows found")}</div>
-					<div class="ia-muted">${settings.empty_message || __("Try changing the filters or refreshing the data.")}</div>
-				</div>
-			`;
-			return;
-		}
-
-		const body = rows
-			.map((row) => {
-				const cells = columns
-					.map((column) => {
-						const rawValue = row[column.fieldname];
-						const value = formatter
-							? formatter(column, rawValue, row)
-							: injection_aps.ui.escape(rawValue == null ? "" : String(rawValue));
-						const className = injection_aps.ui.is_numeric_like(rawValue, column.fieldtype) ? "ia-cell-number" : "";
-						return `<td class="${className}">${value}</td>`;
-					})
-					.join("");
-				return `<tr>${cells}</tr>`;
-			})
-			.join("");
-
-		const toolbar = settings.exportable || settings.show_count !== false
+		const toolbar = settings.exportable || settings.show_count !== false || settings.toolbar_html
 			? `
 				<div class="ia-table-toolbar">
-					<div class="ia-table-count">${__("{0} rows").replace("{0}", injection_aps.ui.format_number(rows.length))}</div>
+					<div class="ia-table-count">${__("{0} rows").replace("{0}", injection_aps.ui.format_number((rows || []).length))}</div>
 					<div class="ia-table-actions">
+						${settings.toolbar_html || ""}
 						${
-							settings.exportable
+							settings.exportable && rows && rows.length
 								? injection_aps.ui.icon_button("download", __("Export Excel"), { "data-ia-export-table": "1" })
 								: ""
 						}
@@ -647,13 +653,48 @@ frappe.provide("injection_aps.ui");
 				</div>
 			`
 			: "";
+		if (!rows || !rows.length) {
+			const emptyToolbar = settings.toolbar_html || settings.exportable || settings.show_count === true ? toolbar : "";
+			target.innerHTML = `
+				${emptyToolbar}
+				<div class="ia-table-empty">
+					<div class="ia-empty-title">${__("No rows found")}</div>
+					<div class="ia-muted">${settings.empty_message || __("Try changing the filters or refreshing the data.")}</div>
+				</div>
+			`;
+			if (settings.after_render) {
+				settings.after_render(target, { columns, rows: rows || [] });
+			}
+			return;
+		}
+
+		const body = rows
+			.map((row, rowIndex) => {
+				const cells = columns
+					.map((column) => {
+						const rawValue = row[column.fieldname];
+						const value = formatter
+							? formatter(column, rawValue, row, rowIndex)
+							: injection_aps.ui.escape(rawValue == null ? "" : String(rawValue));
+						const classNames = [
+							injection_aps.ui.is_numeric_like(rawValue, column.fieldtype) ? "ia-cell-number" : "",
+							column.className || "",
+						]
+							.filter(Boolean)
+							.join(" ");
+						return `<td class="${injection_aps.ui.escape(classNames)}">${value}</td>`;
+					})
+					.join("");
+				return `<tr data-row-index="${rowIndex}">${cells}</tr>`;
+			})
+			.join("");
 
 		target.innerHTML = `
 			${toolbar}
 			<div class="ia-table-shell">
 				<table class="ia-table">
 					<thead>
-						<tr>${columns.map((column) => `<th>${injection_aps.ui.escape(column.label)}</th>`).join("")}</tr>
+						<tr>${columns.map((column) => `<th class="${injection_aps.ui.escape(column.className || "")}">${injection_aps.ui.escape(column.label)}</th>`).join("")}</tr>
 					</thead>
 					<tbody>${body}</tbody>
 				</table>
@@ -676,6 +717,22 @@ frappe.provide("injection_aps.ui");
 					});
 				});
 			}
+		}
+		if (settings.row_context_menu) {
+			target.querySelectorAll("tbody tr[data-row-index]").forEach((node) => {
+				node.addEventListener("contextmenu", (event) => {
+					const row = rows[Number(node.dataset.rowIndex || 0)];
+					const items = settings.row_context_menu(row, Number(node.dataset.rowIndex || 0), event) || [];
+					if (!items.length) {
+						return;
+					}
+					event.preventDefault();
+					injection_aps.ui.open_context_menu(items, { x: event.clientX, y: event.clientY });
+				});
+			});
+		}
+		if (settings.after_render) {
+			settings.after_render(target, { columns, rows });
 		}
 	};
 
@@ -938,7 +995,7 @@ frappe.provide("injection_aps.ui");
 		body.innerHTML = rows
 			.map((row, index) => `
 				<button type="button" class="ia-context-menu-item" data-context-index="${index}">
-					${row.icon ? `<span class="ia-context-menu-icon">${frappe.utils.icon(row.icon, "xs")}</span>` : ""}
+					${row.icon ? `<span class="ia-context-menu-icon">${injection_aps.ui.icon(row.icon, "xs")}</span>` : ""}
 					<span>${injection_aps.ui.escape(row.label)}</span>
 				</button>
 			`)

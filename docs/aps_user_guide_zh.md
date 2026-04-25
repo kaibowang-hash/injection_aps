@@ -268,7 +268,15 @@ APS 从 `APS Settings` 里读取安全库存字段映射，默认是：
 
 口径：
 
-`available_stock = sum(actual_qty - reserved_qty)`
+安全库存转需求时仍按 ERPNext 自由库存判断：
+
+`free_stock = max(sum(actual_qty - reserved_qty), 0)`
+
+净需求重算时，APS 会把“本次需求池已代表的 Sales Order 预留”加回，避免同一销售需求既进入需求池、又通过 `Bin.reserved_qty` 被重复扣减：
+
+`available_stock_for_net = max(sum(actual_qty) - max(sum(reserved_qty) - aps_sales_order_reservation_credit, 0), 0)`
+
+`Safety Stock` 需求行本身已经是自由库存扣减后的缺口，净需求阶段不会再给这类行分摊库存，只会继续用未完工工单抵扣缺口。
 
 APS 读取的是所有非组仓的库存汇总，可按公司过滤。
 
@@ -508,15 +516,15 @@ APS 会给需求打分，当前基础优先级为：
 
 当前真实公式为：
 
-`net_requirement_qty = max(demand_qty - available_stock_qty - open_work_order_qty + safety_stock_gap_qty - overstock_qty, 0)`
+`net_requirement_qty = max(demand_qty - available_stock_qty - open_work_order_qty + safety_stock_gap_qty, 0)`
 
 其中：
 
 1. `demand_qty`：同组需求池数量汇总。
-2. `available_stock_qty`：当前可用库存。
+2. `available_stock_qty`：本次 APS 可用库存。它会扣除外部销售预留，但会加回当前需求池已覆盖的 Sales Order 预留，避免销售需求重复扣减。
 3. `open_work_order_qty`：已开未完工工单量。
 4. `safety_stock_gap_qty = max(safety_stock - available_stock, 0)`
-5. `overstock_qty = max(available_stock - max_stock, 0)`，只有维护了最大库存时才生效。
+5. `overstock_qty = max(available_stock - max_stock, 0)`，只有维护了最大库存时才展示为提示值，不参与当前净需求扣减。
 
 ### 7.2 计划数量 planning_qty
 
@@ -535,10 +543,10 @@ APS 会给需求打分，当前基础优先级为：
 每一条 `APS Net Requirement` 都会生成 `reason_text`，把本次建议开单原因明确写出来，例如：
 
 1. 需求量是多少。
-2. 扣掉了多少可用库存。
+2. 扣掉了多少本次 APS 可用库存。
 3. 扣掉了多少已开未完工工单。
 4. 加回了多少安全库存缺口。
-5. 扣掉了多少超库存抑制量。
+5. 展示了多少剩余超库存提示量。
 6. 是否因为最小批量被抬高。
 
 所以 APS 的净需求不是黑箱。

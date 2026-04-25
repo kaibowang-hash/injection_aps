@@ -130,6 +130,54 @@
 	white-space: nowrap;
 }
 
+.ia-table-search-strip {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	min-width: 0;
+}
+
+.ia-table-search-field {
+	display: inline-flex;
+	align-items: center;
+	margin: 0;
+}
+
+.ia-table-search-input.form-control {
+	width: 240px;
+	height: 24px;
+	min-height: 24px;
+	border: 0;
+	border-radius: 10px;
+	background: #f3f4f6;
+	box-shadow: none;
+	padding: 0 10px;
+	color: #334155;
+	font-size: 12px;
+}
+
+.ia-table-search-input.form-control::placeholder {
+	color: #94a3b8;
+	opacity: 1;
+}
+
+.ia-table-search-button {
+	height: 24px;
+	border: 0;
+	border-radius: 10px;
+	background: #f3f4f6;
+	color: #374151;
+	padding: 0 12px;
+	font-size: 12px;
+	line-height: 24px;
+	white-space: nowrap;
+}
+
+.ia-table-search-button:hover,
+.ia-table-search-button:focus {
+	background: #e8ebef;
+}
+
 .ia-table-count {
 	font-size: 11px;
 	font-weight: 700;
@@ -161,6 +209,21 @@
 }
 
 .ia-icon-btn .es-icon {
+	width: 12px;
+	height: 12px;
+}
+
+.ia-aps-icon {
+	width: 14px;
+	height: 14px;
+	display: inline-block;
+	flex: 0 0 auto;
+	color: currentColor;
+	stroke: currentColor;
+	vertical-align: middle;
+}
+
+.ia-aps-icon-xs {
 	width: 12px;
 	height: 12px;
 }
@@ -462,6 +525,10 @@
 
 .ia-table tbody tr:hover {
 	background: #f8fbff;
+}
+
+.ia-table tbody tr[data-row-index] {
+	cursor: default;
 }
 
 .ia-pill {
@@ -1244,6 +1311,12 @@
 	color: #475569;
 }
 
+.ia-context-menu-icon .ia-aps-icon,
+.ia-context-menu-icon .es-icon {
+	width: 12px;
+	height: 12px;
+}
+
 .ia-drawer-mask {
 	position: absolute;
 	inset: 0;
@@ -1432,8 +1505,13 @@
 }
 
 .ia-cell-number {
-	text-align: right;
+	text-align: left;
 	font-variant-numeric: tabular-nums;
+}
+
+.ia-table thead th.ia-col-seq,
+.ia-table tbody td.ia-col-seq {
+	text-align: left;
 }
 
 .ia-icon-btn:focus-visible,
@@ -1486,9 +1564,14 @@
 	.ia-action-strip,
 	.ia-toolbar,
 	.ia-gantt-tool-actions,
+	.ia-table-search-strip,
 	.ia-table-actions {
 		overflow-x: auto;
 		padding-bottom: 2px;
+	}
+
+	.ia-table-search-input.form-control {
+		width: 190px;
 	}
 
 	.ia-gantt-timeline,

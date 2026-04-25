@@ -17,6 +17,10 @@ class InjectionAPSNetRequirementWorkbench {
 	constructor(wrapper) {
 		this.wrapper = wrapper;
 		this.wrapper.classList.add("ia-app-page");
+		this.suppressFilterRefresh = false;
+		this.tableFilterState = {
+			search_text: "",
+		};
 		this.page = frappe.ui.make_app_page({
 			parent: wrapper,
 			title: __("Net Requirement Workbench"),
@@ -28,21 +32,21 @@ class InjectionAPSNetRequirementWorkbench {
 			options: "Company",
 			label: __("Company"),
 			default: frappe.defaults.get_user_default("Company"),
-			change: () => this.refresh(),
+			change: () => this.refreshFromFilter(),
 		});
 		this.customerField = this.page.add_field({
 			fieldtype: "Link",
 			fieldname: "customer",
 			options: "Customer",
 			label: __("Customer"),
-			change: () => this.refresh(),
+			change: () => this.refreshFromFilter(),
 		});
 		this.itemField = this.page.add_field({
 			fieldtype: "Link",
 			fieldname: "item_code",
 			options: "Item",
 			label: __("Item"),
-			change: () => this.refresh(),
+			change: () => this.refreshFromFilter(),
 		});
 		this.plantFloorField = this.page.add_field({
 			fieldtype: "Link",
@@ -70,6 +74,7 @@ class InjectionAPSNetRequirementWorkbench {
 		this.statusHost = this.page.main.find(".ia-status-host")[0];
 		this.actionHost = this.page.main.find(".ia-action-host")[0];
 		this.table = this.page.main.find(".ia-table-target")[0];
+		this.rows = [];
 	}
 
 	async refresh() {
@@ -103,9 +108,12 @@ class InjectionAPSNetRequirementWorkbench {
 				{ label: __("Net Qty"), value: injection_aps.ui.format_number(data.summary.net_requirement_qty || 0) },
 				{ label: __("Planning Qty"), value: injection_aps.ui.format_number(data.summary.planning_qty || 0), note: __("Includes minimum batch uplift") },
 			]);
+			const rows = (data.rows || []).map((row, index) => Object.assign({ _row_no: index + 1 }, row));
+			this.rows = rows;
 			injection_aps.ui.render_table(
 				this.table,
 				[
+					{ label: __("No."), fieldname: "_row_no", fieldtype: "Int", className: "ia-col-seq" },
 					{ label: __("Item"), fieldname: "item_code" },
 					{ label: __("Customer"), fieldname: "customer" },
 					{ label: __("Demand Date"), fieldname: "demand_date" },
@@ -118,8 +126,11 @@ class InjectionAPSNetRequirementWorkbench {
 					{ label: __("Net Qty"), fieldname: "net_requirement_qty" },
 					{ label: __("Reason"), fieldname: "reason_text" },
 				],
-				data.rows || [],
+				rows,
 				(column, value, row) => {
+					if (column.fieldname === "_row_no") {
+						return injection_aps.ui.escape(String(value || ""));
+					}
 					if (column.fieldname === "item_code") {
 						return injection_aps.ui.route_link(value, `item/${encodeURIComponent(value)}`);
 					}
@@ -141,6 +152,9 @@ class InjectionAPSNetRequirementWorkbench {
 					export_sheet_name: __("Net Requirements"),
 					export_file_name: "aps_net_requirements",
 					export_subtitle: __("Net requirement rows for manual planning analysis."),
+					toolbar_html: this.getTableFilterHtml(),
+					row_context_menu: (row) => this.getRowContextMenu(row),
+					after_render: (target) => this.bindTableFilters(target),
 				}
 			);
 			injection_aps.ui.set_feedback(this.feedback, __("Net requirement workbench refreshed."));
@@ -150,12 +164,160 @@ class InjectionAPSNetRequirementWorkbench {
 		}
 	}
 
+	refreshFromFilter() {
+		if (!this.suppressFilterRefresh) {
+			this.refresh();
+		}
+	}
+
 	getFilters() {
 		return {
 			company: this.companyField.get_value() || undefined,
 			item_code: this.itemField.get_value() || undefined,
 			customer: this.customerField.get_value() || undefined,
+			search_text: this.tableFilterState.search_text || undefined,
 		};
+	}
+
+	clearFilters() {
+		this.suppressFilterRefresh = true;
+		this.customerField.set_value("");
+		this.itemField.set_value("");
+		this.tableFilterState = {
+			search_text: "",
+		};
+		this.suppressFilterRefresh = false;
+		this.refresh();
+	}
+
+	getTableFilterHtml() {
+		const state = this.tableFilterState || {};
+		return `
+			<form class="ia-table-search-strip" data-ia-net-search="1">
+				<label class="ia-table-search-field">
+					<input
+						type="search"
+						class="form-control input-sm ia-table-search-input"
+						value="${injection_aps.ui.escape(state.search_text || "")}"
+						placeholder="${injection_aps.ui.escape(__("Search Item Code"))}"
+						data-ia-net-search-input="1"
+					>
+				</label>
+				<button type="submit" class="ia-table-search-button">${__("Find")}</button>
+			</form>
+		`;
+	}
+
+	bindTableFilters(target) {
+		const searchForm = target.querySelector("[data-ia-net-search='1']");
+		if (!searchForm) {
+			return;
+		}
+		searchForm.addEventListener("submit", (event) => {
+			event.preventDefault();
+			const input = searchForm.querySelector("[data-ia-net-search-input='1']");
+			this.tableFilterState.search_text = (input && input.value ? input.value : "").trim();
+			this.refresh();
+		});
+	}
+
+	getRowContextMenu(row) {
+		if (!row || !row.name) {
+			return [];
+		}
+		const items = [
+			{
+				label: __("View Detail"),
+				icon: "external-link",
+				handler: () => injection_aps.ui.go_to(`Form/APS Net Requirement/${encodeURIComponent(row.name)}`),
+			},
+		];
+		if (injection_aps.ui.can_run_action("edit_net_requirement")) {
+			items.push({
+				label: __("Edit Row"),
+				icon: "edit",
+				handler: () => this.editRow(row),
+			});
+		}
+		if (injection_aps.ui.can_run_action("delete_net_requirement")) {
+			items.push({
+				label: __("Delete Row"),
+				icon: "trash-2",
+				handler: () => this.deleteRow(row),
+			});
+		}
+		return items;
+	}
+
+	editRow(row) {
+		const dialog = new frappe.ui.Dialog({
+			title: __("Edit Row"),
+			fields: [
+				{ fieldname: "demand_date", fieldtype: "Date", label: __("Demand Date"), default: row.demand_date },
+				{ fieldname: "demand_qty", fieldtype: "Float", label: __("Demand"), default: row.demand_qty },
+				{ fieldname: "available_stock_qty", fieldtype: "Float", label: __("Stock"), default: row.available_stock_qty },
+				{ fieldname: "open_work_order_qty", fieldtype: "Float", label: __("Open WO"), default: row.open_work_order_qty },
+				{ fieldname: "safety_stock_gap_qty", fieldtype: "Float", label: __("Safety Gap"), default: row.safety_stock_gap_qty },
+				{ fieldname: "minimum_batch_qty", fieldtype: "Float", label: __("Min Batch"), default: row.minimum_batch_qty },
+				{ fieldname: "net_requirement_qty", fieldtype: "Float", label: __("Net Qty"), default: row.net_requirement_qty },
+				{ fieldname: "planning_qty", fieldtype: "Float", label: __("Planning Qty"), default: row.planning_qty },
+				{ fieldname: "reason_text", fieldtype: "Small Text", label: __("Reason"), default: row.reason_text || "" },
+			],
+			primary_action_label: __("Save Changes"),
+			primary_action: async (values) => {
+				const response = await injection_aps.ui.xcall(
+					{
+						message: __("Saving row..."),
+						success_message: __("Row updated."),
+						busy_key: `net-row-edit:${row.name}`,
+						feedback_target: this.feedback,
+						success_feedback: __("Row updated."),
+					},
+					"injection_aps.api.app.update_net_requirement_row",
+					{
+						name: row.name,
+						values,
+					}
+				);
+				if (!response) {
+					return;
+				}
+				dialog.hide();
+				await this.refresh();
+			},
+		});
+		dialog.show();
+	}
+
+	async deleteRow(row) {
+		const confirmed = await injection_aps.ui.confirm_action(
+			{ action_key: "delete_net_requirement", confirm_required: 1 },
+			{
+				title: __("Confirm Delete"),
+				summary_lines: [
+					__("Row: {0}").replace("{0}", row.name || "-"),
+					__("Item: {0}").replace("{0}", row.item_code || "-"),
+					__("Demand Date: {0}").replace("{0}", injection_aps.ui.format_date(row.demand_date) || "-"),
+				],
+			}
+		);
+		if (!confirmed) {
+			return;
+		}
+		const response = await injection_aps.ui.xcall(
+			{
+				message: __("Deleting row..."),
+				success_message: __("Row deleted."),
+				busy_key: `net-row-delete:${row.name}`,
+				feedback_target: this.feedback,
+				success_feedback: __("Row deleted."),
+			},
+			"injection_aps.api.app.delete_net_requirement_row",
+			{ name: row.name }
+		);
+		if (response) {
+			await this.refresh();
+		}
 	}
 
 	async rebuildDemandPool() {
