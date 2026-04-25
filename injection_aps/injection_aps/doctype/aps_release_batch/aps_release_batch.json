@@ -20,6 +20,7 @@
    "in_list_view": 1,
    "label": "Planning Run",
    "options": "APS Planning Run",
+   "read_only": 1,
    "reqd": 1
   },
   {
@@ -27,6 +28,7 @@
    "fieldtype": "Link",
    "label": "Company",
    "options": "Company",
+   "read_only": 1,
    "reqd": 1
   },
   {
@@ -34,6 +36,7 @@
    "fieldtype": "Date",
    "in_list_view": 1,
    "label": "Release From Date",
+   "read_only": 1,
    "reqd": 1
   },
   {
@@ -41,6 +44,7 @@
    "fieldtype": "Date",
    "in_list_view": 1,
    "label": "Release To Date",
+   "read_only": 1,
    "reqd": 1
   },
   {
@@ -49,7 +53,8 @@
    "fieldtype": "Select",
    "in_list_view": 1,
    "label": "Status",
-   "options": "\nDraft\nReleased\nCancelled"
+   "options": "\nDraft\nReleased\nCancelled",
+   "read_only": 1
   },
   {
    "fieldname": "generated_work_orders",

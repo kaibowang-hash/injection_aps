@@ -26,41 +26,56 @@ async function render_flow(frm) {
 }
 
 function add_actions(frm) {
+	frm.clear_custom_buttons();
 	if (!frm.doc.customer || !frm.doc.company) {
 		return;
 	}
 
-	frm.add_custom_button(__("Preview Current Rows"), async () => {
-		await show_version_diff(frm);
-	});
-
-	frm.add_custom_button(__("Rebuild Demand Pool"), async () => {
-		const result = await injection_aps.ui.xcall(
-			{
-				message: __("Rebuilding demand pool and net requirements..."),
-				success_message: __("Demand pool and net requirement rebuilt."),
-				busy_key: `schedule-rebuild:${frm.doc.name}`,
-			},
-			"injection_aps.api.app.promote_schedule_import_to_net_requirement",
-			{
-				schedule: frm.doc.name,
-				company: frm.doc.company,
+	if (injection_aps.ui.can_run_action("rebuild_demand_pool")) {
+		frm.add_custom_button(__("Rebuild Demand"), async () => {
+			const confirmed = await injection_aps.ui.confirm_action(
+				{ action_key: "rebuild_demand_pool", confirm_required: 1 },
+				{
+					title: __("Confirm Rebuild Demand"),
+					summary_lines: [
+						__("Schedule: {0}").replace("{0}", frm.doc.name),
+						__("Company: {0}").replace("{0}", frm.doc.company || "-"),
+						__("This will rebuild the demand pool and recalculate net requirements."),
+					],
+				}
+			);
+			if (!confirmed) {
+				return;
 			}
-		);
-		if (!result) {
-			return;
-		}
-		injection_aps.ui.show_warnings(result.demand_pool, __("Demand Pool Warnings"), "warning_count");
-		injection_aps.ui.show_warnings(result.net_requirement, __("Net Requirement Warnings"), "warning_count");
-	});
+			const result = await injection_aps.ui.xcall(
+				{
+					message: __("Rebuilding demand pool and net requirements..."),
+					success_message: __("Demand pool and net requirement rebuilt."),
+					busy_key: `schedule-rebuild:${frm.doc.name}`,
+				},
+				"injection_aps.api.app.promote_schedule_import_to_net_requirement",
+				{
+					schedule: frm.doc.name,
+					company: frm.doc.company,
+				}
+			);
+			if (!result) {
+				return;
+			}
+			injection_aps.ui.show_warnings(result.demand_pool, __("Demand Pool Warnings"), "warning_count");
+			injection_aps.ui.show_warnings(result.net_requirement, __("Net Requirement Warnings"), "warning_count");
+		});
+	}
 
-	frm.add_custom_button(__("Open Net Requirement Workbench"), () => {
+	frm.add_custom_button(__("Net Requirement"), () => {
 		injection_aps.ui.go_to("aps-net-requirement-workbench");
 	});
 
-	frm.add_custom_button(__("View Version Diff"), () => {
-		show_version_diff(frm);
-	});
+	if (injection_aps.ui.can_run_action("preview_current_rows")) {
+		frm.add_custom_button(__("View Version Diff"), () => {
+			show_version_diff(frm);
+		});
+	}
 }
 
 async function show_version_diff(frm) {

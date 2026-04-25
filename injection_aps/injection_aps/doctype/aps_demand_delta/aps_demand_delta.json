@@ -1,0 +1,175 @@
+{
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "import_batch",
+  "schedule_reference",
+  "customer",
+  "company",
+  "schedule_scope",
+  "sales_order",
+  "item_code",
+  "customer_part_no",
+  "previous_schedule_date",
+  "current_schedule_date",
+  "previous_qty",
+  "current_qty",
+  "delta_qty",
+  "change_type",
+  "remark"
+ ],
+ "fields": [
+  {
+   "fieldname": "import_batch",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Import Batch",
+   "options": "APS Schedule Import Batch",
+   "read_only": 1,
+   "reqd": 1
+  },
+  {
+   "fieldname": "schedule_reference",
+   "fieldtype": "Link",
+   "label": "Schedule Reference",
+   "options": "Customer Delivery Schedule",
+   "read_only": 1
+  },
+  {
+   "fieldname": "customer",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Customer",
+   "options": "Customer",
+   "read_only": 1,
+   "reqd": 1
+  },
+  {
+   "fieldname": "company",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Company",
+   "options": "Company",
+   "read_only": 1,
+   "reqd": 1
+  },
+  {
+   "fieldname": "schedule_scope",
+   "fieldtype": "Data",
+   "label": "Schedule Scope",
+   "read_only": 1
+  },
+  {
+   "fieldname": "sales_order",
+   "fieldtype": "Link",
+   "label": "Sales Order",
+   "options": "Sales Order",
+   "read_only": 1
+  },
+  {
+   "fieldname": "item_code",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Item Code",
+   "options": "Item",
+   "read_only": 1,
+   "reqd": 1
+  },
+  {
+   "fieldname": "customer_part_no",
+   "fieldtype": "Data",
+   "label": "Customer Part No",
+   "read_only": 1
+  },
+  {
+   "fieldname": "previous_schedule_date",
+   "fieldtype": "Date",
+   "label": "Previous Schedule Date",
+   "read_only": 1
+  },
+  {
+   "fieldname": "current_schedule_date",
+   "fieldtype": "Date",
+   "label": "Current Schedule Date",
+   "read_only": 1
+  },
+  {
+   "fieldname": "previous_qty",
+   "fieldtype": "Float",
+   "in_list_view": 1,
+   "label": "Previous Qty",
+   "read_only": 1
+  },
+  {
+   "fieldname": "current_qty",
+   "fieldtype": "Float",
+   "in_list_view": 1,
+   "label": "Current Qty",
+   "read_only": 1
+  },
+  {
+   "fieldname": "delta_qty",
+   "fieldtype": "Float",
+   "in_list_view": 1,
+   "label": "Delta Qty",
+   "read_only": 1
+  },
+  {
+   "fieldname": "change_type",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Change Type",
+   "options": "\nAdded\nCancelled\nIncreased\nDecreased\nRescheduled Earlier\nRescheduled Later\nUnchanged",
+   "read_only": 1,
+   "reqd": 1
+  },
+  {
+   "fieldname": "remark",
+   "fieldtype": "Small Text",
+   "label": "Remark"
+  }
+ ],
+ "index_web_pages_for_search": 1,
+ "links": [],
+ "module": "Injection APS",
+ "name": "APS Demand Delta",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Manufacturing Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Sales User",
+   "share": 1
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 1
+}

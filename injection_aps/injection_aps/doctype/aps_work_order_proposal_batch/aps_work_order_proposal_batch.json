@@ -25,6 +25,7 @@
    "in_list_view": 1,
    "label": "Planning Run",
    "options": "APS Planning Run",
+   "read_only": 1,
    "reqd": 1
   },
   {
@@ -32,19 +33,22 @@
    "fieldtype": "Link",
    "label": "Company",
    "options": "Company",
+   "read_only": 1,
    "reqd": 1
   },
   {
    "fieldname": "plant_floor",
    "fieldtype": "Link",
    "label": "Plant Floor",
-   "options": "Plant Floor"
+   "options": "Plant Floor",
+   "read_only": 1
   },
   {
    "default": "Today",
    "fieldname": "proposal_date",
    "fieldtype": "Date",
    "label": "Proposal Date",
+   "read_only": 1,
    "reqd": 1
   },
   {
@@ -53,7 +57,8 @@
    "fieldtype": "Select",
    "in_list_view": 1,
    "label": "Status",
-   "options": "\nDraft\nReady For Review\nPartially Reviewed\nReviewed\nApplied\nCancelled"
+   "options": "\nDraft\nReady For Review\nPartially Reviewed\nReviewed\nApplied\nCancelled",
+   "read_only": 1
   },
   {
    "default": "Pending",
@@ -61,7 +66,8 @@
    "fieldtype": "Select",
    "in_list_view": 1,
    "label": "Approval State",
-   "options": "\nPending\nApproved\nRejected"
+   "options": "\nPending\nApproved\nRejected",
+   "read_only": 1
   },
   {
    "fieldname": "approved_by",
@@ -141,4 +147,3 @@
  "sort_order": "DESC",
  "track_changes": 1
 }
-

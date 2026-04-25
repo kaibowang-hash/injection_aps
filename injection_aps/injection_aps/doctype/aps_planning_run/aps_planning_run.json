@@ -7,6 +7,8 @@
  "field_order": [
   "company",
   "plant_floor",
+  "selected_plant_floor_summary",
+  "selected_plant_floors",
   "planning_date",
   "horizon_days",
   "horizon_start",
@@ -40,6 +42,18 @@
    "options": "Plant Floor"
   },
   {
+   "fieldname": "selected_plant_floor_summary",
+   "fieldtype": "Small Text",
+   "label": "Selected Plant Floor Summary",
+   "read_only": 1
+  },
+  {
+   "fieldname": "selected_plant_floors",
+   "fieldtype": "Table",
+   "label": "Selected Plant Floors",
+   "options": "APS Planning Run Plant Floor"
+  },
+  {
    "default": "Today",
    "fieldname": "planning_date",
    "fieldtype": "Date",
@@ -56,12 +70,14 @@
   {
    "fieldname": "horizon_start",
    "fieldtype": "Datetime",
-   "label": "Horizon Start"
+   "label": "Horizon Start",
+   "read_only": 1
   },
   {
    "fieldname": "horizon_end",
    "fieldtype": "Datetime",
-   "label": "Horizon End"
+   "label": "Horizon End",
+   "read_only": 1
   },
   {
    "default": "Trial",
@@ -76,7 +92,8 @@
    "fieldtype": "Select",
    "in_list_view": 1,
    "label": "Status",
-   "options": "\nDraft\nPlanned\nApproved\nWork Order Proposed\nShift Proposed\nApplied\nClosed"
+   "options": "\nDraft\nPlanned\nApproved\nWork Order Proposed\nShift Proposed\nApplied\nClosed",
+   "read_only": 1
   },
   {
    "default": "Pending",
@@ -84,7 +101,8 @@
    "fieldtype": "Select",
    "in_list_view": 1,
    "label": "Approval State",
-   "options": "\nPending\nApproved\nRejected"
+   "options": "\nPending\nApproved\nRejected",
+   "read_only": 1
   },
   {
    "fieldname": "approved_by",

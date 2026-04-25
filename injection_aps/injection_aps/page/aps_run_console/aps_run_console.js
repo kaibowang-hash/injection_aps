@@ -8,15 +8,18 @@ frappe.pages["aps-run-console"].on_page_load = function (wrapper) {
 };
 
 frappe.pages["aps-run-console"].on_page_show = function (wrapper) {
-	wrapper.injection_aps_controller?.refresh();
+	if (wrapper.injection_aps_controller) {
+		wrapper.injection_aps_controller.refresh();
+	}
 };
 
 class InjectionAPSRunConsole {
 	constructor(wrapper) {
 		this.wrapper = wrapper;
+		this.wrapper.classList.add("ia-app-page");
 		this.page = frappe.ui.make_app_page({
 			parent: wrapper,
-			title: __("APS Run Console"),
+			title: __("Recalc Console"),
 			single_column: true,
 		});
 		this.companyField = this.page.add_field({
@@ -34,13 +37,15 @@ class InjectionAPSRunConsole {
 			label: __("Plant Floor"),
 			change: () => this.refresh(),
 		});
-		this.page.set_primary_action(__("Run Trial"), () => this.openRunDialog());
+		if (injection_aps.ui.can_run_action("run_trial")) {
+			this.page.set_primary_action(__("Recalculate"), () => this.openRunDialog());
+		}
 
 		this.page.main.html(`
 			<div class="ia-page">
 				<div class="ia-banner">
-					<h3>${__("APS Run Console")}</h3>
-					<p>${__("Run Trial -> Approve -> Work Order Proposal Review -> Shift Proposal Review -> Formal Scheduling -> Execution Feedback. The console keeps each run in a dense list with the next action visible instead of forcing extra clicks.")}</p>
+					<h3>${__("Recalc Console")}</h3>
+					<p>${__("Recalculate -> Confirm Run -> Review Work Order Proposals -> Review Day/Night Shift Proposals -> Formal Scheduling -> Execution Feedback. This console centralizes each APS run and its next action.")}</p>
 				</div>
 				<div class="ia-feedback"></div>
 				<div class="ia-panel">
@@ -54,17 +59,17 @@ class InjectionAPSRunConsole {
 
 	async refresh() {
 		injection_aps.ui.ensure_styles();
-		injection_aps.ui.set_feedback(this.feedback, __("Loading planning runs..."));
+		injection_aps.ui.set_feedback(this.feedback, __("Loading APS runs..."));
 		try {
 			const data = await frappe.xcall("injection_aps.api.app.get_run_console_data", {
 				company: this.companyField.get_value() || undefined,
 				plant_floor: this.plantFloorField.get_value() || undefined,
 			});
 			this.renderRuns(data.runs || []);
-			injection_aps.ui.set_feedback(this.feedback, __("Run console refreshed."));
+			injection_aps.ui.set_feedback(this.feedback, __("Recalc Console refreshed."));
 		} catch (error) {
 			console.error(error);
-			injection_aps.ui.set_feedback(this.feedback, __("Failed to load planning runs."), "error");
+			injection_aps.ui.set_feedback(this.feedback, __("Failed to load APS runs."), "error");
 		}
 	}
 
@@ -76,7 +81,7 @@ class InjectionAPSRunConsole {
 
 		const columns = [
 			{ label: __("Run"), fieldname: "name" },
-			{ label: __("Plant Floor"), fieldname: "plant_floor" },
+			{ label: __("Plant Floors"), fieldname: "selected_plant_floor_summary" },
 			{ label: __("Planning Date"), fieldname: "planning_date" },
 			{ label: __("Status"), fieldname: "status" },
 			{ label: __("Approval"), fieldname: "approval_state" },
@@ -111,24 +116,30 @@ class InjectionAPSRunConsole {
 				if (column.fieldname === "planning_date") {
 					return injection_aps.ui.format_date(value);
 				}
+				if (column.fieldname === "selected_plant_floor_summary") {
+					return injection_aps.ui.escape(value || row.plant_floor || "");
+				}
 				if (["total_net_requirement_qty", "total_scheduled_qty", "total_unscheduled_qty"].includes(column.fieldname)) {
 					return frappe.format(value || 0, { fieldtype: "Float" });
 				}
 				if (column.fieldname === "next_step") {
-					return injection_aps.ui.escape(row.next_actions?.next_step || "");
+					return injection_aps.ui.escape(
+						injection_aps.ui.translate(injection_aps.ui.get_value(row, "next_actions.next_step", ""))
+					);
 				}
 				if (column.fieldname === "execution_health") {
 					const health = row.execution_health || {};
 					return `${__("Run")}:${health.running || 0} / ${__("Delay")}:${health.delayed || 0} / ${__("No Update")}:${health.no_recent_update || 0}`;
 				}
-				if (column.fieldname === "actions_html") {
-					const displayActions = (row.next_actions?.actions || [])
-						.filter((action) => !["open_gantt", "open_release_center"].includes(action.action_key))
-						.sort((left, right) => Number(right.enabled || 0) - Number(left.enabled || 0))
-						.slice(0, 2);
+					if (column.fieldname === "actions_html") {
+						const displayActions = (injection_aps.ui.get_value(row, "next_actions.actions", []) || [])
+							.filter((action) => !["open_gantt", "open_release_center"].includes(action.action_key))
+							.filter((action) => injection_aps.ui.can_run_action(action))
+							.sort((left, right) => Number(right.enabled || 0) - Number(left.enabled || 0))
+							.slice(0, 2);
 					return `
 						<div class="ia-chip-row">
-							<button class="btn btn-xs btn-default" data-run-action="open_gantt" data-run-name="${injection_aps.ui.escape(row.name)}">${__("Gantt")}</button>
+							<button class="btn btn-xs btn-default" data-run-action="open_gantt" data-run-name="${injection_aps.ui.escape(row.name)}">${__("Board")}</button>
 							<button class="btn btn-xs btn-default" data-run-action="open_release" data-run-name="${injection_aps.ui.escape(row.name)}">${__("Execution")}</button>
 							${displayActions
 								.map(
@@ -137,7 +148,7 @@ class InjectionAPSRunConsole {
 											class="btn btn-xs ${index === 0 ? "btn-primary" : "btn-default"}"
 											data-inline-action='${encodeURIComponent(JSON.stringify(action))}'
 											${Number(action.enabled || 0) === 1 ? "" : "disabled"}
-										>${injection_aps.ui.escape(action.label || "")}</button>
+										>${injection_aps.ui.escape(injection_aps.ui.get_action_label(action))}</button>
 									`
 								)
 								.join("")}
@@ -148,10 +159,10 @@ class InjectionAPSRunConsole {
 			},
 			{
 				exportable: true,
-				export_title: __("APS Planning Run Console"),
-				export_sheet_name: __("Planning Runs"),
+				export_title: __("Recalc Console"),
+				export_sheet_name: __("APS Runs"),
 				export_file_name: "aps_planning_runs",
-				export_subtitle: __("Planning runs with execution health and next-step summary."),
+				export_subtitle: __("APS run list with execution health and next actions."),
 			}
 		);
 
@@ -185,24 +196,65 @@ class InjectionAPSRunConsole {
 
 	openRunDialog() {
 		const dialog = new frappe.ui.Dialog({
-			title: __("Create Trial Planning Run"),
+			title: __("Create Recalc Run"),
 			fields: [
 				{ fieldname: "company", fieldtype: "Link", options: "Company", label: __("Company"), reqd: 1, default: this.companyField.get_value() || frappe.defaults.get_user_default("Company") },
-				{ fieldname: "plant_floor", fieldtype: "Link", options: "Plant Floor", label: __("Plant Floor"), default: this.plantFloorField.get_value() || undefined },
+				{
+					fieldname: "plant_floor_rows",
+					fieldtype: "Table",
+					label: __("Selected Plant Floors"),
+					reqd: 1,
+					in_place_edit: true,
+					data: this.getDefaultPlantFloorRows(),
+					fields: [
+						{
+							fieldname: "plant_floor",
+							fieldtype: "Link",
+							options: "Plant Floor",
+							label: __("Plant Floor"),
+							in_list_view: 1,
+							reqd: 1,
+						},
+					],
+				},
 				{ fieldname: "horizon_days", fieldtype: "Int", label: __("Horizon Days"), default: 14, reqd: 1 },
 			],
-			primary_action_label: __("Run Trial"),
+			primary_action_label: __("Recalculate"),
 			primary_action: async (values) => {
+				const plantFloors = this.extractPlantFloors(values.plant_floor_rows);
+				if (!plantFloors.length) {
+					frappe.msgprint(__("Select at least one Plant Floor before APS planning."));
+					return;
+				}
+				const confirmed = await injection_aps.ui.confirm_action(
+					{ action_key: "run_trial", confirm_required: 1 },
+					{
+						title: __("Confirm Recalculate"),
+						summary_lines: [
+							__("Company: {0}").replace("{0}", values.company || "-"),
+							__("Plant Floors: {0}").replace("{0}", plantFloors.join(", ") || "-"),
+							__("Horizon: {0} days").replace("{0}", String(values.horizon_days || 14)),
+						],
+					}
+				);
+				if (!confirmed) {
+					return;
+				}
 				const result = await injection_aps.ui.xcall(
 					{
-						message: __("Running APS trial planning..."),
-						success_message: __("Planning run completed."),
-						busy_key: `run-console-trial:${values.company || "all"}:${values.plant_floor || "all"}`,
+						message: __("Running recalculation..."),
+						success_message: __("Recalculation completed."),
+						busy_key: `run-console-trial:${values.company || "all"}:${plantFloors.join("|") || "all"}`,
 						feedback_target: this.feedback,
-						success_feedback: __("Planning run completed. Refreshing the run console..."),
+						success_feedback: __("Recalculation completed. Refreshing console..."),
 					},
 					"injection_aps.api.app.run_planning_run",
-					values
+					{
+						company: values.company,
+						plant_floor: plantFloors[0],
+						plant_floors: plantFloors,
+						horizon_days: values.horizon_days,
+					}
 				);
 				if (!result) {
 					return;
@@ -213,5 +265,21 @@ class InjectionAPSRunConsole {
 			},
 		});
 			dialog.show();
+	}
+
+	getDefaultPlantFloorRows() {
+		const value = this.plantFloorField.get_value();
+		return value ? [{ plant_floor: value }] : [];
+	}
+
+	extractPlantFloors(rows) {
+		const values = [];
+		(rows || []).forEach((row) => {
+			const value = row && row.plant_floor ? String(row.plant_floor).trim() : "";
+			if (value && !values.includes(value)) {
+				values.push(value);
+			}
+		});
+		return values;
 	}
 }

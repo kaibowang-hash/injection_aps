@@ -9,16 +9,34 @@
    "role": "System Manager"
   },
   {
+   "role": "GMC"
+  },
+  {
+   "role": "PMC"
+  },
+  {
    "role": "Manufacturing Manager"
+  },
+  {
+   "role": "Manufacturing User"
+  },
+  {
+   "role": "Sales Manager"
   },
   {
    "role": "Sales User"
   },
   {
+   "role": "Purchase Manager"
+  },
+  {
+   "role": "Purchase User"
+  },
+  {
    "role": "Stock Manager"
   },
   {
-   "role": "Purchase Manager"
+   "role": "Stock User"
   }
  ],
  "standard": "Yes",

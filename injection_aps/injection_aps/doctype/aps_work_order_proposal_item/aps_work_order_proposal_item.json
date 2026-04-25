@@ -24,6 +24,7 @@
    "in_list_view": 1,
    "label": "APS Result",
    "options": "APS Schedule Result",
+   "read_only": 1,
    "reqd": 1
   },
   {
@@ -32,25 +33,29 @@
    "in_list_view": 1,
    "label": "Item Code",
    "options": "Item",
+   "read_only": 1,
    "reqd": 1
   },
   {
    "fieldname": "customer",
    "fieldtype": "Link",
    "label": "Customer",
-   "options": "Customer"
+   "options": "Customer",
+   "read_only": 1
   },
   {
    "fieldname": "required_delivery_date",
    "fieldtype": "Date",
-   "label": "Required Delivery Date"
+   "label": "Required Delivery Date",
+   "read_only": 1
   },
   {
    "fieldname": "action",
    "fieldtype": "Select",
    "in_list_view": 1,
    "label": "Action",
-   "options": "\nNew\nIncrease\nDecrease\nCancel\nKeep Existing",
+   "options": "\nKeep Existing\nUpdate Existing\nClose Residual\nCancel Unstarted\nCreate Delta\nNew",
+   "read_only": 1,
    "reqd": 1
   },
   {
@@ -58,13 +63,15 @@
    "fieldtype": "Float",
    "in_list_view": 1,
    "label": "Proposed Qty",
+   "read_only": 1,
    "reqd": 1
   },
   {
    "fieldname": "existing_work_order",
    "fieldtype": "Link",
    "label": "Existing Work Order",
-   "options": "Work Order"
+   "options": "Work Order",
+   "read_only": 1
   },
   {
    "fieldname": "existing_qty",
@@ -82,12 +89,14 @@
   {
    "fieldname": "target_start_time",
    "fieldtype": "Datetime",
-   "label": "Target Start Time"
+   "label": "Target Start Time",
+   "read_only": 1
   },
   {
    "fieldname": "target_end_time",
    "fieldtype": "Datetime",
-   "label": "Target End Time"
+   "label": "Target End Time",
+   "read_only": 1
   },
   {
    "default": "Pending",
@@ -111,4 +120,3 @@
  "sort_field": "idx",
  "sort_order": "ASC"
 }
-

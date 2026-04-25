@@ -2,19 +2,20 @@
  "doctype": "DocType",
  "editable_grid": 1,
  "engine": "InnoDB",
- "field_order": [
-  "workstation",
-  "plant_floor",
-  "start_time",
-  "end_time",
-  "planned_qty",
-  "sequence_no",
-  "lane_key",
-  "parallel_group",
-  "family_group",
-  "segment_kind",
-  "primary_item_code",
-  "co_product_item_code",
+  "field_order": [
+   "workstation",
+   "plant_floor",
+   "start_time",
+   "end_time",
+   "planned_qty",
+   "sequence_no",
+   "lane_key",
+   "campaign_key",
+   "parallel_group",
+   "family_group",
+   "segment_kind",
+   "primary_item_code",
+   "co_product_item_code",
   "setup_minutes",
   "changeover_minutes",
   "mould_reference",
@@ -29,14 +30,16 @@
   "actual_status",
   "actual_completed_qty",
   "actual_start_time",
-  "actual_end_time",
-  "delay_minutes",
-  "last_execution_sync_on",
-  "color_code",
-  "material_code",
-  "is_locked",
-  "is_manual"
- ],
+   "actual_end_time",
+   "delay_minutes",
+   "last_execution_sync_on",
+   "anchor_strength",
+   "execution_anchor_source",
+   "color_code",
+   "material_code",
+   "is_locked",
+   "is_manual"
+  ],
  "fields": [
   {
    "fieldname": "workstation",
@@ -44,97 +47,125 @@
    "in_list_view": 1,
    "label": "Machine / Workstation",
    "options": "Workstation",
-   "reqd": 1
+   "read_only": 1,
+   "reqd": 1,
+   "search_index": 1
   },
   {
    "fieldname": "plant_floor",
    "fieldtype": "Link",
    "label": "Plant Floor",
-   "options": "Plant Floor"
+   "options": "Plant Floor",
+   "read_only": 1,
+   "search_index": 1
   },
   {
    "fieldname": "start_time",
    "fieldtype": "Datetime",
    "in_list_view": 1,
    "label": "Start Time",
-   "reqd": 1
+   "read_only": 1,
+   "reqd": 1,
+   "search_index": 1
   },
   {
    "fieldname": "end_time",
    "fieldtype": "Datetime",
    "in_list_view": 1,
    "label": "End Time",
-   "reqd": 1
+   "read_only": 1,
+   "reqd": 1,
+   "search_index": 1
   },
   {
    "fieldname": "planned_qty",
    "fieldtype": "Float",
    "in_list_view": 1,
    "label": "Planned Qty",
+   "read_only": 1,
    "reqd": 1
   },
   {
    "fieldname": "sequence_no",
    "fieldtype": "Int",
-   "label": "Sequence No"
+   "label": "Sequence No",
+   "read_only": 1
   },
   {
    "fieldname": "lane_key",
    "fieldtype": "Data",
-   "label": "Lane Key"
+   "label": "Lane Key",
+   "read_only": 1
+  },
+  {
+   "fieldname": "campaign_key",
+   "fieldtype": "Data",
+   "label": "Campaign Key",
+   "read_only": 1
   },
   {
    "fieldname": "parallel_group",
    "fieldtype": "Data",
-   "label": "Parallel Group"
+   "label": "Parallel Group",
+   "read_only": 1
   },
   {
    "fieldname": "family_group",
    "fieldtype": "Data",
-   "label": "Family Group"
+   "label": "Family Group",
+   "read_only": 1
   },
   {
    "fieldname": "segment_kind",
    "fieldtype": "Select",
    "label": "Segment Kind",
-   "options": "\nPrimary\nFamily Co-Product\nManual"
+   "options": "\nPrimary\nFamily Co-Product\nManual",
+   "read_only": 1
   },
   {
    "fieldname": "primary_item_code",
    "fieldtype": "Link",
    "label": "Primary Item Code",
-   "options": "Item"
+   "options": "Item",
+   "read_only": 1,
+   "search_index": 1
   },
   {
    "fieldname": "co_product_item_code",
    "fieldtype": "Link",
    "label": "Co-Product Item Code",
-   "options": "Item"
+   "options": "Item",
+   "read_only": 1
   },
   {
    "fieldname": "setup_minutes",
    "fieldtype": "Float",
-   "label": "Setup Minutes"
+   "label": "Setup Minutes",
+   "read_only": 1
   },
   {
    "fieldname": "changeover_minutes",
    "fieldtype": "Float",
-   "label": "Changeover Minutes"
+   "label": "Changeover Minutes",
+   "read_only": 1
   },
   {
    "fieldname": "mould_reference",
    "fieldtype": "Data",
-   "label": "Mould Reference"
+   "label": "Mould Reference",
+   "read_only": 1
   },
   {
    "fieldname": "schedule_explanation",
    "fieldtype": "Small Text",
-   "label": "Schedule Explanation"
+   "label": "Schedule Explanation",
+   "read_only": 1
   },
   {
    "fieldname": "manual_change_note",
    "fieldtype": "Small Text",
-   "label": "Manual Change Note"
+   "label": "Manual Change Note",
+   "read_only": 1
   },
   {
    "fieldname": "segment_note",
@@ -144,31 +175,37 @@
   {
    "fieldname": "risk_flags",
    "fieldtype": "Small Text",
-   "label": "Risk Flags"
+   "label": "Risk Flags",
+   "read_only": 1
   },
   {
    "fieldname": "segment_status",
    "fieldtype": "Select",
    "in_list_view": 1,
    "label": "Segment Status",
-   "options": "\nPlanned\nRisk\nApproved\nWork Order Proposed\nShift Proposed\nApplied\nCompleted\nBlocked"
+   "options": "\nPlanned\nRisk\nApproved\nWork Order Proposed\nShift Proposed\nApplied\nCompleted\nBlocked",
+   "read_only": 1,
+   "search_index": 1
   },
   {
    "fieldname": "linked_work_order",
    "fieldtype": "Link",
    "label": "Linked Work Order",
-   "options": "Work Order"
+   "options": "Work Order",
+   "read_only": 1
   },
   {
    "fieldname": "linked_work_order_scheduling",
    "fieldtype": "Link",
    "label": "Linked Work Order Scheduling",
-   "options": "Work Order Scheduling"
+   "options": "Work Order Scheduling",
+   "read_only": 1
   },
   {
    "fieldname": "linked_scheduling_item",
    "fieldtype": "Data",
-   "label": "Linked Scheduling Item"
+   "label": "Linked Scheduling Item",
+   "read_only": 1
   },
   {
    "fieldname": "actual_status",
@@ -208,24 +245,40 @@
    "read_only": 1
   },
   {
+   "fieldname": "anchor_strength",
+   "fieldtype": "Int",
+   "label": "Anchor Strength",
+   "read_only": 1
+  },
+  {
+   "fieldname": "execution_anchor_source",
+   "fieldtype": "Data",
+   "label": "Execution Anchor Source",
+   "read_only": 1
+  },
+  {
    "fieldname": "color_code",
    "fieldtype": "Data",
-   "label": "Color"
+   "label": "Color",
+   "read_only": 1
   },
   {
    "fieldname": "material_code",
    "fieldtype": "Data",
-   "label": "Material"
+   "label": "Material",
+   "read_only": 1
   },
   {
    "fieldname": "is_locked",
    "fieldtype": "Check",
-   "label": "Locked"
+   "label": "Locked",
+   "read_only": 1
   },
   {
    "fieldname": "is_manual",
    "fieldtype": "Check",
-   "label": "Manual"
+   "label": "Manual",
+   "read_only": 1
   }
  ],
  "istable": 1,

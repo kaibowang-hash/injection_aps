@@ -32,19 +32,24 @@
    "in_list_view": 1,
    "label": "Company",
    "options": "Company",
-   "reqd": 1
+   "read_only": 1,
+   "reqd": 1,
+   "search_index": 1
   },
   {
    "fieldname": "customer",
    "fieldtype": "Link",
    "label": "Customer",
-   "options": "Customer"
+   "options": "Customer",
+   "read_only": 1,
+   "search_index": 1
   },
   {
    "fieldname": "sales_order",
    "fieldtype": "Link",
    "label": "Sales Order",
-   "options": "Sales Order"
+   "options": "Sales Order",
+   "read_only": 1
   },
   {
    "fieldname": "item_code",
@@ -52,32 +57,39 @@
    "in_list_view": 1,
    "label": "Item Code",
    "options": "Item",
-   "reqd": 1
+   "read_only": 1,
+   "reqd": 1,
+   "search_index": 1
   },
   {
    "fieldname": "customer_part_no",
    "fieldtype": "Data",
-   "label": "Customer Part No"
+   "label": "Customer Part No",
+   "read_only": 1
   },
   {
    "fieldname": "demand_source",
    "fieldtype": "Select",
    "in_list_view": 1,
    "label": "Demand Source",
-   "options": "\nCustomer Delivery Schedule\nSales Order Backlog\nSafety Stock\nUrgent Order\nTrial Production\nComplaint Replenishment"
+   "options": "\nCustomer Delivery Schedule\nSales Order Backlog\nSafety Stock\nUrgent Order\nTrial Production\nComplaint Replenishment",
+   "read_only": 1
   },
   {
    "fieldname": "demand_date",
    "fieldtype": "Date",
    "in_list_view": 1,
    "label": "Demand Date",
-   "reqd": 1
+   "read_only": 1,
+   "reqd": 1,
+   "search_index": 1
   },
   {
    "fieldname": "qty",
    "fieldtype": "Float",
    "in_list_view": 1,
    "label": "Qty",
+   "read_only": 1,
    "reqd": 1
   },
   {
@@ -86,7 +98,9 @@
    "fieldtype": "Select",
    "in_list_view": 1,
    "label": "Status",
-   "options": "\nOpen\nPlanned\nCancelled\nClosed"
+   "options": "\nOpen\nPlanned\nCancelled\nClosed",
+   "read_only": 1,
+   "search_index": 1
   },
   {
    "fieldname": "priority_score",
@@ -97,38 +111,45 @@
   {
    "fieldname": "is_urgent",
    "fieldtype": "Check",
-   "label": "Urgent"
+   "label": "Urgent",
+   "read_only": 1
   },
   {
    "fieldname": "food_grade",
    "fieldtype": "Data",
-   "label": "Food Grade"
+   "label": "Food Grade",
+   "read_only": 1
   },
   {
    "fieldname": "color_code",
    "fieldtype": "Data",
-   "label": "Color"
+   "label": "Color",
+   "read_only": 1
   },
   {
    "fieldname": "material_code",
    "fieldtype": "Data",
-   "label": "Material"
+   "label": "Material",
+   "read_only": 1
   },
   {
    "fieldname": "is_first_article",
    "fieldtype": "Check",
-   "label": "First Article"
+   "label": "First Article",
+   "read_only": 1
   },
   {
    "fieldname": "source_doctype",
    "fieldtype": "Data",
-   "label": "Source Doctype"
+   "label": "Source Doctype",
+   "read_only": 1
   },
   {
    "fieldname": "source_name",
    "fieldtype": "Dynamic Link",
    "label": "Source Name",
-   "options": "source_doctype"
+   "options": "source_doctype",
+   "read_only": 1
   },
   {
    "fieldname": "remark",
@@ -139,7 +160,8 @@
    "fieldname": "is_system_generated",
    "fieldtype": "Check",
    "label": "System Generated",
-   "read_only": 1
+   "read_only": 1,
+   "search_index": 1
   }
  ],
  "links": [],

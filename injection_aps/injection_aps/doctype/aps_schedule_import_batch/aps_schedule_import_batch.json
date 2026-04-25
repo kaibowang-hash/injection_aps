@@ -7,13 +7,18 @@
  "field_order": [
   "customer",
   "company",
+  "schedule_scope",
   "version_no",
+  "import_strategy",
   "source_type",
   "uploaded_file",
+  "parser_mode",
+  "sheet_name",
   "status",
   "imported_rows",
   "effective_rows",
-  "change_summary"
+  "change_summary",
+  "mapping_json"
  ],
  "fields": [
   {
@@ -33,11 +38,25 @@
    "reqd": 1
   },
   {
+   "fieldname": "schedule_scope",
+   "fieldtype": "Data",
+   "label": "Schedule Scope",
+   "read_only": 1
+  },
+  {
    "fieldname": "version_no",
    "fieldtype": "Data",
    "in_list_view": 1,
    "label": "Version No",
    "reqd": 1
+  },
+  {
+   "default": "Replace Scope",
+   "fieldname": "import_strategy",
+   "fieldtype": "Select",
+   "label": "Import Strategy",
+   "options": "\nReplace Scope\nPartial Item Update\nAppend",
+   "read_only": 1
   },
   {
    "default": "Customer Delivery Schedule",
@@ -52,12 +71,26 @@
    "label": "Uploaded File"
   },
   {
+   "fieldname": "parser_mode",
+   "fieldtype": "Select",
+   "label": "Parser Mode",
+   "options": "\nrows\nmatrix",
+   "read_only": 1
+  },
+  {
+   "fieldname": "sheet_name",
+   "fieldtype": "Data",
+   "label": "Sheet Name",
+   "read_only": 1
+  },
+  {
    "default": "Draft",
    "fieldname": "status",
    "fieldtype": "Select",
    "in_list_view": 1,
    "label": "Status",
-   "options": "\nDraft\nImported\nFailed\nCancelled"
+   "options": "\nDraft\nImported\nFailed\nCancelled",
+   "read_only": 1
   },
   {
    "fieldname": "imported_rows",
@@ -75,6 +108,12 @@
    "fieldname": "change_summary",
    "fieldtype": "Small Text",
    "label": "Change Summary",
+   "read_only": 1
+  },
+  {
+   "fieldname": "mapping_json",
+   "fieldtype": "Long Text",
+   "label": "Mapping JSON",
    "read_only": 1
   }
  ],

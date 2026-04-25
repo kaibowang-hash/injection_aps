@@ -15,6 +15,8 @@
   "machine_status",
   "max_run_hours",
   "is_active",
+  "last_synced_on",
+  "sync_source",
   "notes"
  ],
  "fields": [
@@ -24,13 +26,17 @@
    "in_list_view": 1,
    "label": "Machine / Workstation",
    "options": "Workstation",
-   "reqd": 1
+   "read_only": 1,
+   "reqd": 1,
+   "search_index": 1
   },
   {
    "fieldname": "plant_floor",
    "fieldtype": "Link",
    "label": "Plant Floor",
-   "options": "Plant Floor"
+   "options": "Plant Floor",
+   "read_only": 1,
+   "search_index": 1
   },
   {
    "fieldname": "machine_tonnage",
@@ -40,7 +46,8 @@
   {
    "fieldname": "risk_category",
    "fieldtype": "Data",
-   "label": "Risk Category"
+   "label": "Risk Category",
+   "read_only": 1
   },
   {
    "fieldname": "hourly_capacity_qty",
@@ -63,7 +70,9 @@
    "fieldtype": "Select",
    "in_list_view": 1,
    "label": "Machine Status",
-   "options": "\nAvailable\nRunning\nSetup\nMaintenance\nFault\nUnavailable\nDisabled"
+   "options": "\nAvailable\nRunning\nSetup\nMaintenance\nFault\nUnavailable\nDisabled",
+   "read_only": 1,
+   "search_index": 1
   },
   {
    "fieldname": "max_run_hours",
@@ -74,7 +83,20 @@
    "default": "1",
    "fieldname": "is_active",
    "fieldtype": "Check",
-   "label": "Active"
+   "label": "Active",
+   "search_index": 1
+  },
+  {
+   "fieldname": "last_synced_on",
+   "fieldtype": "Datetime",
+   "label": "Last Synced On",
+   "read_only": 1
+  },
+  {
+   "fieldname": "sync_source",
+   "fieldtype": "Data",
+   "label": "Sync Source",
+   "read_only": 1
   },
   {
    "fieldname": "notes",

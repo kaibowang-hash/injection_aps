@@ -5,7 +5,7 @@ app_description = "Injection planning and scheduling for ERPNext"
 app_email = "kaibo_wang@whjichen.cn"
 app_license = "mit"
 
-required_apps = ["erpnext", "zelin_pp", "light_mes"]
+required_apps = ["erpnext", "zelin_pp", "light_mes", "mold_management"]
 
 doctype_js = {
 	"APS Planning Run": "public/js/aps_planning_run.js",
@@ -19,3 +19,11 @@ doctype_js = {
 after_install = "injection_aps.install.after_install"
 after_migrate = "injection_aps.install.after_migrate"
 before_uninstall = "injection_aps.uninstall.before_uninstall"
+
+scheduler_events = {
+	"cron": {
+		"*/15 * * * *": [
+			"injection_aps.services.customizations.sync_machine_capabilities_from_workstations",
+		]
+	}
+}
