@@ -197,7 +197,7 @@ Customer Part No,客户料号
 Allocated Qty,已分配数量
 Produced Qty,已生产数量
 Delivered Qty,已交付数量
-Balance Qty,未满足数量
+Balance Qty,结余数量
 Change Type,差异类型
 Demand Source,需求来源
 Priority Score,优先级分值
@@ -1314,6 +1314,20 @@ imported,导入
 Add Row,新增明细行
 Edit Row,编辑明细行
 Delete Row,删除明细行
+Open Detail,打开明细
+Save Changes,保存修改
+Row updated.,明细行已更新。
+Row deleted.,明细行已删除。
+Saving row...,正在保存明细行...
+Deleting row...,正在删除明细行...
+Confirm Delete,确认删除
+Clear Filters,清空筛选
+Positive Only,仅净需求 > 0
+Date From,开始日期
+Date To,结束日期
+Search,搜索
+Search item code,搜索物料号
+No.,序号
 Delete Preview Row,删除预览明细行
 Preview updated.,预览已更新。
 Refreshing import preview...,正在刷新导入预览...
@@ -1339,7 +1353,7 @@ Confirm Rebuild Demand,确认重建需求
 Confirm Recalculate,确认重算
 Current APS Run,当前 APS 运算
 Day/night shift results applied.,白夜班结果已应用。
-"Demand {0} - allocated stock {1} - allocated open work orders {2} + one-time safety gap {3}; remaining overstock {4}; minimum batch {5}; planning qty {6}.","需求 {0} - 已分配库存 {1} - 已分配未完工工单 {2} + 一次性安全库存缺口 {3}；剩余超库存 {4}；最小经济批量 {5}；建议排产数量 {6}。"
+"Demand {0} - APS-usable stock {1} - allocated open work orders {2} + one-time safety gap {3}; remaining overstock {4}; minimum batch {5}; planning qty {6}.","需求 {0} - 本次 APS 可用库存 {1} - 已分配未完工工单 {2} + 一次性安全库存缺口 {3}；剩余超库存 {4}；最小经济批量 {5}；建议排产数量 {6}。"
 Edit Preview Row,编辑预览行
 "Execution center depends on a single APS run context. Select an APS run first to review proposals, formal apply logs, and exceptions.",执行中心依赖单一 APS 运算上下文。请先选择运算，再查看建议、正式应用日志和异常。
 Failed to load APS runs.,APS 运算加载失败。

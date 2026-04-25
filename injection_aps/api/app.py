@@ -538,9 +538,27 @@ def get_schedule_console_data(customer=None, company=None):
 
 
 @frappe.whitelist()
-def get_net_requirement_page_data(company=None, item_code=None, customer=None):
+def get_net_requirement_page_data(
+	company=None,
+	item_code=None,
+	customer=None,
+	date_from=None,
+	date_to=None,
+	positive_only=None,
+	search_text=None,
+	limit=None,
+):
 	_require_read_access()
 	filters = planning._strip_none({"company": company, "item_code": item_code, "customer": customer})
+	if date_from and date_to:
+		filters["demand_date"] = ("between", [date_from, date_to])
+	elif date_from:
+		filters["demand_date"] = (">=", date_from)
+	elif date_to:
+		filters["demand_date"] = ("<=", date_to)
+	if frappe.utils.cint(positive_only):
+		filters["net_requirement_qty"] = (">", 0)
+	row_limit = min(max(frappe.utils.cint(limit or 500), 50), 1000)
 	rows = frappe.get_all(
 		"APS Net Requirement",
 		filters=filters,
@@ -554,14 +572,28 @@ def get_net_requirement_page_data(company=None, item_code=None, customer=None):
 			"available_stock_qty",
 			"open_work_order_qty",
 			"safety_stock_gap_qty",
+			"max_stock_qty",
+			"overstock_qty",
 			"minimum_batch_qty",
 			"planning_qty",
 			"net_requirement_qty",
 			"reason_text",
+			"is_system_generated",
+			"modified",
 		],
 		order_by="demand_date asc, item_code asc",
-		limit=200,
+		limit_page_length=row_limit,
 	)
+	search = (search_text or "").strip().lower()
+	if search:
+		rows = [
+			row
+			for row in rows
+			if any(
+				search in str(row.get(field) or "").lower()
+				for field in ("name", "item_code", "customer", "reason_text")
+			)
+		]
 	return {
 		"rows": rows,
 		"summary": {
@@ -571,6 +603,63 @@ def get_net_requirement_page_data(company=None, item_code=None, customer=None):
 		},
 		"filters": {"company": company, "item_code": item_code, "customer": customer},
 	}
+
+
+@frappe.whitelist()
+def update_net_requirement_row(name=None, values=None):
+	_require_plan_access()
+	if not name or not frappe.db.exists("APS Net Requirement", name):
+		frappe.throw(_("APS Net Requirement row not found."))
+	payload = frappe.parse_json(values) if isinstance(values, str) else (values or {})
+	allowed_fields = {
+		"demand_date",
+		"demand_qty",
+		"available_stock_qty",
+		"open_work_order_qty",
+		"safety_stock_gap_qty",
+		"minimum_batch_qty",
+		"planning_qty",
+		"net_requirement_qty",
+		"reason_text",
+	}
+	float_fields = {
+		"demand_qty",
+		"available_stock_qty",
+		"open_work_order_qty",
+		"safety_stock_gap_qty",
+		"minimum_batch_qty",
+		"planning_qty",
+		"net_requirement_qty",
+	}
+	doc = frappe.get_doc("APS Net Requirement", name)
+	for fieldname in allowed_fields:
+		if fieldname not in payload:
+			continue
+		value = payload.get(fieldname)
+		if fieldname in float_fields:
+			doc.set(fieldname, frappe.utils.flt(value))
+		else:
+			doc.set(fieldname, value)
+	doc.save(ignore_permissions=True)
+	return {"name": doc.name}
+
+
+@frappe.whitelist()
+def delete_net_requirement_row(name=None):
+	_require_plan_access()
+	if not name or not frappe.db.exists("APS Net Requirement", name):
+		frappe.throw(_("APS Net Requirement row not found."))
+	if frappe.db.exists("DocType", "APS Schedule Result"):
+		frappe.db.sql(
+			"""
+			update `tabAPS Schedule Result`
+			set net_requirement = ''
+			where net_requirement = %s
+			""",
+			(name,),
+		)
+	frappe.delete_doc("APS Net Requirement", name, force=1, ignore_permissions=True)
+	return {"deleted": name}
 
 
 @frappe.whitelist()

@@ -812,6 +812,7 @@ def rebuild_net_requirements(company: str | None = None) -> dict[str, Any]:
 			"name",
 			"company",
 			"customer",
+			"sales_order",
 			"item_code",
 			"demand_date",
 			"qty",
@@ -857,7 +858,7 @@ def rebuild_net_requirements(company: str | None = None) -> dict[str, Any]:
 		for row in demand_rows
 		if (row.get("demand_source") or "") == "Safety Stock"
 	}
-	stock_map = _get_available_stock_map(company)
+	stock_map = _get_available_stock_map(company, demand_rows=demand_rows)
 	open_work_order_map = _get_open_work_order_map(company)
 	remaining_stock_map = defaultdict(float, {item: flt(qty) for item, qty in stock_map.items()})
 	remaining_work_order_map = defaultdict(float, {item: flt(qty) for item, qty in open_work_order_map.items()})
@@ -876,8 +877,11 @@ def rebuild_net_requirements(company: str | None = None) -> dict[str, Any]:
 				if item_code in has_safety_demand_by_item
 				else max(safety_stock_qty - flt(stock_map.get(item_code)), 0)
 			)
-		available_stock_qty = min(demand_qty, flt(remaining_stock_map[item_code]))
-		remaining_stock_map[item_code] = max(flt(remaining_stock_map[item_code]) - available_stock_qty, 0)
+		is_safety_stock_group = all((row.get("demand_source") or "") == "Safety Stock" for row in rows)
+		# Safety Stock rows are already the post-free-stock gap; do not spend the same stock twice.
+		available_stock_qty = 0 if is_safety_stock_group else min(demand_qty, flt(remaining_stock_map[item_code]))
+		if not is_safety_stock_group:
+			remaining_stock_map[item_code] = max(flt(remaining_stock_map[item_code]) - available_stock_qty, 0)
 		open_qty_after_stock = max(demand_qty - available_stock_qty, 0)
 		open_work_order_qty = min(open_qty_after_stock, flt(remaining_work_order_map[item_code]))
 		remaining_work_order_map[item_code] = max(flt(remaining_work_order_map[item_code]) - open_work_order_qty, 0)
@@ -4257,13 +4261,14 @@ def _score_demand(demand_source: str, demand_date, is_urgent: int = 0) -> int:
 	return cint(DEMAND_SOURCE_PRIORITY.get(demand_source, 100) + urgency_bonus + date_bonus)
 
 
-def _get_available_stock_map(company: str | None) -> dict[str, float]:
+def _get_available_stock_map(company: str | None, demand_rows: list[dict[str, Any]] | None = None) -> dict[str, float]:
 	if not frappe.db.exists("DocType", "Bin"):
 		return {}
 	query = """
 		select
 			bin.item_code,
-			sum(ifnull(bin.actual_qty, 0) - ifnull(bin.reserved_qty, 0)) as available_qty
+			sum(ifnull(bin.actual_qty, 0)) as actual_qty,
+			sum(ifnull(bin.reserved_qty, 0)) as reserved_qty
 		from `tabBin` bin
 		inner join `tabWarehouse` wh on wh.name = bin.warehouse
 		where wh.is_group = 0
@@ -4273,7 +4278,144 @@ def _get_available_stock_map(company: str | None) -> dict[str, float]:
 		query += " and wh.company = %s"
 		params.append(company)
 	query += " group by bin.item_code"
-	return {row.item_code: flt(row.available_qty) for row in frappe.db.sql(query, params, as_dict=True)}
+	reservation_credit_map = _get_aps_sales_order_reservation_credit_map(company, demand_rows)
+	stock_map = {}
+	for row in frappe.db.sql(query, params, as_dict=True):
+		# SO reservations represented in the current APS demand remain usable for that demand.
+		credited_reserved_qty = min(flt(reservation_credit_map.get(row.item_code)), flt(row.reserved_qty))
+		external_reserved_qty = max(flt(row.reserved_qty) - credited_reserved_qty, 0)
+		stock_map[row.item_code] = max(flt(row.actual_qty) - external_reserved_qty, 0)
+	return stock_map
+
+
+def _get_aps_sales_order_reservation_credit_map(
+	company: str | None,
+	demand_rows: list[dict[str, Any]] | None,
+) -> dict[str, float]:
+	if not demand_rows or not frappe.db.exists("DocType", "Sales Order Item"):
+		return {}
+
+	direct_demand_map = defaultdict(float)
+	unlinked_customer_item_demand_map = defaultdict(float)
+	item_codes = set()
+	for row in demand_rows:
+		if (row.get("demand_source") or "") == "Safety Stock":
+			continue
+		item_code = _normalize_item_code(row.get("item_code"))
+		if not item_code:
+			continue
+		demand_qty = max(flt(row.get("qty")), 0)
+		if demand_qty <= 0:
+			continue
+		item_codes.add(item_code)
+		sales_order = row.get("sales_order")
+		if sales_order:
+			direct_demand_map[(sales_order, item_code)] += demand_qty
+		elif row.get("company") and row.get("customer"):
+			unlinked_customer_item_demand_map[(row.get("company"), row.get("customer"), item_code)] += demand_qty
+
+	if not item_codes or (not direct_demand_map and not unlinked_customer_item_demand_map):
+		return {}
+
+	sales_order_filters = set(sales_order for sales_order, _item_code in direct_demand_map)
+	customer_filters = set(customer for _row_company, customer, _item_code in unlinked_customer_item_demand_map)
+	reservation_rows = _get_sales_order_reservation_rows(
+		company=company,
+		item_codes=sorted(item_codes),
+		sales_orders=sorted(sales_order_filters),
+		customers=sorted(customer_filters),
+	)
+
+	credit_map = defaultdict(float)
+	remaining_direct_demand = defaultdict(float, direct_demand_map)
+	remaining_unlinked_demand = defaultdict(float, unlinked_customer_item_demand_map)
+	for row in reservation_rows:
+		item_code = _normalize_item_code(row.get("item_code"))
+		reserved_qty = flt(row.get("reserved_qty"))
+		if not item_code or reserved_qty <= 0:
+			continue
+
+		direct_key = (row.get("sales_order"), item_code)
+		if remaining_direct_demand[direct_key] > 0:
+			credit_qty = min(reserved_qty, remaining_direct_demand[direct_key])
+			credit_map[item_code] += credit_qty
+			remaining_direct_demand[direct_key] -= credit_qty
+			reserved_qty -= credit_qty
+
+		unlinked_key = (row.get("company"), row.get("customer"), item_code)
+		if reserved_qty > 0 and remaining_unlinked_demand[unlinked_key] > 0:
+			credit_qty = min(reserved_qty, remaining_unlinked_demand[unlinked_key])
+			credit_map[item_code] += credit_qty
+			remaining_unlinked_demand[unlinked_key] -= credit_qty
+
+	return dict(credit_map)
+
+
+def _get_sales_order_reservation_rows(
+	company: str | None,
+	item_codes: list[str],
+	sales_orders: list[str] | None = None,
+	customers: list[str] | None = None,
+) -> list[dict[str, Any]]:
+	if not item_codes or (not sales_orders and not customers):
+		return []
+
+	dont_reserve_on_return = cint(
+		frappe.get_cached_value(
+			"Selling Settings",
+			"Selling Settings",
+			"dont_reserve_sales_order_qty_on_sales_return",
+		)
+	)
+	conditions = [
+		"so.docstatus = 1",
+		"ifnull(so.status, '') not in ('On Hold', 'Closed')",
+		"ifnull(soi.warehouse, '') != ''",
+		"soi.item_code in ({0})".format(", ".join(["%s"] * len(item_codes))),
+	]
+	params: list[Any] = [dont_reserve_on_return, *item_codes]
+	if company:
+		conditions.append("so.company = %s")
+		params.append(company)
+	scope_conditions = []
+	if sales_orders:
+		scope_conditions.append("so.name in ({0})".format(", ".join(["%s"] * len(sales_orders))))
+		params.extend(sales_orders)
+	if customers:
+		scope_conditions.append("so.customer in ({0})".format(", ".join(["%s"] * len(customers))))
+		params.extend(customers)
+	conditions.append("({0})".format(" or ".join(scope_conditions)))
+
+	query = """
+		select
+			so.name as sales_order,
+			so.company,
+			so.customer,
+			so.transaction_date,
+			soi.item_code,
+			soi.delivery_date,
+			sum(
+				case
+					when ifnull(soi.qty, 0) > 0 then
+						ifnull(soi.stock_qty, 0)
+						* greatest(
+							ifnull(soi.qty, 0)
+							- ifnull(soi.delivered_qty, 0)
+							- if(%s, ifnull(soi.returned_qty, 0), 0),
+							0
+						)
+						/ ifnull(soi.qty, 0)
+					else 0
+				end
+			) as reserved_qty
+		from `tabSales Order Item` soi
+		inner join `tabSales Order` so on so.name = soi.parent
+		where {conditions}
+		group by so.name, so.company, so.customer, so.transaction_date, soi.item_code, soi.delivery_date
+		having reserved_qty > 0
+		order by soi.delivery_date asc, so.transaction_date asc, so.name asc
+	""".format(conditions=" and ".join(conditions))
+	return frappe.db.sql(query, params, as_dict=True)
 
 
 def _get_open_work_order_map(company: str | None) -> dict[str, float]:
@@ -4305,7 +4447,7 @@ def _build_net_requirement_reason(
 	planning_qty: float,
 ) -> str:
 	return _(
-		"Demand {0} - allocated stock {1} - allocated open work orders {2} + one-time safety gap {3}; remaining overstock {4}; minimum batch {5}; planning qty {6}."
+		"Demand {0} - APS-usable stock {1} - allocated open work orders {2} + one-time safety gap {3}; remaining overstock {4}; minimum batch {5}; planning qty {6}."
 	).format(
 		demand_qty,
 		available_stock_qty,
