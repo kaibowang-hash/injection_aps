@@ -1,11 +1,59 @@
 from __future__ import annotations
 
+import inspect
+from collections import defaultdict
+
 import frappe
 from frappe import _
 from frappe.utils import now_datetime
 from frappe.utils.xlsxutils import make_xlsx
 
-from injection_aps.services import planning
+from injection_aps.services import customizations, planning
+from injection_aps.services.permissions import (
+	APS_ADMIN_ROLES,
+	APS_APPROVE_ROLES,
+	APS_DEMAND_ROLES,
+	APS_EXECUTION_ROLES,
+	APS_PLAN_ROLES,
+	APS_READ_ROLES,
+	APS_RELEASE_ROLES,
+	require_any_role,
+)
+
+
+def _require_read_access():
+	require_any_role(APS_READ_ROLES, _("You need APS read access to view this data."))
+
+
+def _require_demand_access():
+	require_any_role(APS_DEMAND_ROLES, _("You need APS demand access to maintain customer schedules."))
+
+
+def _require_plan_access():
+	require_any_role(APS_PLAN_ROLES, _("You need APS planning access to run this action."))
+
+
+def _require_approve_access():
+	require_any_role(APS_APPROVE_ROLES, _("You need APS approval access to run this action."))
+
+
+def _require_release_access():
+	require_any_role(APS_RELEASE_ROLES, _("You need APS release access to apply formal production changes."))
+
+
+def _require_execution_access():
+	require_any_role(APS_EXECUTION_ROLES, _("You need APS execution access to sync execution feedback."))
+
+
+def _require_admin_access():
+	require_any_role(APS_ADMIN_ROLES, _("You need APS admin access to run this maintenance action."))
+
+
+def _make_xlsx_compat(data, sheet_name, column_widths=None, header_index=None):
+	kwargs = {"column_widths": column_widths}
+	if "header_index" in inspect.signature(make_xlsx).parameters:
+		kwargs["header_index"] = header_index
+	return make_xlsx(data, sheet_name, **kwargs)
 
 
 def _coerce_export_value(value, fieldtype=None):
@@ -31,8 +79,33 @@ def _estimate_column_width(label, values):
 	return min(max(width + 2, 12), 42)
 
 
+def _attach_review_counts(rows, child_doctype):
+	rows = rows or []
+	names = [row.get("name") for row in rows if row.get("name")]
+	if not names:
+		return rows
+	count_rows = frappe.get_all(
+		child_doctype,
+		filters={"parent": ("in", names)},
+		fields=["parent", "review_status", "count(name) as count"],
+		group_by="parent, review_status",
+	)
+	count_map = defaultdict(dict)
+	for item in count_rows:
+		count_map[item.get("parent")][item.get("review_status")] = item.get("count") or 0
+	for row in rows or []:
+		status_counts = count_map.get(row.get("name")) or {}
+		row["pending_count"] = status_counts.get("Pending", 0)
+		row["approved_count"] = status_counts.get("Approved", 0)
+		row["rejected_count"] = status_counts.get("Rejected", 0)
+		row["applied_count"] = status_counts.get("Applied", 0)
+		row["skipped_count"] = status_counts.get("Skipped", 0)
+	return rows
+
+
 @frappe.whitelist()
 def export_table_xlsx(payload_json):
+	_require_read_access()
 	payload = frappe.parse_json(payload_json) if payload_json else {}
 	if not isinstance(payload, dict):
 		frappe.throw(_("Invalid export payload."))
@@ -86,7 +159,7 @@ def export_table_xlsx(payload_json):
 		for idx in range(len(header_row))
 	]
 
-	xlsx_file = make_xlsx(data, sheet_name, column_widths=column_widths, header_index=header_index)
+	xlsx_file = _make_xlsx_compat(data, sheet_name, column_widths=column_widths, header_index=header_index)
 	frappe.local.response.filecontent = xlsx_file.getvalue()
 	frappe.local.response.type = "download"
 	frappe.local.response.filename = file_name
@@ -94,44 +167,86 @@ def export_table_xlsx(payload_json):
 
 
 @frappe.whitelist()
-def preview_customer_delivery_schedule(customer, company, version_no, file_url=None, rows_json=None):
-	return planning.preview_customer_delivery_schedule(
-		customer=customer,
-		company=company,
-		version_no=version_no,
+def inspect_customer_delivery_schedule_file(file_url, sheet_name=None, header_row_no=None, max_rows=None):
+	_require_demand_access()
+	return planning.inspect_customer_delivery_schedule_file(
 		file_url=file_url,
-		rows_json=rows_json,
+		sheet_name=sheet_name,
+		header_row_no=frappe.utils.cint(header_row_no or 0) or None,
+		max_rows=frappe.utils.cint(max_rows or 16),
 	)
 
 
 @frappe.whitelist()
-def import_customer_delivery_schedule(customer, company, version_no, file_url=None, rows_json=None, source_type="Customer Delivery Schedule"):
+def preview_customer_delivery_schedule(
+	customer,
+	company,
+	version_no,
+	schedule_scope=None,
+	import_strategy=None,
+	file_url=None,
+	rows_json=None,
+	mapping_json=None,
+):
+	_require_demand_access()
+	return planning.preview_customer_delivery_schedule(
+		customer=customer,
+		company=company,
+		version_no=version_no,
+		schedule_scope=schedule_scope,
+		import_strategy=import_strategy,
+		file_url=file_url,
+		rows_json=rows_json,
+		mapping_json=mapping_json,
+	)
+
+
+@frappe.whitelist()
+def import_customer_delivery_schedule(
+	customer,
+	company,
+	version_no,
+	schedule_scope=None,
+	import_strategy=None,
+	file_url=None,
+	rows_json=None,
+	mapping_json=None,
+	source_type="Customer Delivery Schedule",
+):
+	_require_demand_access()
 	return planning.import_customer_delivery_schedule(
 		customer=customer,
 		company=company,
 		version_no=version_no,
+		schedule_scope=schedule_scope,
+		import_strategy=import_strategy,
 		file_url=file_url,
 		rows_json=rows_json,
+		mapping_json=mapping_json,
 		source_type=source_type,
 	)
 
 
 @frappe.whitelist()
 def rebuild_demand_pool(company=None):
+	_require_plan_access()
 	return planning.rebuild_demand_pool(company=company)
 
 
 @frappe.whitelist()
 def rebuild_net_requirements(company=None):
+	_require_plan_access()
 	return planning.rebuild_net_requirements(company=company)
 
 
 @frappe.whitelist()
-def run_planning_run(run_name=None, company=None, plant_floor=None, horizon_days=None, item_code=None, customer=None, run_type=None):
+def run_planning_run(run_name=None, company=None, plant_floor=None, plant_floors=None, horizon_days=None, item_code=None, customer=None, run_type=None):
+	_require_plan_access()
 	return planning.run_planning_run(
 		run_name=run_name,
 		company=company,
 		plant_floor=plant_floor,
+		plant_floors=plant_floors,
 		horizon_days=horizon_days,
 		item_code=item_code,
 		customer=customer,
@@ -141,36 +256,49 @@ def run_planning_run(run_name=None, company=None, plant_floor=None, horizon_days
 
 @frappe.whitelist()
 def approve_planning_run(run_name):
+	_require_approve_access()
 	return planning.approve_planning_run(run_name)
 
 
 @frappe.whitelist()
 def sync_planning_run_to_execution(run_name):
+	_require_release_access()
 	return planning.sync_planning_run_to_execution(run_name)
 
 
 @frappe.whitelist()
 def release_planning_run(run_name, release_horizon_days=None):
+	_require_release_access()
 	return planning.release_planning_run(run_name, release_horizon_days=release_horizon_days)
 
 
 @frappe.whitelist()
 def validate_run_mold_readiness(run_name):
+	_require_plan_access()
 	return planning.validate_run_mold_readiness(run_name, persist_exceptions=True)
 
 
 @frappe.whitelist()
 def generate_work_order_proposals(run_name):
+	_require_release_access()
 	return planning.generate_work_order_proposals(run_name)
 
 
 @frappe.whitelist()
 def apply_work_order_proposals(batch_name):
+	_require_release_access()
 	return planning.apply_work_order_proposals(batch_name)
 
 
 @frappe.whitelist()
+def reject_work_order_proposals(batch_name, reason):
+	_require_release_access()
+	return planning.reject_work_order_proposals(batch_name, reason)
+
+
+@frappe.whitelist()
 def generate_shift_schedule_proposals(run_name=None, work_order_proposal_batch=None, release_horizon_days=None):
+	_require_release_access()
 	return planning.generate_shift_schedule_proposals(
 		run_name=run_name,
 		work_order_proposal_batch=work_order_proposal_batch,
@@ -180,11 +308,19 @@ def generate_shift_schedule_proposals(run_name=None, work_order_proposal_batch=N
 
 @frappe.whitelist()
 def apply_shift_schedule_proposals(batch_name):
+	_require_release_access()
 	return planning.apply_shift_schedule_proposals(batch_name)
 
 
 @frappe.whitelist()
+def reject_shift_schedule_proposals(batch_name, reason):
+	_require_release_access()
+	return planning.reject_shift_schedule_proposals(batch_name, reason)
+
+
+@frappe.whitelist()
 def update_schedule_notes(result_name=None, segment_name=None, result_note=None, segment_note=None):
+	_require_plan_access()
 	return planning.update_schedule_notes(
 		result_name=result_name,
 		segment_name=segment_name,
@@ -195,29 +331,41 @@ def update_schedule_notes(result_name=None, segment_name=None, result_note=None,
 
 @frappe.whitelist()
 def sync_execution_feedback_to_aps(run_name):
+	_require_execution_access()
 	return planning.sync_execution_feedback_to_aps(run_name)
 
 
 @frappe.whitelist()
-def get_execution_health_for_run(run_name):
-	return planning.get_execution_health_for_run(run_name)
+def get_execution_health_for_run(run_name, sync=0):
+	_require_execution_access()
+	return planning.get_execution_health_for_run(run_name, sync=frappe.utils.cint(sync))
+
+
+@frappe.whitelist()
+def sync_machine_capabilities_from_workstations():
+	_require_admin_access()
+	return customizations.sync_machine_capabilities_from_workstations()
 
 
 @frappe.whitelist()
 def analyze_change_request_impact(change_request):
+	_require_demand_access()
 	return planning.analyze_change_request_impact(change_request)
 
 
 @frappe.whitelist()
 def apply_change_request(change_request):
+	_require_approve_access()
 	return planning.apply_change_request(change_request)
 
 
 @frappe.whitelist()
-def analyze_insert_order_impact(company, plant_floor, item_code, qty, required_date, customer=None):
+def analyze_insert_order_impact(company, plant_floor=None, plant_floors=None, item_code=None, qty=None, required_date=None, customer=None):
+	_require_read_access()
 	return planning.analyze_insert_order_impact(
 		company=company,
 		plant_floor=plant_floor,
+		plant_floors=plant_floors,
 		item_code=item_code,
 		qty=qty,
 		required_date=required_date,
@@ -227,16 +375,19 @@ def analyze_insert_order_impact(company, plant_floor, item_code, qty, required_d
 
 @frappe.whitelist()
 def rebuild_exceptions(run_name):
+	_require_plan_access()
 	return planning.rebuild_exceptions(run_name)
 
 
 @frappe.whitelist()
 def get_next_actions_for_context(doctype, docname):
+	_require_read_access()
 	return planning.get_next_actions_for_context(doctype=doctype, docname=docname)
 
 
 @frappe.whitelist()
 def promote_schedule_import_to_net_requirement(import_batch=None, schedule=None, company=None):
+	_require_plan_access()
 	return planning.promote_schedule_import_to_net_requirement(
 		import_batch=import_batch,
 		schedule=schedule,
@@ -245,10 +396,12 @@ def promote_schedule_import_to_net_requirement(import_batch=None, schedule=None,
 
 
 @frappe.whitelist()
-def create_trial_run_from_net_requirement_context(company=None, plant_floor=None, item_code=None, customer=None, horizon_days=None):
+def create_trial_run_from_net_requirement_context(company=None, plant_floor=None, plant_floors=None, item_code=None, customer=None, horizon_days=None):
+	_require_plan_access()
 	return planning.create_trial_run_from_net_requirement_context(
 		company=company,
 		plant_floor=plant_floor,
+		plant_floors=plant_floors,
 		item_code=item_code,
 		customer=customer,
 		horizon_days=horizon_days,
@@ -256,22 +409,28 @@ def create_trial_run_from_net_requirement_context(company=None, plant_floor=None
 
 
 @frappe.whitelist()
-def preview_manual_schedule_adjustment(segment_name, target_workstation=None, before_segment_name=None, allow_locked=0, allow_risk_override=0):
+def preview_manual_schedule_adjustment(segment_name, target_workstation=None, before_segment_name=None, target_start_time=None, target_end_time=None, allow_locked=0, allow_risk_override=0):
+	_require_plan_access()
 	return planning.preview_manual_schedule_adjustment(
 		segment_name=segment_name,
 		target_workstation=target_workstation,
 		before_segment_name=before_segment_name,
+		target_start_time=target_start_time,
+		target_end_time=target_end_time,
 		allow_locked=frappe.utils.cint(allow_locked),
 		allow_risk_override=frappe.utils.cint(allow_risk_override),
 	)
 
 
 @frappe.whitelist()
-def apply_manual_schedule_adjustment(segment_name, target_workstation=None, before_segment_name=None, manual_note=None, allow_locked=0, allow_risk_override=0):
+def apply_manual_schedule_adjustment(segment_name, target_workstation=None, before_segment_name=None, target_start_time=None, target_end_time=None, manual_note=None, allow_locked=0, allow_risk_override=0):
+	_require_release_access()
 	return planning.apply_manual_schedule_adjustment(
 		segment_name=segment_name,
 		target_workstation=target_workstation,
 		before_segment_name=before_segment_name,
+		target_start_time=target_start_time,
+		target_end_time=target_end_time,
 		manual_note=manual_note,
 		allow_locked=frappe.utils.cint(allow_locked),
 		allow_risk_override=frappe.utils.cint(allow_risk_override),
@@ -280,11 +439,19 @@ def apply_manual_schedule_adjustment(segment_name, target_workstation=None, befo
 
 @frappe.whitelist()
 def get_schedule_result_detail(result_name):
+	_require_read_access()
 	return planning.get_schedule_result_detail(result_name=result_name)
 
 
 @frappe.whitelist()
+def get_exception_resolution_context(exception_name):
+	_require_read_access()
+	return planning.get_exception_resolution_context(exception_name=exception_name)
+
+
+@frappe.whitelist()
 def repair_item_references(company=None, include_standard=1, include_aps=1, commit=1):
+	_require_admin_access()
 	return planning.repair_item_references(
 		company=company,
 		include_standard=frappe.utils.cint(include_standard),
@@ -295,11 +462,13 @@ def repair_item_references(company=None, include_standard=1, include_aps=1, comm
 
 @frappe.whitelist()
 def detach_standard_references(dry_run=1):
+	_require_admin_access()
 	return planning.detach_standard_references(dry_run=frappe.utils.cint(dry_run))
 
 
 @frappe.whitelist()
 def get_workspace_dashboard_data():
+	_require_read_access()
 	return {
 		"active_schedules": frappe.db.count("Customer Delivery Schedule", {"status": "Active"}),
 		"open_demands": frappe.db.count("APS Demand Pool", {"status": "Open"}),
@@ -314,6 +483,7 @@ def get_workspace_dashboard_data():
 
 @frappe.whitelist()
 def get_schedule_console_data(customer=None, company=None):
+	_require_read_access()
 	schedule_filters = planning._strip_none({"customer": customer, "company": company})
 	active_schedules = frappe.get_all(
 		"Customer Delivery Schedule",
@@ -322,7 +492,9 @@ def get_schedule_console_data(customer=None, company=None):
 			"name",
 			"customer",
 			"company",
+			"schedule_scope",
 			"version_no",
+			"import_strategy",
 			"source_type",
 			"status",
 			"schedule_total_qty",
@@ -338,7 +510,9 @@ def get_schedule_console_data(customer=None, company=None):
 			"name",
 			"customer",
 			"company",
+			"schedule_scope",
 			"version_no",
+			"import_strategy",
 			"source_type",
 			"status",
 			"imported_rows",
@@ -365,6 +539,7 @@ def get_schedule_console_data(customer=None, company=None):
 
 @frappe.whitelist()
 def get_net_requirement_page_data(company=None, item_code=None, customer=None):
+	_require_read_access()
 	filters = planning._strip_none({"company": company, "item_code": item_code, "customer": customer})
 	rows = frappe.get_all(
 		"APS Net Requirement",
@@ -400,7 +575,8 @@ def get_net_requirement_page_data(company=None, item_code=None, customer=None):
 
 @frappe.whitelist()
 def get_run_console_data(company=None, plant_floor=None):
-	filters = planning._strip_none({"company": company, "plant_floor": plant_floor})
+	_require_read_access()
+	filters = planning._strip_none({"company": company})
 	runs = frappe.get_all(
 		"APS Planning Run",
 		filters=filters,
@@ -408,6 +584,7 @@ def get_run_console_data(company=None, plant_floor=None):
 			"name",
 			"company",
 			"plant_floor",
+			"selected_plant_floor_summary",
 			"planning_date",
 			"status",
 			"approval_state",
@@ -421,6 +598,15 @@ def get_run_console_data(company=None, plant_floor=None):
 		order_by="modified desc",
 		limit=50,
 	)
+	if plant_floor:
+		runs = [
+			row
+			for row in runs
+			if plant_floor in planning._coerce_plant_floor_list(
+				plant_floors=(row.selected_plant_floor_summary or "").split(","),
+				plant_floor=row.plant_floor,
+			)
+		]
 	return {
 		"runs": [
 			{
@@ -439,7 +625,11 @@ def get_run_console_data(company=None, plant_floor=None):
 
 @frappe.whitelist()
 def get_schedule_gantt_data(run_name):
+	_require_read_access()
 	settings = planning.get_settings_dict()
+	run_doc = frappe.get_doc("APS Planning Run", run_name)
+	selected_plant_floors = planning._get_run_selected_plant_floors(run_doc)
+	lanes = planning._get_machine_capability_rows(selected_plant_floors)
 	results = frappe.get_all(
 		"APS Schedule Result",
 		filters={"planning_run": run_name},
@@ -471,7 +661,15 @@ def get_schedule_gantt_data(run_name):
 		order_by="modified asc",
 	)
 	if not results:
-		return {"tasks": [], "rows": []}
+		return {
+			"tasks": [],
+			"rows": [],
+			"lanes": lanes,
+			"selected_plant_floors": selected_plant_floors,
+			"blocked_results": [],
+			"run": planning.get_next_actions_for_context("APS Planning Run", run_name),
+			"run_context": planning.get_next_actions_for_context("APS Planning Run", run_name),
+		}
 	item_detail_map = {
 		row.item_code: planning._get_item_detail_snapshot(row.item_code, row.customer, settings)
 		for row in results
@@ -484,6 +682,7 @@ def get_schedule_gantt_data(run_name):
 		fields=[
 			"name",
 			"parent",
+			"plant_floor",
 			"workstation",
 			"start_time",
 			"end_time",
@@ -525,6 +724,8 @@ def get_schedule_gantt_data(run_name):
 			"source_doctype",
 			"source_name",
 			"workstation",
+			"diagnostic_json",
+			"resolution_hint",
 		],
 		order_by="modified desc",
 	)
@@ -562,6 +763,7 @@ def get_schedule_gantt_data(run_name):
 					"requested_date": parent.requested_date,
 					"demand_source": parent.demand_source,
 					"net_requirement": parent.net_requirement,
+					"plant_floor": row.plant_floor,
 					"workstation": row.workstation,
 					"planned_qty": row.planned_qty,
 					"lane_key": row.lane_key,
@@ -621,19 +823,33 @@ def get_schedule_gantt_data(run_name):
 				"unscheduled_qty": row.unscheduled_qty,
 				"blocking_reason": row.blocking_reason,
 				"exception_types": [risk_row.exception_type for risk_row in risk_rows],
+				"diagnostic_summary": next(
+					(
+						(planning._parse_diagnostic_json(risk_row.get("diagnostic_json")) or {}).get("root_cause_text")
+						or risk_row.get("resolution_hint")
+						or risk_row.get("message")
+						for risk_row in risk_rows
+						if risk_row.get("message")
+					),
+					"",
+				),
 				"result_route": f"Form/APS Schedule Result/{row.name}",
 			}
 		)
 	return {
 		"tasks": tasks,
 		"rows": segments,
+		"lanes": lanes,
+		"selected_plant_floors": selected_plant_floors,
 		"blocked_results": blocked_results,
 		"run": planning.get_next_actions_for_context("APS Planning Run", run_name),
+		"run_context": planning.get_next_actions_for_context("APS Planning Run", run_name),
 	}
 
 
 @frappe.whitelist()
 def get_release_center_data(run_name=None):
+	_require_read_access()
 	batch_filters = planning._strip_none({"planning_run": run_name})
 	work_order_proposal_batches = frappe.get_all(
 		"APS Work Order Proposal Batch",
@@ -650,6 +866,7 @@ def get_release_center_data(run_name=None):
 		order_by="modified desc",
 		limit=50,
 	)
+	_attach_review_counts(work_order_proposal_batches, "APS Work Order Proposal Item")
 	shift_schedule_proposal_batches = frappe.get_all(
 		"APS Shift Schedule Proposal Batch",
 		filters=batch_filters,
@@ -666,6 +883,7 @@ def get_release_center_data(run_name=None):
 		order_by="modified desc",
 		limit=50,
 	)
+	_attach_review_counts(shift_schedule_proposal_batches, "APS Shift Schedule Proposal Item")
 	release_batches = frappe.get_all(
 		"APS Release Batch",
 		filters=batch_filters,
@@ -700,10 +918,23 @@ def get_release_center_data(run_name=None):
 			"source_doctype",
 			"source_name",
 			"resolution_hint",
+			"diagnostic_json",
 		],
 		order_by="modified desc",
 		limit=100,
 	)
+	for row in exceptions:
+		diagnostic = planning._parse_diagnostic_json(row.get("diagnostic_json"))
+		row["diagnostic"] = diagnostic
+		row["root_cause_codes"] = diagnostic.get("root_cause_codes") or []
+		row["root_cause_text"] = diagnostic.get("root_cause_text") or row.get("resolution_hint") or row.get("message")
+		row["suggested_actions"] = diagnostic.get("suggested_actions") or []
+		row["has_resolution_context"] = 1
+		row["gantt_route"] = f"aps-schedule-gantt?run_name={run_name}" if run_name else ""
+		row["execution_route"] = f"aps-release-center?run_name={run_name}" if run_name else ""
+		row["source_route"] = f"Form/{row['source_doctype']}/{row['source_name']}" if row.get("source_doctype") and row.get("source_name") else ""
+		row["item_route"] = f"Form/Item/{row['item_code']}" if row.get("item_code") else ""
+		row["workstation_route"] = f"Form/Workstation/{row['workstation']}" if row.get("workstation") else ""
 	run_context = planning.get_next_actions_for_context("APS Planning Run", run_name) if run_name else None
 	execution_health = planning.get_execution_health_for_run(run_name) if run_name else None
 	return {
@@ -713,4 +944,5 @@ def get_release_center_data(run_name=None):
 		"exceptions": exceptions,
 		"run_context": run_context,
 		"execution_health": execution_health,
+		"recent_runs": planning.get_recent_run_contexts(limit=8),
 	}

@@ -5,14 +5,18 @@
  "field_order": [
   "result_reference",
   "segment_reference",
+  "action",
   "item_code",
   "work_order",
+  "plant_floor",
   "posting_date",
   "shift_type",
   "workstation",
   "planned_start_time",
   "planned_end_time",
   "planned_qty",
+  "existing_scheduling",
+  "existing_scheduling_item",
   "target_scheduling",
   "review_status",
   "review_note"
@@ -24,6 +28,7 @@
    "in_list_view": 1,
    "label": "APS Result",
    "options": "APS Schedule Result",
+   "read_only": 1,
    "reqd": 1
   },
   {
@@ -31,6 +36,16 @@
    "fieldtype": "Data",
    "in_list_view": 1,
    "label": "APS Segment",
+   "read_only": 1,
+   "reqd": 1
+  },
+  {
+   "fieldname": "action",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Action",
+   "options": "\nKeep Existing\nUpdate Existing\nMove Existing\nCancel Existing\nNew",
+   "read_only": 1,
    "reqd": 1
   },
   {
@@ -38,6 +53,7 @@
    "fieldtype": "Link",
    "label": "Item Code",
    "options": "Item",
+   "read_only": 1,
    "reqd": 1
   },
   {
@@ -45,12 +61,21 @@
    "fieldtype": "Link",
    "label": "Work Order",
    "options": "Work Order",
+   "read_only": 1,
    "reqd": 1
+  },
+  {
+   "fieldname": "plant_floor",
+   "fieldtype": "Link",
+   "label": "Plant Floor",
+   "options": "Plant Floor",
+   "read_only": 1
   },
   {
    "fieldname": "posting_date",
    "fieldtype": "Date",
    "label": "Posting Date",
+   "read_only": 1,
    "reqd": 1
   },
   {
@@ -58,30 +83,49 @@
    "fieldtype": "Select",
    "label": "Shift Type",
    "options": "\u767d\u73ed\n\u665a\u73ed",
+   "read_only": 1,
    "reqd": 1
   },
   {
    "fieldname": "workstation",
    "fieldtype": "Link",
+   "in_list_view": 1,
    "label": "Workstation",
    "options": "Workstation",
+   "read_only": 1,
    "reqd": 1
   },
   {
    "fieldname": "planned_start_time",
    "fieldtype": "Datetime",
-   "label": "Planned Start Time"
+   "label": "Planned Start Time",
+   "read_only": 1
   },
   {
    "fieldname": "planned_end_time",
    "fieldtype": "Datetime",
-   "label": "Planned End Time"
+   "label": "Planned End Time",
+   "read_only": 1
   },
   {
    "fieldname": "planned_qty",
    "fieldtype": "Float",
    "label": "Planned Qty",
+   "read_only": 1,
    "reqd": 1
+  },
+  {
+   "fieldname": "existing_scheduling",
+   "fieldtype": "Link",
+   "label": "Existing Scheduling",
+   "options": "Work Order Scheduling",
+   "read_only": 1
+  },
+  {
+   "fieldname": "existing_scheduling_item",
+   "fieldtype": "Data",
+   "label": "Existing Scheduling Item",
+   "read_only": 1
   },
   {
    "fieldname": "target_scheduling",
@@ -112,4 +156,3 @@
  "sort_field": "idx",
  "sort_order": "ASC"
 }
-

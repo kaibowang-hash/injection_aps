@@ -47,32 +47,40 @@
    "in_list_view": 1,
    "label": "Planning Run",
    "options": "APS Planning Run",
-   "reqd": 1
+   "read_only": 1,
+   "reqd": 1,
+   "search_index": 1
   },
   {
    "fieldname": "company",
    "fieldtype": "Link",
    "label": "Company",
    "options": "Company",
-   "reqd": 1
+   "read_only": 1,
+   "reqd": 1,
+   "search_index": 1
   },
   {
    "fieldname": "plant_floor",
    "fieldtype": "Link",
    "label": "Plant Floor",
-   "options": "Plant Floor"
+   "options": "Plant Floor",
+   "read_only": 1,
+   "search_index": 1
   },
   {
    "fieldname": "net_requirement",
    "fieldtype": "Link",
    "label": "Net Requirement",
-   "options": "APS Net Requirement"
+   "options": "APS Net Requirement",
+   "read_only": 1
   },
   {
    "fieldname": "customer",
    "fieldtype": "Link",
    "label": "Customer",
-   "options": "Customer"
+   "options": "Customer",
+   "read_only": 1
   },
   {
    "fieldname": "item_code",
@@ -80,19 +88,24 @@
    "in_list_view": 1,
    "label": "Item Code",
    "options": "Item",
-   "reqd": 1
+   "read_only": 1,
+   "reqd": 1,
+   "search_index": 1
   },
   {
    "fieldname": "requested_date",
    "fieldtype": "Date",
    "in_list_view": 1,
-   "label": "Requested Date"
+   "label": "Requested Date",
+   "read_only": 1,
+   "search_index": 1
   },
   {
    "fieldname": "demand_source",
    "fieldtype": "Select",
    "label": "Demand Source",
-   "options": "\nCustomer Delivery Schedule\nSales Order Backlog\nSafety Stock\nUrgent Order\nTrial Production\nComplaint Replenishment"
+   "options": "\nCustomer Delivery Schedule\nSales Order Backlog\nSafety Stock\nUrgent Order\nTrial Production\nComplaint Replenishment",
+   "read_only": 1
   },
   {
    "fieldname": "planned_qty",
@@ -118,14 +131,18 @@
    "fieldtype": "Select",
    "in_list_view": 1,
    "label": "Status",
-   "options": "\nDraft\nPlanned\nRisk\nApproved\nWork Order Proposed\nShift Proposed\nApplied\nBlocked"
+   "options": "\nDraft\nPlanned\nRisk\nApproved\nWork Order Proposed\nShift Proposed\nApplied\nBlocked",
+   "read_only": 1,
+   "search_index": 1
   },
   {
    "fieldname": "risk_status",
    "fieldtype": "Select",
    "in_list_view": 1,
    "label": "Risk Status",
-   "options": "\nNormal\nAttention\nCritical\nBlocked"
+   "options": "\nNormal\nAttention\nCritical\nBlocked",
+   "read_only": 1,
+   "search_index": 1
   },
   {
    "fieldname": "flow_step",
@@ -184,17 +201,20 @@
   {
    "fieldname": "is_urgent",
    "fieldtype": "Check",
-   "label": "Urgent"
+   "label": "Urgent",
+   "read_only": 1
   },
   {
    "fieldname": "is_locked",
    "fieldtype": "Check",
-   "label": "Locked"
+   "label": "Locked",
+   "read_only": 1
   },
   {
    "fieldname": "is_manual",
    "fieldtype": "Check",
-   "label": "Manual"
+   "label": "Manual",
+   "read_only": 1
   },
   {
    "fieldname": "actual_status",

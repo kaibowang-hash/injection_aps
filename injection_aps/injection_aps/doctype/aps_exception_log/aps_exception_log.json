@@ -14,6 +14,7 @@
   "workstation",
   "message",
   "resolution_hint",
+  "diagnostic_json",
   "source_doctype",
   "source_name",
   "is_blocking"
@@ -24,7 +25,8 @@
    "fieldtype": "Link",
    "in_list_view": 1,
    "label": "Planning Run",
-   "options": "APS Planning Run"
+   "options": "APS Planning Run",
+   "read_only": 1
   },
   {
    "fieldname": "severity",
@@ -32,6 +34,7 @@
    "in_list_view": 1,
    "label": "Severity",
    "options": "\nWarning\nCritical\nBlocking",
+   "read_only": 1,
    "reqd": 1
   },
   {
@@ -39,6 +42,7 @@
    "fieldtype": "Data",
    "in_list_view": 1,
    "label": "Exception Type",
+   "read_only": 1,
    "reqd": 1
   },
   {
@@ -53,46 +57,60 @@
    "fieldname": "item_code",
    "fieldtype": "Link",
    "label": "Item Code",
-   "options": "Item"
+   "options": "Item",
+   "read_only": 1
   },
   {
    "fieldname": "customer",
    "fieldtype": "Link",
    "label": "Customer",
-   "options": "Customer"
+   "options": "Customer",
+   "read_only": 1
   },
   {
    "fieldname": "workstation",
    "fieldtype": "Link",
    "label": "Machine / Workstation",
-   "options": "Workstation"
+   "options": "Workstation",
+   "read_only": 1
   },
   {
    "fieldname": "message",
    "fieldtype": "Small Text",
    "label": "Message",
+   "read_only": 1,
    "reqd": 1
   },
   {
    "fieldname": "resolution_hint",
    "fieldtype": "Small Text",
-   "label": "Resolution Hint"
+   "label": "Resolution Hint",
+   "read_only": 1
+  },
+  {
+   "fieldname": "diagnostic_json",
+   "fieldtype": "Long Text",
+   "label": "Diagnostic JSON",
+   "read_only": 1
   },
   {
    "fieldname": "source_doctype",
    "fieldtype": "Data",
-   "label": "Source Doctype"
+   "label": "Source Doctype",
+   "read_only": 1
   },
   {
    "fieldname": "source_name",
    "fieldtype": "Dynamic Link",
    "label": "Source Name",
-   "options": "source_doctype"
+   "options": "source_doctype",
+   "read_only": 1
   },
   {
    "fieldname": "is_blocking",
    "fieldtype": "Check",
-   "label": "Blocking"
+   "label": "Blocking",
+   "read_only": 1
   }
  ],
  "links": [],

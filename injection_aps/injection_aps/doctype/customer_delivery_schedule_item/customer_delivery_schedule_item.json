@@ -8,6 +8,10 @@
   "customer_part_no",
   "schedule_date",
   "qty",
+  "source_origin",
+  "source_excel_row",
+  "manual_override",
+  "manual_change_reason",
   "allocated_qty",
   "produced_qty",
   "delivered_qty",
@@ -51,19 +55,48 @@
    "reqd": 1
   },
   {
+   "default": "imported",
+   "fieldname": "source_origin",
+   "fieldtype": "Select",
+   "label": "Source Origin",
+   "options": "\nimported\nretained_existing\nmanual_added\nmanual_adjusted",
+   "read_only": 1
+  },
+  {
+   "fieldname": "source_excel_row",
+   "fieldtype": "Int",
+   "label": "Source Excel Row",
+   "read_only": 1
+  },
+  {
+   "fieldname": "manual_override",
+   "fieldtype": "Check",
+   "label": "Manual Override",
+   "read_only": 1
+  },
+  {
+   "fieldname": "manual_change_reason",
+   "fieldtype": "Small Text",
+   "label": "Manual Change Reason",
+   "read_only": 1
+  },
+  {
    "fieldname": "allocated_qty",
    "fieldtype": "Float",
-   "label": "Allocated Qty"
+   "label": "Allocated Qty",
+   "read_only": 1
   },
   {
    "fieldname": "produced_qty",
    "fieldtype": "Float",
-   "label": "Produced Qty"
+   "label": "Produced Qty",
+   "read_only": 1
   },
   {
    "fieldname": "delivered_qty",
    "fieldtype": "Float",
-   "label": "Delivered Qty"
+   "label": "Delivered Qty",
+   "read_only": 1
   },
   {
    "fieldname": "balance_qty",
@@ -75,13 +108,15 @@
    "fieldname": "change_type",
    "fieldtype": "Select",
    "label": "Change Type",
-   "options": "\nUnchanged\nAdded\nIncreased\nReduced\nAdvanced\nDelayed\nCancelled"
+   "options": "\nUnchanged\nAdded\nIncreased\nReduced\nAdvanced\nDelayed\nCancelled",
+   "read_only": 1
   },
   {
    "fieldname": "status",
    "fieldtype": "Select",
    "label": "Status",
-   "options": "\nOpen\nCovered\nCancelled"
+   "options": "\nOpen\nCovered\nCancelled",
+   "read_only": 1
   },
   {
    "fieldname": "remark",

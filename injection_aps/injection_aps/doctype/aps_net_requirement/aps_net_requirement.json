@@ -28,13 +28,17 @@
    "in_list_view": 1,
    "label": "Company",
    "options": "Company",
-   "reqd": 1
+   "read_only": 1,
+   "reqd": 1,
+   "search_index": 1
   },
   {
    "fieldname": "customer",
    "fieldtype": "Link",
    "label": "Customer",
-   "options": "Customer"
+   "options": "Customer",
+   "read_only": 1,
+   "search_index": 1
   },
   {
    "fieldname": "item_code",
@@ -42,14 +46,18 @@
    "in_list_view": 1,
    "label": "Item Code",
    "options": "Item",
-   "reqd": 1
+   "read_only": 1,
+   "reqd": 1,
+   "search_index": 1
   },
   {
    "fieldname": "demand_date",
    "fieldtype": "Date",
    "in_list_view": 1,
    "label": "Demand Date",
-   "reqd": 1
+   "read_only": 1,
+   "reqd": 1,
+   "search_index": 1
   },
   {
    "fieldname": "demand_qty",
@@ -105,7 +113,8 @@
    "fieldtype": "Float",
    "in_list_view": 1,
    "label": "Net Requirement Qty",
-   "read_only": 1
+   "read_only": 1,
+   "search_index": 1
   },
   {
    "fieldname": "reason_text",
@@ -117,7 +126,8 @@
    "fieldname": "is_system_generated",
    "fieldtype": "Check",
    "label": "System Generated",
-   "read_only": 1
+   "read_only": 1,
+   "search_index": 1
   }
  ],
  "links": [],

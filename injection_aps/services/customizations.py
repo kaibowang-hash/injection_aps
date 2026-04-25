@@ -13,6 +13,7 @@ APS_TRANSACTION_DOCTYPES = (
 	"Customer Delivery Schedule",
 	"APS Schedule Import Batch",
 	"APS Demand Pool",
+	"APS Demand Delta",
 	"APS Net Requirement",
 	"APS Schedule Result",
 	"APS Work Order Proposal Batch",
@@ -69,7 +70,8 @@ def ensure_default_settings():
 
 def ensure_seed_records():
 	_ensure_default_freeze_rule()
-	_seed_machine_capabilities_from_workstations()
+	sync_machine_capabilities_from_workstations()
+	backfill_schedule_scope_defaults()
 	frappe.clear_cache()
 
 
@@ -145,11 +147,11 @@ def _ensure_default_freeze_rule():
 	).insert(ignore_permissions=True)
 
 
-def _seed_machine_capabilities_from_workstations():
+def sync_machine_capabilities_from_workstations():
 	if not frappe.db.exists("DocType", "APS Machine Capability"):
-		return
+		return {"created": 0, "updated": 0}
 	if not frappe.db.exists("DocType", "Workstation"):
-		return
+		return {"created": 0, "updated": 0}
 
 	settings = frappe.get_single("APS Settings")
 	workstation_meta = frappe.get_meta("Workstation")
@@ -160,37 +162,110 @@ def _seed_machine_capabilities_from_workstations():
 
 	workstations = frappe.get_all("Workstation", fields=fields, order_by="name asc")
 	existing = {
-		row.workstation: row.name
-		for row in frappe.get_all("APS Machine Capability", fields=["name", "workstation"])
+		row.workstation: row
+		for row in frappe.get_all(
+			"APS Machine Capability",
+			fields=[
+				"name",
+				"workstation",
+				"plant_floor",
+				"machine_tonnage",
+				"risk_category",
+				"machine_status",
+				"queue_sequence",
+				"is_active",
+			],
+		)
 	}
+	created = 0
+	updated = 0
 
 	for idx, workstation in enumerate(workstations, start=1):
-		if workstation.name in existing:
+		values = {
+			"workstation": workstation.name,
+			"plant_floor": _get_valid_plant_floor(workstation.plant_floor),
+			"risk_category": workstation.get(risk_field) if risk_field in workstation else "",
+			"machine_status": _normalize_machine_status(workstation.status),
+			"last_synced_on": frappe.utils.now_datetime(),
+			"sync_source": "Workstation",
+		}
+		existing_row = existing.get(workstation.name)
+		if not existing_row:
+			doc = frappe.get_doc(
+				{
+					"doctype": "APS Machine Capability",
+					"machine_tonnage": _extract_tonnage_from_name(workstation.name),
+					"hourly_capacity_qty": 0,
+					"daily_capacity_qty": 0,
+					"queue_sequence": idx,
+					"is_active": 1,
+					**values,
+				}
+			)
+			doc.insert(ignore_permissions=True)
+			created += 1
 			continue
 
-		doc = frappe.get_doc(
-			{
-				"doctype": "APS Machine Capability",
-				"workstation": workstation.name,
-				"plant_floor": _get_valid_plant_floor(workstation.plant_floor),
-				"machine_tonnage": _extract_tonnage_from_name(workstation.name),
-				"risk_category": workstation.get(risk_field) if risk_field in workstation else "",
-				"hourly_capacity_qty": 0,
-				"daily_capacity_qty": 0,
-				"queue_sequence": idx,
-				"machine_status": _normalize_machine_status(workstation.status),
-				"is_active": 1,
-			}
+		if not frappe.db.exists("APS Machine Capability", existing_row.name):
+			continue
+		extracted_tonnage = _extract_tonnage_from_name(workstation.name)
+		if extracted_tonnage and abs(frappe.utils.flt(existing_row.machine_tonnage) - extracted_tonnage) > 0.001:
+			values["machine_tonnage"] = extracted_tonnage
+		frappe.db.set_value("APS Machine Capability", existing_row.name, values)
+		updated += 1
+
+	return {"created": created, "updated": updated}
+
+
+def backfill_schedule_scope_defaults():
+	if frappe.db.exists("DocType", "Customer Delivery Schedule"):
+		frappe.db.sql(
+			"""
+			update `tabCustomer Delivery Schedule`
+			set
+				schedule_scope = ifnull(nullif(version_no, ''), 'Default Scope'),
+				import_strategy = ifnull(nullif(import_strategy, ''), 'Replace Scope')
+			where ifnull(schedule_scope, '') = '' or ifnull(import_strategy, '') = ''
+			"""
 		)
-		doc.insert(ignore_permissions=True)
+	if frappe.db.exists("DocType", "APS Schedule Import Batch"):
+		frappe.db.sql(
+			"""
+			update `tabAPS Schedule Import Batch`
+			set
+				schedule_scope = ifnull(nullif(version_no, ''), 'Default Scope'),
+				import_strategy = ifnull(nullif(import_strategy, ''), 'Replace Scope')
+			where ifnull(schedule_scope, '') = '' or ifnull(import_strategy, '') = ''
+			"""
+		)
+	if frappe.db.exists("DocType", "APS Demand Delta") and frappe.db.exists("DocType", "Customer Delivery Schedule"):
+		frappe.db.sql(
+			"""
+			update `tabAPS Demand Delta` delta
+			inner join `tabCustomer Delivery Schedule` schedule
+				on schedule.name = delta.schedule_reference
+			set delta.schedule_scope = schedule.schedule_scope
+			where ifnull(delta.schedule_scope, '') = ''
+			"""
+		)
 
 
 def _extract_tonnage_from_name(workstation_name: str | None) -> float:
 	if not workstation_name:
 		return 0
 
+	name = str(workstation_name)
+	patterns = [
+		r"(\d+(?:\.\d+)?)\s*[Tt]\b",
+		r"(\d+(?:\.\d+)?)\s*吨",
+	]
+	for pattern in patterns:
+		matches = re.findall(pattern, name)
+		if matches:
+			return float(matches[-1])
+
 	digits = []
-	for token in str(workstation_name).replace("/", " ").replace("_", " ").split():
+	for token in name.replace("/", " ").replace("_", " ").split():
 		filtered = "".join(ch for ch in token if ch.isdigit())
 		if filtered:
 			digits.append(filtered)
@@ -200,19 +275,23 @@ def _extract_tonnage_from_name(workstation_name: str | None) -> float:
 
 def _normalize_machine_status(workstation_status: str | None) -> str:
 	status = (workstation_status or "").strip().lower()
-	if status in {"production", "running", "in production"}:
-		return "Running"
-	if status in {"idle", "available", "ready"}:
-		return "Available"
-	if status in {"setup", "changeover"}:
-		return "Setup"
-	if status in {"maintenance", "under maintenance", "maintain"}:
-		return "Maintenance"
-	if status in {"fault", "error", "breakdown"}:
-		return "Fault"
-	if status in {"unavailable", "stopped", "stop", "offline"}:
+	if status in {"off", "offline", "停机", "停用", "离线"}:
 		return "Unavailable"
-	if status in {"disabled"}:
+	if status in {"problem", "fault", "error", "breakdown", "故障", "异常"}:
+		return "Fault"
+	if any(token in status for token in ("production", "running", "生产", "运行")):
+		return "Running"
+	if any(token in status for token in ("idle", "available", "ready", "空闲", "可用", "待机", "就绪")):
+		return "Available"
+	if any(token in status for token in ("setup", "changeover", "换模", "调机", "准备")):
+		return "Setup"
+	if any(token in status for token in ("maintenance", "maintain", "保养", "维护", "维修")):
+		return "Maintenance"
+	if any(token in status for token in ("problem", "fault", "error", "breakdown", "故障", "异常", "损坏")):
+		return "Fault"
+	if any(token in status for token in ("unavailable", "stopped", "stop", "offline", "停机", "停产", "暂停", "离线", "停用")):
+		return "Unavailable"
+	if any(token in status for token in ("disabled", "禁用")):
 		return "Disabled"
 	return "Available"
 
@@ -221,3 +300,4 @@ def _get_valid_plant_floor(plant_floor: str | None) -> str | None:
 	if not plant_floor:
 		return None
 	return plant_floor if frappe.db.exists("Plant Floor", plant_floor) else None
+import re

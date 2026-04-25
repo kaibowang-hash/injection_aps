@@ -8,35 +8,43 @@ frappe.pages["aps-release-center"].on_page_load = function (wrapper) {
 };
 
 frappe.pages["aps-release-center"].on_page_show = function (wrapper) {
-	wrapper.injection_aps_controller?.refresh();
+	if (wrapper.injection_aps_controller) {
+		wrapper.injection_aps_controller.refresh();
+	}
 };
 
 class InjectionAPSReleaseCenter {
 	constructor(wrapper) {
 		this.wrapper = wrapper;
+		this.wrapper.classList.add("ia-app-page");
 		this.lastImpact = null;
 		this.page = frappe.ui.make_app_page({
 			parent: wrapper,
-			title: __("Proposal & Execution Center"),
+			title: __("Execution"),
 			single_column: true,
 		});
 		this.runField = this.page.add_field({
 			fieldtype: "Link",
 			fieldname: "run_name",
 			options: "APS Planning Run",
-			label: __("Planning Run"),
-			default: new URLSearchParams(window.location.search).get("run_name") || undefined,
+			label: __("APS Run"),
+			default: injection_aps.ui.get_query_param("run_name") || undefined,
 			change: () => this.refresh(),
 		});
-		this.page.set_primary_action(__("Sync Execution Feedback"), () => this.syncExecution());
+		if (injection_aps.ui.can_run_action("sync_execution")) {
+			this.page.set_primary_action(__("Sync"), () => this.syncExecution());
+		}
 		this.page.set_secondary_action(__("Insert Order Impact"), () => this.openImpactDialog());
 
 		this.page.main.html(`
-			<div class="ia-page">
+				<div class="ia-page">
 				<div class="ia-banner">
-					<h3>${__("Proposal & Execution Center")}</h3>
-					<p>${__("APS stays as a planning layer. Formal documents are created only after proposal review: work orders first, then white / night shift scheduling, then execution feedback rolls back into APS.")}</p>
+					<h3>${__("Execution")}</h3>
+					<p>${__("This page handles proposal review, formal apply, execution feedback, and exception handling after an APS run. Select an APS run first before working here.")}</p>
 				</div>
+				<div class="ia-empty-state-host"></div>
+				<div class="ia-run-body">
+					<div class="ia-run-context-host"></div>
 				<div class="ia-status-host"></div>
 				<div class="ia-action-host"></div>
 				<div class="ia-card-grid ia-summary"></div>
@@ -47,7 +55,7 @@ class InjectionAPSReleaseCenter {
 						<div class="ia-wo-proposal-table" style="margin-top: 8px;"></div>
 					</div>
 					<div class="ia-panel">
-						<h4>${__("Shift Schedule Proposal Batches")}</h4>
+						<h4>${__("Day/Night Shift Proposal Batches")}</h4>
 						<div class="ia-shift-proposal-table" style="margin-top: 8px;"></div>
 					</div>
 				</div>
@@ -62,12 +70,16 @@ class InjectionAPSReleaseCenter {
 					</div>
 				</div>
 				<div class="ia-panel">
-					<h4>${__("Latest Impact Analysis")}</h4>
+					<h4>${__("Insert Order Impact Analysis")}</h4>
 					<div class="ia-impact-summary ia-card-grid" style="margin-top: 8px;"></div>
 					<div class="ia-impact-table" style="margin-top: 8px;"></div>
 				</div>
+				</div>
 			</div>
 		`);
+		this.emptyStateHost = this.page.main.find(".ia-empty-state-host")[0];
+		this.runBody = this.page.main.find(".ia-run-body")[0];
+		this.runContextHost = this.page.main.find(".ia-run-context-host")[0];
 		this.summary = this.page.main.find(".ia-summary")[0];
 		this.feedback = this.page.main.find(".ia-feedback")[0];
 		this.statusHost = this.page.main.find(".ia-status-host")[0];
@@ -78,25 +90,72 @@ class InjectionAPSReleaseCenter {
 		this.exceptionTable = this.page.main.find(".ia-exception-table")[0];
 		this.impactSummary = this.page.main.find(".ia-impact-summary")[0];
 		this.impactTable = this.page.main.find(".ia-impact-table")[0];
+		this.exceptionRowsByName = {};
+	}
+
+	renderCollapsedChipList(values, options) {
+		const settings = Object.assign({ previewCount: 5 }, options || {});
+		const rows = (values || []).filter(Boolean);
+		if (!rows.length) {
+			return { html: `<div class="ia-muted">-</div>`, bind: null };
+		}
+		const listId = `ia-collapsible-${Math.random().toString(36).slice(2, 8)}`;
+		const toggleId = `ia-collapsible-toggle-${Math.random().toString(36).slice(2, 8)}`;
+		const renderPreview = (collapsed) => {
+			const visible = collapsed ? rows.slice(0, settings.previewCount) : rows;
+			return visible.map((row) => `<span class="ia-chip">${injection_aps.ui.escape(row)}</span>`).join("");
+		};
+		const html = `
+			<div class="ia-list-preview" id="${listId}" data-collapsed="1">${renderPreview(true)}</div>
+			${rows.length > settings.previewCount ? `<button type="button" class="ia-inline-toggle" id="${toggleId}">${__("Expand All")} (+${rows.length - settings.previewCount})</button>` : ""}
+		`;
+		const bind = () => {
+			if (rows.length <= settings.previewCount) {
+				return;
+			}
+			const listNode = document.getElementById(listId);
+			const toggleNode = document.getElementById(toggleId);
+			if (!listNode || !toggleNode) {
+				return;
+			}
+			toggleNode.addEventListener("click", () => {
+				const collapsed = listNode.dataset.collapsed !== "0";
+				listNode.innerHTML = renderPreview(!collapsed);
+				listNode.dataset.collapsed = collapsed ? "0" : "1";
+				toggleNode.textContent = collapsed ? __("Collapse") : `${__("Expand All")} (+${rows.length - settings.previewCount})`;
+			});
+		};
+		return { html, bind };
 	}
 
 	async refresh() {
 		injection_aps.ui.ensure_styles();
-		injection_aps.ui.set_feedback(this.feedback, __("Loading proposal / execution center..."));
+		const runName = this.runField.get_value();
+		injection_aps.ui.set_feedback(this.feedback, __("Loading execution center..."));
 		try {
 			const data = await frappe.xcall("injection_aps.api.app.get_release_center_data", {
-				run_name: this.runField.get_value() || undefined,
+				run_name: runName || undefined,
 			});
 			this.data = data;
-			injection_aps.ui.render_status_line(this.statusHost, data.run_context || {
-				current_step: __("Run Not Selected"),
-				next_step: __("Choose Run"),
-				blocking_reason: "",
-			});
+			if (!runName) {
+				this.runBody.style.display = "none";
+				injection_aps.ui.render_run_empty_state(this.emptyStateHost, {
+					title: __("No APS Run Selected"),
+					description: __("Execution center depends on a single APS run context. Select an APS run first to review proposals, formal apply logs, and exceptions."),
+					recent_runs: (data.recent_runs || []).map((row) => Object.assign({}, row, { route: row.execution_route || row.route })),
+					console_route: "aps-run-console",
+				});
+				injection_aps.ui.set_feedback(this.feedback, "");
+				return;
+			}
+			this.runBody.style.display = "";
+			this.emptyStateHost.innerHTML = "";
+			injection_aps.ui.render_run_context(this.runContextHost, data.run_context || null);
+			injection_aps.ui.render_status_line(this.statusHost, data.run_context || null);
 			injection_aps.ui.render_actions(
 				this.actionHost,
-				(data.run_context?.actions || []).filter((row) =>
-					["generate_work_order_proposals", "generate_shift_schedule_proposals", "open_release_center", "open_gantt"].includes(row.action_key)
+				(injection_aps.ui.get_value(data, "run_context.actions", []) || []).filter((row) =>
+					["generate_work_order_proposals", "generate_shift_schedule_proposals", "open_gantt"].includes(row.action_key)
 				),
 				async (action) => {
 					const response = await injection_aps.ui.run_action(action);
@@ -109,22 +168,22 @@ class InjectionAPSReleaseCenter {
 			const exceptions = data.exceptions || [];
 			const blocking = exceptions.filter((row) => Number(row.is_blocking || 0)).length;
 			injection_aps.ui.render_cards(this.summary, [
-				{ label: __("WO Proposal"), value: (data.work_order_proposal_batches || []).length },
-				{ label: __("Shift Proposal"), value: (data.shift_schedule_proposal_batches || []).length },
+				{ label: __("WO Proposal Batches"), value: (data.work_order_proposal_batches || []).length },
+				{ label: __("Day/Night Proposal Batches"), value: (data.shift_schedule_proposal_batches || []).length },
 				{ label: __("Delayed"), value: executionHealth.delayed_segments || 0 },
 				{ label: __("No Update"), value: executionHealth.no_recent_update_segments || 0 },
 				{ label: __("Today Manufacture"), value: executionHealth.today_completed_entries || 0 },
-				{ label: __("Blocking"), value: blocking, note: __("Need manual review before formal changes") },
+				{ label: __("Blocking"), value: blocking, note: __("Manual handling is required before formal apply.") },
 			]);
 			this.renderWorkOrderProposalTable(data.work_order_proposal_batches || []);
 			this.renderShiftProposalTable(data.shift_schedule_proposal_batches || []);
 			this.renderReleaseTable(data.release_batches || []);
 			this.renderExceptionTable(exceptions);
 			this.renderImpact();
-			injection_aps.ui.set_feedback(this.feedback, __("Proposal / execution center refreshed."));
+			injection_aps.ui.set_feedback(this.feedback, __("Execution center refreshed."));
 		} catch (error) {
 			console.error(error);
-			injection_aps.ui.set_feedback(this.feedback, __("Failed to load proposal / execution center."), "error");
+			injection_aps.ui.set_feedback(this.feedback, __("Failed to load execution center."), "error");
 		}
 	}
 
@@ -133,7 +192,7 @@ class InjectionAPSReleaseCenter {
 			this.woProposalTable,
 			[
 				{ label: __("Batch"), fieldname: "name" },
-				{ label: __("Run"), fieldname: "planning_run" },
+				{ label: __("APS Run"), fieldname: "planning_run" },
 				{ label: __("Status"), fieldname: "status" },
 				{ label: __("Approval"), fieldname: "approval_state" },
 				{ label: __("Rows"), fieldname: "proposal_count" },
@@ -153,14 +212,15 @@ class InjectionAPSReleaseCenter {
 					return injection_aps.ui.pill(injection_aps.ui.translate(value), tone);
 				}
 				if (column.fieldname === "actions_html") {
+					const canApply = ["Ready For Review", "Partially Reviewed", "Reviewed"].includes(row.status) && Number(row.approved_count || 0) > 0;
+					const reviewableCount = Number(row.pending_count || 0) + Number(row.approved_count || 0);
+					const canRejectAction = injection_aps.ui.can_run_action("reject_work_order_proposals");
+					const canApplyAction = injection_aps.ui.can_run_action("apply_work_order_proposals");
 					return `
-						<div class="ia-chip-row">
-							<button class="btn btn-xs btn-default" data-open-wo-batch="${injection_aps.ui.escape(row.name)}">${__("Open")}</button>
-							<button
-								class="btn btn-xs btn-primary"
-								data-apply-wo-batch="${injection_aps.ui.escape(row.name)}"
-								${["Ready For Review", "Partially Reviewed", "Reviewed"].includes(row.status) ? "" : "disabled"}
-							>${__("Apply")}</button>
+						<div class="ia-row-actions">
+							${injection_aps.ui.icon_button("external-link", __("Open Work Order Proposal Batch"), { "data-open-wo-batch": row.name })}
+							${reviewableCount && canRejectAction ? injection_aps.ui.icon_button("close", __("Reject Results"), { "data-reject-wo-batch": row.name, "data-batch-name": row.name, "data-reviewable-count": reviewableCount }) : ""}
+							${canApply && canApplyAction ? injection_aps.ui.icon_button("check", __("Apply Results"), { "data-apply-wo-batch": row.name, "data-batch-name": row.name, "data-approved-count": row.approved_count || 0 }) : ""}
 						</div>
 					`;
 				}
@@ -169,9 +229,9 @@ class InjectionAPSReleaseCenter {
 			{
 				exportable: true,
 				export_title: __("Work Order Proposal Review"),
-				export_sheet_name: __("WO Proposal"),
+				export_sheet_name: __("Work Order Proposals"),
 				export_file_name: "aps_work_order_proposals",
-				export_subtitle: __("Formal work-order suggestions pending manual review."),
+				export_subtitle: __("Formal work order proposals waiting for manual review."),
 			}
 		);
 		$(this.woProposalTable)
@@ -180,12 +240,63 @@ class InjectionAPSReleaseCenter {
 				node.addEventListener("click", () => frappe.set_route("Form", "APS Work Order Proposal Batch", node.dataset.openWoBatch));
 			});
 		$(this.woProposalTable)
+			.find("[data-reject-wo-batch]")
+			.each((_, node) => {
+				node.addEventListener("click", async () => {
+					const batchName = node.dataset.batchName || node.dataset.rejectWoBatch || "-";
+					const reviewableCount = node.dataset.reviewableCount || "0";
+					const reason = await injection_aps.ui.prompt_reason({
+						title: __("Confirm Reject Work Order Results"),
+						primary_action_label: __("Reject Results"),
+						summary_lines: [
+							__("Batch: {0}").replace("{0}", batchName),
+							__("Reviewable Rows: {0}").replace("{0}", String(reviewableCount || 0)),
+							__("The selected reviewable rows will be marked Rejected."),
+						],
+					});
+					if (!reason) {
+						return;
+					}
+					const response = await injection_aps.ui.xcall(
+						{
+							message: __("Rejecting work-order proposal rows..."),
+							success_message: __("Work-order proposal rows rejected."),
+							busy_key: `release-center-wo-reject:${node.dataset.rejectWoBatch}`,
+							feedback_target: this.feedback,
+							success_feedback: __("Work order proposals rejected."),
+						},
+						"injection_aps.api.app.reject_work_order_proposals",
+						{ batch_name: node.dataset.rejectWoBatch, reason }
+					);
+					if (!response) {
+						return;
+					}
+					await this.refresh();
+				});
+			});
+		$(this.woProposalTable)
 			.find("[data-apply-wo-batch]")
 			.each((_, node) => {
 				node.addEventListener("click", async () => {
+					const batchName = node.dataset.batchName || node.dataset.applyWoBatch || "-";
+					const approvedCount = node.dataset.approvedCount || "0";
+					const confirmed = await injection_aps.ui.confirm_action(
+						{ action_key: "apply_work_order_proposals", confirm_required: 1 },
+						{
+							title: __("Confirm Work Order Apply"),
+							summary_lines: [
+								__("Batch: {0}").replace("{0}", batchName),
+								__("Approved: {0}").replace("{0}", String(approvedCount || 0)),
+								__("This action will formally create or bind work orders."),
+							],
+						}
+					);
+					if (!confirmed) {
+						return;
+					}
 					const response = await injection_aps.ui.xcall(
 						{
-							message: __("Applying reviewed work order proposals..."),
+							message: __("Applying approved work order proposals..."),
 							success_message: __("Formal work orders created."),
 							busy_key: `release-center-wo-apply:${node.dataset.applyWoBatch}`,
 							feedback_target: this.feedback,
@@ -207,10 +318,10 @@ class InjectionAPSReleaseCenter {
 			this.shiftProposalTable,
 			[
 				{ label: __("Batch"), fieldname: "name" },
-				{ label: __("Run"), fieldname: "planning_run" },
+				{ label: __("APS Run"), fieldname: "planning_run" },
 				{ label: __("Status"), fieldname: "status" },
 				{ label: __("Approval"), fieldname: "approval_state" },
-				{ label: __("WO Batch"), fieldname: "work_order_proposal_batch" },
+				{ label: __("WO Proposal Batch"), fieldname: "work_order_proposal_batch" },
 				{ label: __("Rows"), fieldname: "proposal_count" },
 				{ label: __("Applied"), fieldname: "applied_count" },
 				{ label: __("Actions"), fieldname: "actions_html" },
@@ -231,14 +342,15 @@ class InjectionAPSReleaseCenter {
 					return injection_aps.ui.pill(injection_aps.ui.translate(value), tone);
 				}
 				if (column.fieldname === "actions_html") {
+					const canApply = ["Ready For Review", "Partially Reviewed", "Reviewed"].includes(row.status) && Number(row.approved_count || 0) > 0;
+					const reviewableCount = Number(row.pending_count || 0) + Number(row.approved_count || 0);
+					const canRejectAction = injection_aps.ui.can_run_action("reject_shift_schedule_proposals");
+					const canApplyAction = injection_aps.ui.can_run_action("apply_shift_schedule_proposals");
 					return `
-						<div class="ia-chip-row">
-							<button class="btn btn-xs btn-default" data-open-shift-batch="${injection_aps.ui.escape(row.name)}">${__("Open")}</button>
-							<button
-								class="btn btn-xs btn-primary"
-								data-apply-shift-batch="${injection_aps.ui.escape(row.name)}"
-								${["Ready For Review", "Partially Reviewed", "Reviewed"].includes(row.status) ? "" : "disabled"}
-							>${__("Apply")}</button>
+						<div class="ia-row-actions">
+							${injection_aps.ui.icon_button("external-link", __("Open Day/Night Proposal Batch"), { "data-open-shift-batch": row.name })}
+							${reviewableCount && canRejectAction ? injection_aps.ui.icon_button("close", __("Reject Results"), { "data-reject-shift-batch": row.name, "data-batch-name": row.name, "data-reviewable-count": reviewableCount }) : ""}
+							${canApply && canApplyAction ? injection_aps.ui.icon_button("check", __("Apply Results"), { "data-apply-shift-batch": row.name, "data-batch-name": row.name, "data-approved-count": row.approved_count || 0 }) : ""}
 						</div>
 					`;
 				}
@@ -246,10 +358,10 @@ class InjectionAPSReleaseCenter {
 			},
 			{
 				exportable: true,
-				export_title: __("Shift Schedule Proposal Review"),
-				export_sheet_name: __("Shift Proposal"),
+				export_title: __("Day/Night Shift Proposal Review"),
+				export_sheet_name: __("Day/Night Proposals"),
 				export_file_name: "aps_shift_schedule_proposals",
-				export_subtitle: __("White/night shift scheduling suggestions pending review."),
+				export_subtitle: __("Day/night shift proposals waiting for manual review."),
 			}
 		);
 		$(this.shiftProposalTable)
@@ -258,16 +370,67 @@ class InjectionAPSReleaseCenter {
 				node.addEventListener("click", () => frappe.set_route("Form", "APS Shift Schedule Proposal Batch", node.dataset.openShiftBatch));
 			});
 		$(this.shiftProposalTable)
+			.find("[data-reject-shift-batch]")
+			.each((_, node) => {
+				node.addEventListener("click", async () => {
+					const batchName = node.dataset.batchName || node.dataset.rejectShiftBatch || "-";
+					const reviewableCount = node.dataset.reviewableCount || "0";
+					const reason = await injection_aps.ui.prompt_reason({
+						title: __("Confirm Reject Day/Night Results"),
+						primary_action_label: __("Reject Results"),
+						summary_lines: [
+							__("Batch: {0}").replace("{0}", batchName),
+							__("Reviewable Rows: {0}").replace("{0}", String(reviewableCount || 0)),
+							__("The selected reviewable rows will be marked Rejected."),
+						],
+					});
+					if (!reason) {
+						return;
+					}
+					const response = await injection_aps.ui.xcall(
+						{
+							message: __("Rejecting day/night shift proposal rows..."),
+							success_message: __("Day/night shift proposal rows rejected."),
+							busy_key: `release-center-shift-reject:${node.dataset.rejectShiftBatch}`,
+							feedback_target: this.feedback,
+							success_feedback: __("Day/night shift proposals rejected."),
+						},
+						"injection_aps.api.app.reject_shift_schedule_proposals",
+						{ batch_name: node.dataset.rejectShiftBatch, reason }
+					);
+					if (!response) {
+						return;
+					}
+					await this.refresh();
+				});
+			});
+		$(this.shiftProposalTable)
 			.find("[data-apply-shift-batch]")
 			.each((_, node) => {
 				node.addEventListener("click", async () => {
+					const batchName = node.dataset.batchName || node.dataset.applyShiftBatch || "-";
+					const approvedCount = node.dataset.approvedCount || "0";
+					const confirmed = await injection_aps.ui.confirm_action(
+						{ action_key: "apply_shift_schedule_proposals", confirm_required: 1 },
+						{
+							title: __("Confirm Day/Night Apply"),
+							summary_lines: [
+								__("Batch: {0}").replace("{0}", batchName),
+								__("Approved: {0}").replace("{0}", String(approvedCount || 0)),
+								__("This action will formally write day/night scheduling."),
+							],
+						}
+					);
+					if (!confirmed) {
+						return;
+					}
 					const response = await injection_aps.ui.xcall(
 						{
-							message: __("Applying reviewed white / night shift proposals..."),
-							success_message: __("Formal Work Order Scheduling updated."),
+							message: __("Applying approved day/night shift proposals..."),
+							success_message: __("Formal scheduling updated."),
 							busy_key: `release-center-shift-apply:${node.dataset.applyShiftBatch}`,
 							feedback_target: this.feedback,
-							success_feedback: __("Shift schedule proposals applied."),
+							success_feedback: __("Day/night shift proposals applied."),
 						},
 						"injection_aps.api.app.apply_shift_schedule_proposals",
 						{ batch_name: node.dataset.applyShiftBatch }
@@ -285,7 +448,7 @@ class InjectionAPSReleaseCenter {
 			this.releaseTable,
 			[
 				{ label: __("Batch"), fieldname: "name" },
-				{ label: __("Run"), fieldname: "planning_run" },
+				{ label: __("APS Run"), fieldname: "planning_run" },
 				{ label: __("Status"), fieldname: "status" },
 				{ label: __("From"), fieldname: "release_from_date" },
 				{ label: __("To"), fieldname: "release_to_date" },
@@ -311,14 +474,20 @@ class InjectionAPSReleaseCenter {
 			{
 				exportable: true,
 				export_title: __("APS Formal Apply Log"),
-				export_sheet_name: __("Release Log"),
+				export_sheet_name: __("Apply Logs"),
 				export_file_name: "aps_release_batches",
-				export_subtitle: __("Applied work orders and scheduling downstream logs."),
+				export_subtitle: __("Formally applied work order and scheduling logs."),
 			}
 		);
 	}
 
 	renderExceptionTable(rows) {
+		this.exceptionRowsByName = {};
+		(rows || []).forEach((row) => {
+			if (row && row.name) {
+				this.exceptionRowsByName[row.name] = row;
+			}
+		});
 		injection_aps.ui.render_table(
 			this.exceptionTable,
 			[
@@ -335,11 +504,18 @@ class InjectionAPSReleaseCenter {
 					const tone = row.is_blocking ? "red" : value === "Critical" ? "orange" : "blue";
 					return injection_aps.ui.pill(injection_aps.ui.translate(value), tone);
 				}
+				if (column.fieldname === "exception_type") {
+					return injection_aps.ui.escape(injection_aps.ui.translate(value || ""));
+				}
+				if (column.fieldname === "message") {
+					const text = row.root_cause_text || row.resolution_hint || value || "";
+					return injection_aps.ui.escape(injection_aps.ui.translate(text));
+				}
 				if (column.fieldname === "actions_html") {
 					return `
-						<div class="ia-chip-row">
-							<button class="btn btn-xs btn-default" data-open-source="${injection_aps.ui.escape(row.source_name || "")}" data-source-doctype="${injection_aps.ui.escape(row.source_doctype || "")}">${__("Source")}</button>
-							<button class="btn btn-xs btn-default" data-impact-item="${injection_aps.ui.escape(row.item_code || "")}">${__("Impact")}</button>
+						<div class="ia-row-actions">
+							${injection_aps.ui.icon_button("external-link", __("Open Source"), { "data-open-source": row.source_name || "", "data-source-doctype": row.source_doctype || "" })}
+							${injection_aps.ui.icon_button("search", __("Resolution Guidance"), { "data-open-resolution": row.name || "" })}
 						</div>
 					`;
 				}
@@ -350,7 +526,7 @@ class InjectionAPSReleaseCenter {
 				export_title: __("APS Exception Review"),
 				export_sheet_name: __("Exceptions"),
 				export_file_name: "aps_exceptions",
-				export_subtitle: __("Blocking and warning rows for manual analysis."),
+				export_subtitle: __("Blocking and warning exceptions waiting for manual review."),
 			}
 		);
 
@@ -367,24 +543,104 @@ class InjectionAPSReleaseCenter {
 			});
 
 		$(this.exceptionTable)
-			.find("[data-impact-item]")
+			.find("[data-open-resolution]")
 			.each((_, node) => {
-				node.addEventListener("click", () => this.openImpactDialog(node.dataset.impactItem || ""));
+				node.addEventListener("click", () => this.openExceptionResolution(this.exceptionRowsByName[node.dataset.openResolution || ""] || null));
 			});
+	}
+
+	async openExceptionResolution(row) {
+		if (!row) {
+			return;
+		}
+		let detail = {
+			name: row.name,
+			planning_run: row.planning_run,
+			severity: row.severity,
+			exception_type: row.exception_type,
+			item_code: row.item_code,
+			customer: row.customer,
+			workstation: row.workstation,
+			message: row.message,
+			resolution_hint: row.resolution_hint,
+			diagnostic: row.diagnostic || {},
+			root_cause_codes: row.root_cause_codes || [],
+			root_cause_text: row.root_cause_text,
+			suggested_actions: row.suggested_actions || [],
+			related_routes: {
+				source: row.source_route || "",
+				item: row.item_route || "",
+				workstation: row.workstation_route || "",
+				gantt: row.gantt_route || "",
+				execution: row.execution_route || "",
+			},
+		};
+		const routes = detail.related_routes || {};
+		const translatedExceptionType = injection_aps.ui.translate(detail.exception_type || "");
+		const translatedMessage = injection_aps.ui.translate(detail.message || "");
+		const translatedRootCause = injection_aps.ui.translate(detail.root_cause_text || detail.resolution_hint || detail.message || "-");
+		const suggestedActions = (detail.suggested_actions || [])
+			.map((row) => `<li>${injection_aps.ui.escape(injection_aps.ui.translate(row))}</li>`)
+			.join("");
+		const candidateMoldList = injection_aps.ui.get_value(detail, "diagnostic.candidate_molds", []) || [];
+		const candidateWorkstationList = injection_aps.ui.get_value(detail, "diagnostic.candidate_workstations", []) || [];
+		const candidateMolds = this.renderCollapsedChipList(candidateMoldList, { previewCount: 4 });
+		const candidateWorkstations = this.renderCollapsedChipList(candidateWorkstationList, { previewCount: 5 });
+		const selectedPlantFloors = injection_aps.ui.escape((injection_aps.ui.get_value(detail, "diagnostic.selected_plant_floors", []) || []).join(", ") || "-");
+		const html = `
+			<div class="ia-page">
+				<div class="ia-status-line">
+					<div class="ia-status-cell"><span class="ia-status-label">${__("Severity")}</span><div class="ia-status-value">${injection_aps.ui.escape(detail.severity || "-")}</div></div>
+					<div class="ia-status-cell"><span class="ia-status-label">${__("Type")}</span><div class="ia-status-value">${injection_aps.ui.escape(translatedExceptionType || "-")}</div></div>
+					<div class="ia-status-cell ia-status-cell-wide"><span class="ia-status-label">${__("Message")}</span><div class="ia-status-value">${injection_aps.ui.escape(translatedMessage || "-")}</div></div>
+				</div>
+				<div class="ia-mini-grid">
+					<div class="ia-panel">
+						<h4>${__("Root Cause")}</h4>
+						<div class="ia-muted">${injection_aps.ui.escape(translatedRootCause)}</div>
+					</div>
+					<div class="ia-panel">
+						<h4>${__("Resource Scope")}</h4>
+						<div class="ia-kv">
+							<div class="ia-kv-row"><div class="ia-kv-key">${__("Plant Floors")}</div><div class="ia-kv-value">${selectedPlantFloors}</div></div>
+							<div class="ia-kv-row"><div class="ia-kv-key">${__("Candidate Molds")}</div><div class="ia-kv-value">${candidateMolds.html}</div></div>
+							<div class="ia-kv-row"><div class="ia-kv-key">${__("Candidate Machines")}</div><div class="ia-kv-value">${candidateWorkstations.html}</div></div>
+						</div>
+					</div>
+				</div>
+				<div class="ia-panel">
+					<h4>${__("Resolution Guidance")}</h4>
+					${suggestedActions ? `<ul style="margin:0; padding-left:18px;">${suggestedActions}</ul>` : `<div class="ia-muted">${__("No explicit resolution guidance is available.")}</div>`}
+				</div>
+				<div class="ia-chip-row">
+					${routes.source ? `<a class="btn btn-xs btn-default" href="/app/${injection_aps.ui.escape(routes.source)}">${__("Open Source")}</a>` : ""}
+					${routes.gantt ? `<a class="btn btn-xs btn-default" href="/app/${injection_aps.ui.escape(routes.gantt)}">${__("Board")}</a>` : ""}
+					${routes.item ? `<a class="btn btn-xs btn-default" href="/app/${injection_aps.ui.escape(routes.item)}">${__("Open Item")}</a>` : ""}
+					${routes.workstation ? `<a class="btn btn-xs btn-default" href="/app/${injection_aps.ui.escape(routes.workstation)}">${__("Open Machine")}</a>` : ""}
+				</div>
+			</div>
+		`;
+		injection_aps.ui.open_drawer(translatedExceptionType || __("Resolution Guidance"), detail.item_code || detail.name || "", html);
+		if (candidateMolds.bind) {
+			candidateMolds.bind();
+		}
+		if (candidateWorkstations.bind) {
+			candidateWorkstations.bind();
+		}
 	}
 
 	renderImpact() {
 		if (!this.lastImpact) {
 			injection_aps.ui.render_cards(this.impactSummary, [
-				{ label: __("Impact"), value: __("None"), note: __("Run insert-order analysis to see displaced segments, parallelization and family side outputs.") },
+				{ label: __("Insert Order Impact"), value: __("None"), note: __("Use the page-level insert order impact tool when needed. It is no longer mixed into exception handling.") },
 			]);
-			injection_aps.ui.render_table(this.impactTable, [{ label: __("Info"), fieldname: "message" }], []);
+			injection_aps.ui.render_table(this.impactTable, [{ label: __("Message"), fieldname: "message" }], []);
 			return;
 		}
 
 		injection_aps.ui.render_cards(this.impactSummary, [
-			{ label: __("Scheduled Qty"), value: frappe.format(this.lastImpact.scheduled_qty || 0, { fieldtype: "Float" }) },
-			{ label: __("Unscheduled Qty"), value: frappe.format(this.lastImpact.unscheduled_qty || 0, { fieldtype: "Float" }) },
+				{ label: __("Scheduled Qty"), value: frappe.format(this.lastImpact.scheduled_qty || 0, { fieldtype: "Float" }) },
+				{ label: __("Unscheduled Qty"), value: frappe.format(this.lastImpact.unscheduled_qty || 0, { fieldtype: "Float" }) },
 			{ label: __("Changeover Minutes"), value: frappe.format(this.lastImpact.changeover_minutes || 0, { fieldtype: "Float" }) },
 			{ label: __("Future Batch Hint"), value: this.lastImpact.future_batch_hint || "-" },
 		]);
@@ -393,7 +649,7 @@ class InjectionAPSReleaseCenter {
 			[
 				{ label: __("Lane"), fieldname: "lane_key" },
 				{ label: __("Mold"), fieldname: "mould_reference" },
-				{ label: __("Workstation"), fieldname: "workstation" },
+				{ label: __("Machine"), fieldname: "workstation" },
 				{ label: __("Qty"), fieldname: "planned_qty" },
 				{ label: __("Start"), fieldname: "start_time" },
 				{ label: __("End"), fieldname: "end_time" },
@@ -421,7 +677,7 @@ class InjectionAPSReleaseCenter {
 	getSelectedRun() {
 		const runName = this.runField.get_value();
 		if (!runName) {
-			frappe.show_alert({ message: __("Choose a planning run first."), indicator: "orange" });
+			frappe.show_alert({ message: __("Select an APS run first."), indicator: "orange" });
 			return null;
 		}
 		return runName;
@@ -454,7 +710,23 @@ class InjectionAPSReleaseCenter {
 			title: __("Insert Order Impact Analysis"),
 			fields: [
 				{ fieldname: "company", fieldtype: "Link", options: "Company", label: __("Company"), reqd: 1, default: frappe.defaults.get_user_default("Company") },
-				{ fieldname: "plant_floor", fieldtype: "Link", options: "Plant Floor", label: __("Plant Floor"), reqd: 1 },
+				{
+					fieldname: "plant_floor_rows",
+					fieldtype: "Table",
+					label: __("Selected Plant Floors"),
+					reqd: 1,
+					in_place_edit: true,
+					fields: [
+						{
+							fieldname: "plant_floor",
+							fieldtype: "Link",
+							options: "Plant Floor",
+							label: __("Plant Floor"),
+							in_list_view: 1,
+							reqd: 1,
+						},
+					],
+				},
 				{ fieldname: "item_code", fieldtype: "Link", options: "Item", label: __("Item"), reqd: 1, default: prefillItemCode || undefined },
 				{ fieldname: "qty", fieldtype: "Float", label: __("Qty"), reqd: 1 },
 				{ fieldname: "required_date", fieldtype: "Date", label: __("Required Date"), reqd: 1 },
@@ -462,16 +734,35 @@ class InjectionAPSReleaseCenter {
 			],
 			primary_action_label: __("Analyze"),
 			primary_action: async (values) => {
+				const plantFloors = [];
+				(values.plant_floor_rows || []).forEach((row) => {
+					const value = row && row.plant_floor ? String(row.plant_floor).trim() : "";
+					if (value && !plantFloors.includes(value)) {
+						plantFloors.push(value);
+					}
+				});
+				if (!plantFloors.length) {
+					frappe.msgprint(__("Select at least one Plant Floor before running insert order impact analysis."));
+					return;
+				}
 				this.lastImpact = await injection_aps.ui.xcall(
 					{
 						message: __("Analyzing insert order impact..."),
-						success_message: __("Impact analysis completed."),
+						success_message: __("Insert order impact analysis completed."),
 						busy_key: `impact-analysis:${values.company || "all"}:${values.item_code || "item"}`,
 						feedback_target: this.feedback,
-						success_feedback: __("Impact analysis completed."),
+						success_feedback: __("Insert order impact analysis completed."),
 					},
 					"injection_aps.api.app.analyze_insert_order_impact",
-					values
+					{
+						company: values.company,
+						plant_floor: plantFloors[0],
+						plant_floors: plantFloors,
+						item_code: values.item_code,
+						qty: values.qty,
+						required_date: values.required_date,
+						customer: values.customer,
+					}
 				);
 				if (!this.lastImpact) {
 					return;

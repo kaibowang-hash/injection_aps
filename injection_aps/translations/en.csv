@@ -1,0 +1,200 @@
+草稿,Draft
+已试算,Recalculated
+已审批,Approved
+已生成工单建议,Work Order Proposals Generated
+已生成白/夜班建议,Day/Night Shift Proposals Generated
+已正式下推,Formally Applied
+待审批,Pending Approval
+已驳回,Rejected
+确认运算,Confirm Run
+重算,Recalculate
+关注执行偏差,Monitor Execution Drift
+班次建议,Shift Proposals
+工单建议,Work Order Proposals
+工单建议审核,Review Work Order Proposals
+白/夜班建议审核,Review Day/Night Shift Proposals
+当前仍有 {0} 条 APS 异常待处理。,There are still {0} APS exceptions waiting for review.
+已完成重算,Recalculation Completed
+已阻断,Blocked
+处理异常,Handle Exceptions
+风险待审,Risk Pending Review
+查看看板与异常,Review Board and Exceptions
+仍有未排数量：{0}。,There is still unscheduled quantity: {0}.
+计划已审批,Plan Approved
+系统已按现有执行层生成对账建议。,The system generated a reconciliation proposal against the current execution layer.
+优先复用现有工单 {0}，并按新数量边界更新。,Prefer reusing existing work order {0} and update it to the new quantity boundary.
+现有工单 {0} 保持不动，额外需求将拆成 Delta 工单。,Keep existing work order {0} unchanged and create a delta work order for the extra quantity.
+已执行量保留，剩余未执行量将关闭。,Keep completed quantity and close the remaining unexecuted quantity.
+未开工工单将被取消。,The unstarted work order will be cancelled.
+现有工单继续作为稳定执行容器。,The existing work order remains the stable execution container.
+当前 APS 已无对应需求，建议回收现有工单未执行部分。,There is no longer matching APS demand. Recover the unexecuted portion of the existing work order.
+导入并重建,Import and Rebuild
+打开排期单,Open Schedule
+净需求,Net Requirements
+重建需求并重算,Rebuild Demand and Recalculate
+先激活当前版本,Activate the Current Version First
+重建需求池,Rebuild Demand Pool
+打开净需求工作台,Open Net Requirement Workbench
+查看版本差异,Review Version Diff
+APS运算单：{0},APS Run: {0}
+公司：{0},Company: {0}
+车间：{0},Plant Floors: {0}
+视窗：{0} 天,Horizon: {0} days
+该操作会按当前需求重新计算 APS 结果。,This action will recalculate APS results from the current demand.
+确认 APS 运算结果,Confirm APS Run
+当前状态：{0},Current Status: {0}
+异常数：{0},Exceptions: {0}
+确认后将进入后续建议审核流程。,"After confirmation, the run will move into the downstream proposal review flow."
+该操作会生成待审核的工单建议批次。,This action will generate a work-order proposal batch for review.
+该操作会生成待审核的白/夜班排产建议。,This action will generate a day/night shift proposal batch for review.
+看板,Board
+执行管理,Execution
+运算单,Run
+下发结果,Apply Results
+确认下发工单结果,Confirm Apply Work Order Results
+工单建议批次：{0},Work Order Proposal Batch: {0}
+已审核通过的行将正式生成或绑定工单。,Approved rows will formally create or bind work orders.
+确认下发白/夜班结果,Confirm Apply Day/Night Shift Results
+班次建议批次：{0},Shift Proposal Batch: {0}
+已审核通过的行将正式写入白/夜班排产单。,Approved rows will formally write day/night scheduling rows.
+打开执行排程,Open Execution Scheduling
+无法后移：模具 {0} 在你选择的时间之后已经有连续排产，当前段不能单独往后拖。,Mold {0} already has continuous scheduling after the selected time. This segment cannot be moved later by itself.
+当前段,Current Segment
+目标机台,Target Workstation
+目标开始,Target Start
+重算结束,Recalculated End
+最晚可无冲突开始,Latest Conflict-Free Start
+冲突段,Conflicting Segment
+保持当前开始时间，或改为更早的时间窗。,"Keep the current start time, or choose an earlier time window."
+如果要整体后移，请连带后续同模排程一起调整。,"If the whole chain must move later, shift the downstream segments that use the same mold together."
+如果只想后移部分数量，请先拆分当前排程段，再移动剩余量。,"If only part of the quantity should move later, split the current segment first and then move the remaining quantity."
+无法移动：目标机台在该时间窗内已有排程，当前段不能直接插入。,The target workstation already has scheduling in this time window. The current segment cannot be inserted directly.
+机台冲突,Workstation Conflict
+尝试改到该机台的空闲时间窗。,Try a free window on the target workstation.
+如果只是调整顺序，请把当前段放到目标段之前的可用位置。,"If you only want to change sequence, place the current segment before the target segment in an available slot."
+人工移动被阻止,Manual Move Blocked
+手工调整,Manual Adjustment
+手工调整待确认,Manual Adjustment Pending Confirmation
+未找到该物料的 Mold Product 映射，APS 无法确定可用模具。,"No Mold Product mapping was found for this item, so APS cannot determine an available mold."
+在 Mold 主数据中补齐该物料的 Mold Product 映射。,Complete the Mold Product mapping for this item in Mold master data.
+确认该物料对应的模具主档已提交且状态可用。,Make sure the corresponding mold master is submitted and available.
+未维护状态,Status Not Maintained
+检查模具状态是否为维修中、待资产关联或已报废。,"Check whether the mold is under maintenance, pending asset link, or scrapped."
+确认 Mold Product 映射、周期和产出信息是否完整。,"Make sure the Mold Product mapping, cycle, and output data are complete."
+在已选车间内，没有找到满足吨位、FDA、状态和模具映射约束的机台。,"No workstation in the selected plant floors satisfies tonnage, FDA, status, and mold-mapping constraints."
+检查 APS Machine Capability 是否已同步并启用。,Check whether APS Machine Capability has been synchronized and enabled.
+检查机台状态、风险类别、吨位与 APS Mould-Machine Rule 限制。,"Check workstation status, risk category, tonnage, and APS Mould-Machine Rule constraints."
+当前计划视窗截止到 {0}，仍有 {1} 未排入。,"The current planning horizon ends at {0}, and {1} is still unscheduled."
+当前视窗内可用能力约为 {0}，低于需求 {1}。,"Available capacity inside the current horizon is about {0}, which is lower than the demand {1}."
+当前可参与排产的模具数量有限，无法通过复制模进一步并行。,"The number of molds that can participate in scheduling is limited, so copy molds cannot further increase parallelization."
+另有约束阻断了部分候选资源：{0}。,Additional constraints blocked some candidate resources: {0}.
+延长 APS 视窗或拆分到下一版计划窗口。,Extend the APS horizon or split the demand into the next planning window.
+确认是否有更多复制模、可用机台或可接受的人工换机方案。,"Check whether more copy molds, eligible workstations, or acceptable manual changeover plans are available."
+先补齐模具主数据，再重新进行 APS试算或审批。,Complete mold master data before recalculating or approving APS.
+同一机台在同一时间存在两个主排产段：{0} / {1}。,There are two primary schedule segments on the same workstation at the same time: {0} / {1}.
+在排程看板中调整顺序或改机，确保同一时段只有一个主排产段。,Adjust sequence or change workstation in the board to ensure only one primary segment exists in the same time window.
+同一模具 {0} 被同时排到 {1} 和 {2}。,The same mold {0} is scheduled on both {1} and {2} at the same time.
+保留一条主排产，或使用另一副独立 Mold 主档作为复制模。,"Keep only one primary schedule, or use another independent Mold master as the copy mold."
+到排程看板定位冲突段并重新排布。,"Open the board, locate the conflicting segments, and reschedule them."
+净需求工作台,Net Requirement Workbench
+这里集中展示需求池、库存、在制、安全库存和最小经济批量补齐结果。请先重建，再将筛选上下文直接推进到重算。,"This page concentrates the demand pool, stock, WIP, safety stock, and minimum batch uplift results. Rebuild first, then push the filtered context directly into recalculation."
+正在加载净需求...,Loading net requirements...
+净需求已就绪,Net Requirements Ready
+重建需求,Rebuild Demand
+重算台,Recalc Console
+净需求工作台已刷新。,Net requirement workbench refreshed.
+净需求加载失败。,Failed to load net requirements.
+确认重建需求,Confirm Demand Rebuild
+客户：{0},Customer: {0}
+物料：{0},Item: {0}
+全部,All
+该操作会重建需求池并重算净需求。,This action will rebuild the demand pool and recalculate net requirements.
+正在重建需求与净需求...,Rebuilding demand and net requirements...
+需求与净需求已重建。,Demand and net requirements were rebuilt.
+新建重算,Create Recalc Run
+正在创建重算...,Creating recalculation...
+重算已创建。,Recalculation created.
+重算已创建，正在跳转到 APS运算单...,Recalculation created. Redirecting to the APS run...
+注塑 APS,Injection APS
+客户交付排期、需求池、净需求、APS 运算、工单释放与异常跟踪均由 Injection APS 独立承载。,"Customer delivery schedules, demand pool, net requirements, APS runs, work-order release, and exception tracking are all carried independently inside Injection APS."
+预览导入,Preview Import
+正式导入,Import
+确认导入并重建,Confirm Import and Rebuild
+确认正式导入,Confirm Import
+版本：{0},Version: {0}
+将正式导入并重建需求池/净需求。,This will formally import the schedule and rebuild demand / net requirements.
+将正式导入当前排期版本。,This will formally import the current schedule version.
+排程看板,Schedule Board
+视图模式,View Mode
+机台,Machine
+模具,Mold
+风险,Risk
+锁定,Locked
+建议动作,Suggested Actions
+技术阻断明细,Technical Blocking Details
+当前未选择 APS运算单,No APS Run Selected
+排程看板必须绑定单一 APS运算单。请先选择运算单，再查看甘特排程与风险段。,The schedule board requires a single APS run context. Select a run before viewing Gantt scheduling and risk segments.
+正在加载排程看板...,Loading schedule board...
+排程看板已刷新。,Schedule board refreshed.
+排程看板加载失败。,Failed to load schedule board.
+阻断 / 风险需求,Blocked / Risk Demands
+当前 APS运算单 中仍处于阻断或高风险状态的需求。,Demands in the current APS run that remain blocked or high risk.
+无模具,No Mold
+排程段,Schedule Segments
+当前视图没有可显示的排程段。,There are no schedule segments visible in the current view.
+当前 APS运算单没有生成可显示的排程段。,The current APS run did not generate any visible schedule segments.
+机台/泳道,Workstations / Lanes
+天数,Days
+段,segments
+调整段时长,Adjust Segment Duration
+蓝,Blue
+正常,Normal
+黄,Yellow
+关注,Attention
+红,Red
+严重 / 阻断,Critical / Blocking
+复制模并行,Copy Mold Parallelized
+Family Mold 联产,Family Mold Co-Production
+已锁定,Locked
+风险 / Override,Risk / Override
+在时间轴上拖拽可聚焦某一天或某个日期区间,Drag on the timeline to focus on a day or date range
+搜索 Segment,Search Segment
+查找,Find
+清除,Clear
+退出图表区全屏,Exit Chart Fullscreen
+图表区全屏,Chart Fullscreen
+刷新排程看板,Refresh Schedule Board
+重置日期聚焦,Reset Date Focus
+打开来源,Open Source
+处理建议,Resolution Guidance
+严重级别,Severity
+类型,Type
+消息,Message
+根因拆解,Root Cause Breakdown
+资源范围,Resource Scope
+候选模具,Candidate Molds
+候选机台,Candidate Workstations
+暂无明确处理建议。,No explicit resolution guidance is available.
+打开物料,Open Item
+打开机台,Open Workstation
+插单影响,Insert-Order Impact
+暂无,None Yet
+需要时可从页面顶部单独发起插单影响分析，不再与异常处理混用。,Run insert-order impact analysis separately from the page header when needed. It is no longer mixed into exception handling.
+说明,Info
+可排数量,Scheduled Qty
+未排数量,Unscheduled Qty
+换模/换色分钟,Changeover Minutes
+合批建议,Future Batch Hint
+泳道,Lane
+数量,Qty
+请先选择 APS运算单。,Choose an APS run first.
+插单,Insert Order
+插单影响分析,Insert Order Impact Analysis
+开始分析,Analyze
+请先选择至少一个 Plant Floor，再执行插单影响分析。,Select at least one Plant Floor before running insert-order impact analysis.
+正在分析插单影响...,Analyzing insert-order impact...
+插单影响分析完成。,Insert-order impact analysis completed.
+白班,Day Shift
+晚班,Night Shift
+打开机台,Open Machine
+当前 APS运算单 {0},Current APS Run {0}

@@ -8,12 +8,15 @@ frappe.pages["aps-net-requirement-workbench"].on_page_load = function (wrapper) 
 };
 
 frappe.pages["aps-net-requirement-workbench"].on_page_show = function (wrapper) {
-	wrapper.injection_aps_controller?.refresh();
+	if (wrapper.injection_aps_controller) {
+		wrapper.injection_aps_controller.refresh();
+	}
 };
 
 class InjectionAPSNetRequirementWorkbench {
 	constructor(wrapper) {
 		this.wrapper = wrapper;
+		this.wrapper.classList.add("ia-app-page");
 		this.page = frappe.ui.make_app_page({
 			parent: wrapper,
 			title: __("Net Requirement Workbench"),
@@ -51,7 +54,7 @@ class InjectionAPSNetRequirementWorkbench {
 			<div class="ia-page">
 				<div class="ia-banner">
 					<h3>${__("Net Requirement Workbench")}</h3>
-					<p>${__("Demand pool, stock, WIP, safety stock and minimum batch uplift are compressed here. Rebuild from the active schedule, then push the filtered context straight into a trial run.")}</p>
+					<p>${__("This page concentrates the demand pool, stock, WIP, safety stock, and minimum batch uplift results. Rebuild first, then push the filtered context directly into recalculation.")}</p>
 				</div>
 				<div class="ia-status-host"></div>
 				<div class="ia-action-host"></div>
@@ -76,14 +79,14 @@ class InjectionAPSNetRequirementWorkbench {
 			const filters = this.getFilters();
 			const data = await frappe.xcall("injection_aps.api.app.get_net_requirement_page_data", filters);
 			injection_aps.ui.render_status_line(this.statusHost, {
-				current_step: __("Net Requirement Ready"),
-				next_step: __("Create Trial Run"),
+				current_step: __("Net Requirements Ready"),
+				next_step: __("Recalculate"),
 				blocking_reason: "",
 			});
 			injection_aps.ui.render_actions(this.actionHost, [
-				{ label: __("重建需求池并重算净需求"), action_key: "rebuild", enabled: 1 },
-				{ label: __("生成 APS Trial Run"), action_key: "trial", enabled: 1 },
-				{ label: __("打开 Run Console"), action_key: "run_console", enabled: 1, route: "aps-run-console" },
+				{ label: __("Rebuild Demand"), action_key: "rebuild", enabled: 1 },
+				{ label: __("Recalculate"), action_key: "trial", enabled: 1 },
+				{ label: __("Recalc Console"), action_key: "run_console", enabled: 1, route: "aps-run-console" },
 			], async (action) => {
 				if (action.action_key === "rebuild") {
 					await this.rebuildDemandPool();
@@ -127,7 +130,8 @@ class InjectionAPSNetRequirementWorkbench {
 						return injection_aps.ui.format_date(value);
 					}
 					if (column.fieldname === "reason_text") {
-						return `<span title="${injection_aps.ui.escape(value)}">${injection_aps.ui.escape(value)}</span>`;
+						const translatedValue = injection_aps.ui.translate(value || "");
+						return `<span title="${injection_aps.ui.escape(translatedValue)}">${injection_aps.ui.escape(translatedValue)}</span>`;
 					}
 					return injection_aps.ui.escape(value);
 				},
@@ -156,13 +160,28 @@ class InjectionAPSNetRequirementWorkbench {
 
 	async rebuildDemandPool() {
 		const filters = this.getFilters();
+		const confirmed = await injection_aps.ui.confirm_action(
+			{ action_key: "rebuild_demand_pool", confirm_required: 1 },
+			{
+				title: __("Confirm Demand Rebuild"),
+				summary_lines: [
+					__("Company: {0}").replace("{0}", filters.company || "-"),
+					__("Customer: {0}").replace("{0}", filters.customer || __("All")),
+					__("Item: {0}").replace("{0}", filters.item_code || __("All")),
+					__("This action will rebuild the demand pool and recalculate net requirements."),
+				],
+			}
+		);
+		if (!confirmed) {
+			return;
+		}
 		const result = await injection_aps.ui.xcall(
 			{
-				message: __("Rebuilding demand pool and net requirements..."),
-				success_message: __("Demand pool and net requirements rebuilt."),
+				message: __("Rebuilding demand and net requirements..."),
+				success_message: __("Demand and net requirements were rebuilt."),
 				busy_key: `net-rebuild:${filters.company || "all"}`,
 				feedback_target: this.feedback,
-				success_feedback: __("Demand pool and net requirements rebuilt."),
+				success_feedback: __("Demand and net requirements were rebuilt."),
 			},
 			"injection_aps.api.app.promote_schedule_import_to_net_requirement",
 			{
@@ -178,26 +197,84 @@ class InjectionAPSNetRequirementWorkbench {
 	}
 
 	async createTrialRun() {
-		const response = await injection_aps.ui.xcall(
-			{
-				message: __("Creating APS trial run..."),
-				success_message: __("APS trial run created."),
-				busy_key: `net-trial:${this.companyField.get_value() || "all"}:${this.plantFloorField.get_value() || "all"}`,
-				feedback_target: this.feedback,
-				success_feedback: __("APS trial run created. Redirecting to the run form..."),
+		const dialog = new frappe.ui.Dialog({
+			title: __("Create Recalc Run"),
+			fields: [
+				{
+					fieldname: "plant_floor_rows",
+					fieldtype: "Table",
+					label: __("Selected Plant Floors"),
+					reqd: 1,
+					in_place_edit: true,
+					data: this.plantFloorField.get_value() ? [{ plant_floor: this.plantFloorField.get_value() }] : [],
+					fields: [
+						{
+							fieldname: "plant_floor",
+							fieldtype: "Link",
+							options: "Plant Floor",
+							label: __("Plant Floor"),
+							in_list_view: 1,
+							reqd: 1,
+						},
+					],
+				},
+				{ fieldname: "horizon_days", fieldtype: "Int", label: __("Horizon Days"), default: 14, reqd: 1 },
+			],
+			primary_action_label: __("Recalculate"),
+			primary_action: async (values) => {
+				const plantFloors = [];
+				(values.plant_floor_rows || []).forEach((row) => {
+					const value = row && row.plant_floor ? String(row.plant_floor).trim() : "";
+					if (value && !plantFloors.includes(value)) {
+						plantFloors.push(value);
+					}
+				});
+				if (!plantFloors.length) {
+					frappe.msgprint(__("Select at least one Plant Floor before APS planning."));
+					return;
+				}
+				const confirmed = await injection_aps.ui.confirm_action(
+					{ action_key: "run_trial", confirm_required: 1 },
+					{
+						title: __("Confirm Recalculate"),
+						summary_lines: [
+							__("Company: {0}").replace("{0}", this.companyField.get_value() || "-"),
+							__("Plant Floors: {0}").replace("{0}", plantFloors.join(", ") || "-"),
+							__("Customer: {0}").replace("{0}", this.customerField.get_value() || __("All")),
+							__("Item: {0}").replace("{0}", this.itemField.get_value() || __("All")),
+							__("Horizon: {0} days").replace("{0}", String(values.horizon_days || 14)),
+						],
+					}
+				);
+				if (!confirmed) {
+					return;
+				}
+				const response = await injection_aps.ui.xcall(
+					{
+						message: __("Creating recalculation..."),
+						success_message: __("Recalculation created."),
+						busy_key: `net-trial:${this.companyField.get_value() || "all"}:${plantFloors.join("|") || "all"}`,
+						feedback_target: this.feedback,
+						success_feedback: __("Recalculation created. Redirecting to the APS run..."),
+					},
+					"injection_aps.api.app.create_trial_run_from_net_requirement_context",
+					{
+						company: this.companyField.get_value() || undefined,
+						plant_floor: plantFloors[0],
+						plant_floors: plantFloors,
+						item_code: this.itemField.get_value() || undefined,
+						customer: this.customerField.get_value() || undefined,
+						horizon_days: values.horizon_days || undefined,
+					}
+				);
+				if (!response) {
+					return;
+				}
+				injection_aps.ui.show_warnings(response, __("Planning Precheck Warnings"), "preflight_warning_count");
+				dialog.hide();
+				injection_aps.ui.go_to(`aps-planning-run/${encodeURIComponent(response.run)}`);
 			},
-			"injection_aps.api.app.create_trial_run_from_net_requirement_context",
-			{
-				company: this.companyField.get_value() || undefined,
-				plant_floor: this.plantFloorField.get_value() || undefined,
-				item_code: this.itemField.get_value() || undefined,
-				customer: this.customerField.get_value() || undefined,
-			}
-		);
-		if (!response) {
-			return;
-		}
-		injection_aps.ui.show_warnings(response, __("Planning Precheck Warnings"), "preflight_warning_count");
-		injection_aps.ui.go_to(`aps-planning-run/${encodeURIComponent(response.run)}`);
+		});
+		dialog.show();
 	}
 }

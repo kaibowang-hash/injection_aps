@@ -8,7 +8,9 @@
  "field_order": [
   "customer",
   "company",
+  "schedule_scope",
   "version_no",
+  "import_strategy",
   "import_batch",
   "source_type",
   "status",
@@ -34,11 +36,26 @@
    "reqd": 1
   },
   {
+   "fieldname": "schedule_scope",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Schedule Scope",
+   "reqd": 1
+  },
+  {
    "fieldname": "version_no",
    "fieldtype": "Data",
    "in_list_view": 1,
    "label": "Version No",
    "reqd": 1
+  },
+  {
+   "default": "Replace Scope",
+   "fieldname": "import_strategy",
+   "fieldtype": "Select",
+   "label": "Import Strategy",
+   "options": "\nReplace Scope\nPartial Item Update\nAppend",
+   "read_only": 1
   },
   {
    "fieldname": "import_batch",
@@ -60,7 +77,8 @@
    "fieldtype": "Select",
    "in_list_view": 1,
    "label": "Status",
-   "options": "\nDraft\nActive\nSuperseded\nCancelled"
+   "options": "\nDraft\nActive\nSuperseded\nCancelled",
+   "read_only": 1
   },
   {
    "fieldname": "schedule_total_qty",
