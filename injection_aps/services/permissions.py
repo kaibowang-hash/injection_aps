@@ -93,6 +93,7 @@ CONFIG_WRITE_FLAGS = {"read", "select", "write", "create", "delete", "report", "
 
 APS_PAGE_NAMES = (
 	"aps-schedule-console",
+	"aps-customer-schedule-progress",
 	"aps-net-requirement-workbench",
 	"aps-run-console",
 	"aps-schedule-gantt",

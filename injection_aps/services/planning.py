@@ -57,6 +57,15 @@ CAPACITY_SOURCE_LABELS = {
 	"fallback_cycle": "Fallback Cycle",
 	"default_hourly_fallback": "Fallback Hourly Capacity",
 }
+SCHEDULE_PROGRESS_RUN_STATUS_PRIORITY = {
+	"Applied": 1,
+	"Shift Proposed": 2,
+	"Work Order Proposed": 3,
+	"Approved": 4,
+	"Planned": 5,
+}
+SCHEDULE_PROGRESS_RISK_ACTUAL_STATUSES = ("Delayed", "Slow Progress", "No Recent Update", "Overproduced")
+SCHEDULE_PROGRESS_RISK_RESULT_STATUSES = ("Attention", "Critical", "Blocked")
 
 ACTION_REQUIRED_ROLES = {
 	"promote_import": APS_PLAN_ROLES,
@@ -1961,6 +1970,610 @@ def get_execution_health_for_run(run_name: str, sync: bool = False) -> dict[str,
 		"delayed_segments": status_counts.get("Delayed", 0) + status_counts.get("Slow Progress", 0),
 		"no_recent_update_segments": status_counts.get("No Recent Update", 0),
 		"today_completed_entries": today_entries,
+	}
+
+
+def get_customer_schedule_progress_data(
+	company: str | None = None,
+	customer: str | None = None,
+	item_code: str | None = None,
+	schedule_scope: str | None = None,
+	date_from=None,
+	date_to=None,
+	status: str | None = None,
+	run_name: str | None = None,
+	limit: int | None = None,
+) -> dict[str, Any]:
+	settings = get_settings_dict()
+	company = company or frappe.defaults.get_user_default("Company") or settings.get("default_company")
+	item_code = (_resolve_item_name(item_code) or item_code) if item_code else None
+	selected_run = _get_customer_schedule_progress_run(run_name=run_name, company=company)
+	all_schedule_rows = _get_customer_schedule_progress_schedule_rows(company=company, item_code=item_code)
+	progress_rows = _build_customer_schedule_progress_rows(
+		schedule_rows=all_schedule_rows,
+		company=company,
+		run_doc=selected_run,
+	)
+	visible_rows = [
+		row
+		for row in progress_rows
+		if _matches_customer_schedule_progress_filters(
+			row,
+			customer=customer,
+			item_code=item_code,
+			schedule_scope=schedule_scope,
+			date_from=date_from,
+			date_to=date_to,
+			status=status,
+		)
+	]
+	row_limit = min(max(cint(limit or 500), 1), 2000)
+	return {
+		"selected_run": _format_customer_schedule_progress_run(selected_run),
+		"summary": _summarize_customer_schedule_progress_rows(visible_rows),
+		"rows": visible_rows[:row_limit],
+		"truncated": len(visible_rows) > row_limit,
+		"filters": {
+			"company": company,
+			"customer": customer,
+			"item_code": item_code,
+			"schedule_scope": schedule_scope,
+			"date_from": date_from,
+			"date_to": date_to,
+			"status": status,
+			"run_name": selected_run.get("name") if selected_run else None,
+			"limit": row_limit,
+		},
+	}
+
+
+def _get_customer_schedule_progress_run(run_name: str | None = None, company: str | None = None):
+	if run_name:
+		if not frappe.db.exists("APS Planning Run", run_name):
+			frappe.throw(_("APS Planning Run {0} was not found.").format(run_name))
+		return frappe.get_doc("APS Planning Run", run_name).as_dict()
+
+	statuses = tuple(SCHEDULE_PROGRESS_RUN_STATUS_PRIORITY)
+	conditions = ["pr.status in ({0})".format(", ".join(["%s"] * len(statuses)))]
+	params: list[Any] = list(statuses)
+	if company:
+		conditions.append("pr.company = %s")
+		params.append(company)
+	status_rank_sql = " ".join(
+		"when %s then {0}".format(rank)
+		for _status, rank in SCHEDULE_PROGRESS_RUN_STATUS_PRIORITY.items()
+	)
+	rank_params = list(SCHEDULE_PROGRESS_RUN_STATUS_PRIORITY)
+	rows = frappe.db.sql(
+		"""
+		select
+			pr.name,
+			pr.company,
+			pr.plant_floor,
+			pr.selected_plant_floor_summary,
+			pr.planning_date,
+			pr.horizon_start,
+			pr.horizon_end,
+			pr.status,
+			pr.approval_state,
+			pr.modified
+		from `tabAPS Planning Run` pr
+		where {conditions}
+			and exists (
+				select 1
+				from `tabAPS Schedule Result` res
+				where res.planning_run = pr.name
+			)
+		order by case pr.status {status_rank_sql} else 99 end asc, pr.modified desc
+		limit 1
+		""".format(
+			conditions=" and ".join(conditions),
+			status_rank_sql=status_rank_sql,
+		),
+		[*params, *rank_params],
+		as_dict=True,
+	)
+	return rows[0] if rows else None
+
+
+def _format_customer_schedule_progress_run(run_doc) -> dict[str, Any] | None:
+	if not run_doc:
+		return None
+	return {
+		"name": run_doc.get("name"),
+		"company": run_doc.get("company"),
+		"status": run_doc.get("status"),
+		"approval_state": run_doc.get("approval_state"),
+		"planning_date": run_doc.get("planning_date"),
+		"horizon_start": run_doc.get("horizon_start"),
+		"horizon_end": run_doc.get("horizon_end"),
+		"modified": run_doc.get("modified"),
+		"route": _build_form_route("APS Planning Run", run_doc.get("name")),
+		"gantt_route": f"aps-schedule-gantt?run_name={run_doc.get('name')}" if run_doc.get("name") else "",
+	}
+
+
+def _get_customer_schedule_progress_schedule_rows(
+	company: str | None = None,
+	item_code: str | None = None,
+) -> list[dict[str, Any]]:
+	schedule_filters = _strip_none({"company": company, "status": "Active"})
+	schedules = frappe.get_all(
+		"Customer Delivery Schedule",
+		filters=schedule_filters,
+		fields=["name", "customer", "company", "schedule_scope", "version_no", "source_type", "modified"],
+		order_by="modified desc",
+	)
+	if not schedules:
+		return []
+	schedule_map = {row.name: row for row in schedules}
+	child_filters = {
+		"parent": ("in", [row.name for row in schedules]),
+		"parenttype": "Customer Delivery Schedule",
+	}
+	if item_code:
+		child_filters["item_code"] = item_code
+	rows = frappe.get_all(
+		"Customer Delivery Schedule Item",
+		filters=child_filters,
+		fields=[
+			"name",
+			"parent",
+			"idx",
+			"sales_order",
+			"item_code",
+			"customer_part_no",
+			"schedule_date",
+			"qty",
+			"allocated_qty",
+			"produced_qty",
+			"delivered_qty",
+			"balance_qty",
+			"status",
+			"remark",
+		],
+		order_by="schedule_date asc, parent asc, idx asc",
+	)
+	prepared = []
+	for row in rows:
+		if (row.get("status") or "") == "Cancelled" or flt(row.get("qty")) <= 0:
+			continue
+		schedule = schedule_map.get(row.parent)
+		if not schedule:
+			continue
+		resolved_item = _resolve_item_name(row.item_code) or row.item_code
+		prepared.append(
+			{
+				"schedule": row.parent,
+				"schedule_item": row.name,
+				"idx": cint(row.idx),
+				"customer": schedule.customer,
+				"company": schedule.company,
+				"schedule_scope": schedule.schedule_scope,
+				"version_no": schedule.version_no,
+				"source_type": schedule.source_type,
+				"sales_order": row.sales_order,
+				"item_code": resolved_item,
+				"customer_part_no": row.customer_part_no,
+				"schedule_date": getdate(row.schedule_date),
+				"required_qty": flt(row.qty),
+				"delivered_qty": flt(row.delivered_qty),
+				"remark": row.remark,
+				"schedule_modified": schedule.modified,
+			}
+		)
+	return sorted(
+		prepared,
+		key=lambda row: (
+			row.get("company") or "",
+			row.get("item_code") or "",
+			getdate(row.get("schedule_date")),
+			row.get("customer") or "",
+			row.get("schedule") or "",
+			cint(row.get("idx")),
+		),
+	)
+
+
+def _build_customer_schedule_progress_rows(
+	schedule_rows: list[dict[str, Any]],
+	company: str | None,
+	run_doc,
+) -> list[dict[str, Any]]:
+	if not schedule_rows:
+		return []
+
+	stock_map = _get_available_stock_map(
+		company,
+		demand_rows=[
+			{
+				"company": row.get("company"),
+				"customer": row.get("customer"),
+				"sales_order": row.get("sales_order"),
+				"item_code": row.get("item_code"),
+				"qty": max(flt(row.get("required_qty")) - flt(row.get("delivered_qty")), 0),
+				"demand_source": "Customer Delivery Schedule",
+			}
+			for row in schedule_rows
+		],
+	)
+	remaining_stock = defaultdict(float, {item: flt(qty) for item, qty in stock_map.items()})
+	supply_map = _get_customer_schedule_progress_production_supply_map(
+		run_doc.get("name") if run_doc else None,
+		company=company,
+		target_item_codes={row.get("item_code") for row in schedule_rows if row.get("item_code")},
+	)
+	progress_rows = []
+
+	for source_row in schedule_rows:
+		row = dict(source_row)
+		required_qty = flt(row.get("required_qty"))
+		delivered_qty = flt(row.get("delivered_qty"))
+		open_qty = max(required_qty - delivered_qty, 0)
+		stock_covered_qty = min(open_qty, flt(remaining_stock[row.get("item_code")]))
+		remaining_stock[row.get("item_code")] = max(flt(remaining_stock[row.get("item_code")]) - stock_covered_qty, 0)
+		row.update(
+			{
+				"delivered_qty": delivered_qty,
+				"stock_covered_qty": stock_covered_qty,
+				"production_covered_qty": 0.0,
+				"uncovered_qty": max(open_qty - stock_covered_qty, 0),
+				"projected_completion_time": None,
+				"variance_hours": None,
+				"selected_run": run_doc.get("name") if run_doc else None,
+				"result_names": [],
+				"_supply_risk_reasons": [],
+			}
+		)
+		_allocate_customer_schedule_progress_supply(row, supply_map)
+		_set_customer_schedule_progress_status(row)
+		row["routes"] = _get_customer_schedule_progress_routes(row)
+		row.pop("_supply_risk_reasons", None)
+		progress_rows.append(row)
+
+	return progress_rows
+
+
+def _get_customer_schedule_progress_production_supply_map(
+	run_name: str | None,
+	company: str | None = None,
+	target_item_codes: set[str] | None = None,
+):
+	if not run_name:
+		return {}
+	result_filters = {"planning_run": run_name, "scheduled_qty": (">", 0)}
+	if company:
+		result_filters["company"] = company
+	results = frappe.get_all(
+		"APS Schedule Result",
+		filters=result_filters,
+		fields=[
+			"name",
+			"planning_run",
+			"company",
+			"item_code",
+			"customer",
+			"requested_date",
+			"scheduled_qty",
+			"risk_status",
+			"status",
+			"blocking_reason",
+		],
+		order_by="requested_date asc, modified asc",
+	)
+	if not results:
+		return {}
+	result_map = {row.name: row for row in results}
+	target_item_codes = set(target_item_codes or [])
+	segments = frappe.get_all(
+		"APS Schedule Segment",
+		filters={"parenttype": "APS Schedule Result", "parent": ("in", list(result_map))},
+		fields=[
+			"name",
+			"parent",
+			"workstation",
+			"start_time",
+			"end_time",
+			"planned_qty",
+			"segment_kind",
+			"primary_item_code",
+			"co_product_item_code",
+			"segment_status",
+			"linked_work_order",
+			"linked_work_order_scheduling",
+			"linked_scheduling_item",
+			"actual_status",
+			"actual_completed_qty",
+			"actual_start_time",
+			"actual_end_time",
+		],
+		order_by="end_time asc, start_time asc, idx asc",
+	)
+	candidate_segments = []
+	for segment in segments:
+		result = result_map.get(segment.parent)
+		item_code = _get_customer_schedule_progress_segment_item(segment, result)
+		if not result or not item_code:
+			continue
+		if target_item_codes and item_code not in target_item_codes:
+			continue
+		candidate_segments.append((segment, result, item_code))
+	now_value = now_datetime()
+	execution_map = _get_customer_schedule_progress_execution_snapshots([segment for segment, _result, _item_code in candidate_segments])
+	supply_map = defaultdict(list)
+	for segment, result, item_code in candidate_segments:
+		planned_qty = flt(segment.planned_qty)
+		if planned_qty <= 0:
+			continue
+		execution = execution_map.get(segment.name) or _get_segment_execution_snapshot(segment)
+		actual_qty = min(max(flt(execution.get("actual_completed_qty")), 0), planned_qty)
+		if actual_qty > 0:
+			actual_completion_time = (
+				execution.get("actual_end_time")
+				if actual_qty >= planned_qty and execution.get("actual_end_time")
+				else now_value
+			)
+			supply_map[(result.company, item_code)].append(
+				_build_customer_schedule_progress_supply(
+					result=result,
+					segment=segment,
+					qty=actual_qty,
+					completion_time=actual_completion_time,
+					source="Actual",
+					execution=execution,
+				)
+			)
+		remaining_qty = max(planned_qty - actual_qty, 0)
+		if remaining_qty > 0:
+			supply_map[(result.company, item_code)].append(
+				_build_customer_schedule_progress_supply(
+					result=result,
+					segment=segment,
+					qty=remaining_qty,
+					completion_time=segment.end_time,
+					source="Planned",
+					execution=execution,
+				)
+			)
+	for key, rows in supply_map.items():
+		supply_map[key] = sorted(
+			rows,
+			key=lambda row: (
+				get_datetime(row.get("completion_time") or now_value),
+				row.get("result_name") or "",
+				row.get("segment_name") or "",
+			),
+		)
+	return supply_map
+
+
+def _get_customer_schedule_progress_execution_snapshots(segments: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+	if not segments:
+		return {}
+
+	segment_names = list(dict.fromkeys(segment.get("name") for segment in segments if segment.get("name")))
+	linked_scheduling_names = list(
+		dict.fromkeys(segment.get("linked_scheduling_item") for segment in segments if segment.get("linked_scheduling_item"))
+	)
+	scheduling_by_name = {}
+	scheduling_by_segment = {}
+	if frappe.db.exists("DocType", "Scheduling Item"):
+		fields = ["name", "parent", "work_order", "completed_qty", "from_time", "to_time", "modified"]
+		if linked_scheduling_names:
+			scheduling_by_name = {
+				row.name: row
+				for row in frappe.get_all(
+					"Scheduling Item",
+					filters={"name": ("in", linked_scheduling_names)},
+					fields=fields,
+				)
+			}
+		if segment_names and frappe.db.has_column("Scheduling Item", "custom_aps_segment_reference"):
+			for row in frappe.get_all(
+				"Scheduling Item",
+				filters={"custom_aps_segment_reference": ("in", segment_names)},
+				fields=[*fields, "custom_aps_segment_reference"],
+				order_by="modified desc",
+			):
+				segment_name = row.get("custom_aps_segment_reference")
+				if segment_name and segment_name not in scheduling_by_segment:
+					scheduling_by_segment[segment_name] = row
+
+	work_order_names = []
+	for segment in segments:
+		if segment.get("linked_work_order"):
+			work_order_names.append(segment.get("linked_work_order"))
+	for scheduling_item in [*scheduling_by_name.values(), *scheduling_by_segment.values()]:
+		if scheduling_item.get("work_order"):
+			work_order_names.append(scheduling_item.get("work_order"))
+	work_order_names = list(dict.fromkeys(work_order_names))
+	work_orders = {}
+	if work_order_names and frappe.db.exists("DocType", "Work Order"):
+		work_orders = {
+			row.name: row
+			for row in frappe.get_all(
+				"Work Order",
+				filters={"name": ("in", work_order_names)},
+				fields=["name", "produced_qty"],
+			)
+		}
+
+	snapshots = {}
+	for segment in segments:
+		scheduling_item = scheduling_by_name.get(segment.get("linked_scheduling_item")) or scheduling_by_segment.get(
+			segment.get("name")
+		)
+		linked_work_order = scheduling_item.get("work_order") if scheduling_item else segment.get("linked_work_order")
+		snapshots[segment.name] = _build_segment_execution_snapshot(segment, scheduling_item, work_orders.get(linked_work_order))
+	return snapshots
+
+
+def _get_customer_schedule_progress_segment_item(segment, result) -> str | None:
+	if (segment.get("segment_kind") or "") == "Family Co-Product":
+		return _resolve_item_name(segment.get("co_product_item_code")) or segment.get("co_product_item_code")
+	return _resolve_item_name(result.get("item_code")) or result.get("item_code")
+
+
+def _build_customer_schedule_progress_supply(result, segment, qty, completion_time, source, execution):
+	risk_reasons = []
+	actual_status = execution.get("actual_status") or segment.get("actual_status")
+	if actual_status in SCHEDULE_PROGRESS_RISK_ACTUAL_STATUSES:
+		risk_reasons.append(_("Actual production status is {0}.").format(actual_status))
+	if result.get("risk_status") in SCHEDULE_PROGRESS_RISK_RESULT_STATUSES:
+		risk_reasons.append(_("APS result risk status is {0}.").format(result.get("risk_status")))
+	if (segment.get("segment_status") or "") in ("Risk", "Blocked"):
+		risk_reasons.append(_("Schedule segment status is {0}.").format(segment.get("segment_status")))
+	if result.get("blocking_reason"):
+		risk_reasons.append(result.get("blocking_reason"))
+	return {
+		"company": result.get("company"),
+		"qty": flt(qty),
+		"remaining_qty": flt(qty),
+		"completion_time": completion_time,
+		"source": source,
+		"result_name": result.get("name"),
+		"segment_name": segment.get("name"),
+		"actual_status": actual_status,
+		"risk_reasons": list(dict.fromkeys([reason for reason in risk_reasons if reason])),
+	}
+
+
+def _allocate_customer_schedule_progress_supply(row: dict[str, Any], supply_map):
+	need_qty = flt(row.get("uncovered_qty"))
+	if need_qty <= 0:
+		return
+	supplies = supply_map.get((row.get("company"), row.get("item_code"))) or []
+	covered_qty = 0.0
+	result_names = []
+	last_completion_time = None
+	risk_reasons = []
+
+	for supply in supplies:
+		if need_qty <= 0:
+			break
+		available_qty = flt(supply.get("remaining_qty"))
+		if available_qty <= 0:
+			continue
+		take_qty = min(need_qty, available_qty)
+		supply["remaining_qty"] = max(available_qty - take_qty, 0)
+		need_qty = max(need_qty - take_qty, 0)
+		covered_qty += take_qty
+		last_completion_time = supply.get("completion_time") or last_completion_time
+		if supply.get("result_name") and supply.get("result_name") not in result_names:
+			result_names.append(supply.get("result_name"))
+		risk_reasons.extend(supply.get("risk_reasons") or [])
+
+	row["production_covered_qty"] = covered_qty
+	row["uncovered_qty"] = need_qty
+	row["projected_completion_time"] = last_completion_time
+	row["result_names"] = result_names
+	row["_supply_risk_reasons"] = list(dict.fromkeys([reason for reason in risk_reasons if reason]))
+
+
+def _set_customer_schedule_progress_status(row: dict[str, Any]):
+	required_qty = flt(row.get("required_qty"))
+	delivered_qty = flt(row.get("delivered_qty"))
+	stock_covered_qty = flt(row.get("stock_covered_qty"))
+	production_covered_qty = flt(row.get("production_covered_qty"))
+	uncovered_qty = max(required_qty - delivered_qty - stock_covered_qty - production_covered_qty, 0)
+	row["uncovered_qty"] = uncovered_qty
+	now_value = now_datetime()
+	due_datetime = _get_due_datetime(row.get("schedule_date"))
+	projected_completion_time = row.get("projected_completion_time")
+	if projected_completion_time:
+		projected_completion_time = get_datetime(projected_completion_time)
+		row["projected_completion_time"] = projected_completion_time
+		row["variance_hours"] = round((due_datetime - projected_completion_time).total_seconds() / 3600, 2)
+
+	if required_qty <= 0 or delivered_qty >= required_qty:
+		row["status"] = "Delivered"
+		row["risk_reason"] = _("Delivered quantity covers this customer schedule row.")
+		return
+	if delivered_qty + stock_covered_qty >= required_qty:
+		row["status"] = "Stock Covered"
+		row["risk_reason"] = _("Available stock covers the remaining schedule quantity.")
+		return
+	if uncovered_qty > 0:
+		if now_value > due_datetime:
+			row["status"] = "Late"
+			row["risk_reason"] = _("Delivery date has passed and {0} is still uncovered.").format(
+				frappe.format(uncovered_qty, {"fieldtype": "Float"})
+			)
+		else:
+			row["status"] = "Uncovered"
+			row["risk_reason"] = _("Stock and the selected APS run still leave {0} uncovered.").format(
+				frappe.format(uncovered_qty, {"fieldtype": "Float"})
+			)
+		return
+	if projected_completion_time and projected_completion_time > due_datetime:
+		row["status"] = "Late"
+		row["risk_reason"] = _("Projected completion is later than the delivery date.")
+		return
+	if row.get("_supply_risk_reasons"):
+		row["status"] = "At Risk"
+		row["risk_reason"] = "; ".join(row.get("_supply_risk_reasons")[:3])
+		return
+	if projected_completion_time and row.get("variance_hours") is not None and 0 <= flt(row.get("variance_hours")) <= 24:
+		row["status"] = "At Risk"
+		row["risk_reason"] = _("Projected completion is within 24 hours of the delivery deadline.")
+		return
+	row["status"] = "On Track"
+	row["risk_reason"] = _("Projected production covers this schedule before the delivery date.")
+
+
+def _matches_customer_schedule_progress_filters(
+	row: dict[str, Any],
+	customer: str | None = None,
+	item_code: str | None = None,
+	schedule_scope: str | None = None,
+	date_from=None,
+	date_to=None,
+	status: str | None = None,
+) -> bool:
+	if customer and row.get("customer") != customer:
+		return False
+	if item_code and row.get("item_code") != item_code:
+		return False
+	if schedule_scope and row.get("schedule_scope") != schedule_scope:
+		return False
+	if date_from and getdate(row.get("schedule_date")) < getdate(date_from):
+		return False
+	if date_to and getdate(row.get("schedule_date")) > getdate(date_to):
+		return False
+	if status and row.get("status") != status:
+		return False
+	return True
+
+
+def _summarize_customer_schedule_progress_rows(rows: list[dict[str, Any]]) -> dict[str, Any]:
+	status_counts = defaultdict(int)
+	for row in rows or []:
+		status_counts[row.get("status") or "Unknown"] += 1
+	return {
+		"rows": len(rows or []),
+		"required_qty": sum(flt(row.get("required_qty")) for row in rows or []),
+		"delivered_qty": sum(flt(row.get("delivered_qty")) for row in rows or []),
+		"stock_covered_qty": sum(flt(row.get("stock_covered_qty")) for row in rows or []),
+		"production_covered_qty": sum(flt(row.get("production_covered_qty")) for row in rows or []),
+		"uncovered_qty": sum(flt(row.get("uncovered_qty")) for row in rows or []),
+		"risk_rows": status_counts.get("At Risk", 0) + status_counts.get("Uncovered", 0),
+		"late_rows": status_counts.get("Late", 0),
+		"status_counts": dict(status_counts),
+	}
+
+
+def _get_customer_schedule_progress_routes(row: dict[str, Any]) -> dict[str, Any]:
+	selected_run = row.get("selected_run")
+	result_routes = [
+		_build_form_route("APS Schedule Result", result_name)
+		for result_name in (row.get("result_names") or [])
+		if result_name
+	]
+	return {
+		"schedule": _build_form_route("Customer Delivery Schedule", row.get("schedule")),
+		"selected_run": _build_form_route("APS Planning Run", selected_run),
+		"gantt": f"aps-schedule-gantt?run_name={selected_run}" if selected_run else "",
+		"results": result_routes,
 	}
 
 
@@ -7088,48 +7701,32 @@ def _upsert_formal_shift_scheduling(batch, row) -> dict[str, Any]:
 	return {"docname": target_doc.name, "scheduling_item": child_row.name, "message": message}
 
 
-def _get_segment_execution_snapshot(segment) -> dict[str, Any]:
+def _build_segment_execution_snapshot(segment, scheduling_item=None, work_order=None) -> dict[str, Any]:
 	snapshot = {
-		"linked_work_order": segment.linked_work_order or None,
-		"linked_work_order_scheduling": segment.linked_work_order_scheduling or None,
-		"linked_scheduling_item": segment.linked_scheduling_item or None,
+		"linked_work_order": segment.get("linked_work_order") or None,
+		"linked_work_order_scheduling": segment.get("linked_work_order_scheduling") or None,
+		"linked_scheduling_item": segment.get("linked_scheduling_item") or None,
 		"actual_completed_qty": 0.0,
 		"actual_start_time": None,
 		"actual_end_time": None,
 		"delay_minutes": 0.0,
 		"actual_status": "Not Started",
 	}
-	scheduling_item = None
-	if segment.linked_scheduling_item and frappe.db.exists("Scheduling Item", segment.linked_scheduling_item):
-		scheduling_item = frappe.get_doc("Scheduling Item", segment.linked_scheduling_item)
-	elif frappe.db.exists("DocType", "Scheduling Item"):
-		row = frappe.get_all(
-			"Scheduling Item",
-			filters={"custom_aps_segment_reference": segment.name},
-			fields=["name"],
-			limit=1,
-			order_by="modified desc",
-		)
-		if row:
-			scheduling_item = frappe.get_doc("Scheduling Item", row[0].name)
 	if scheduling_item:
-		snapshot["linked_scheduling_item"] = scheduling_item.name
-		snapshot["linked_work_order"] = scheduling_item.work_order
-		snapshot["linked_work_order_scheduling"] = scheduling_item.parent
-		snapshot["actual_completed_qty"] = flt(scheduling_item.completed_qty)
-		snapshot["actual_start_time"] = scheduling_item.from_time
-		snapshot["actual_end_time"] = scheduling_item.to_time
+		snapshot["linked_scheduling_item"] = scheduling_item.get("name")
+		snapshot["linked_work_order"] = scheduling_item.get("work_order")
+		snapshot["linked_work_order_scheduling"] = scheduling_item.get("parent")
+		snapshot["actual_completed_qty"] = flt(scheduling_item.get("completed_qty"))
+		snapshot["actual_start_time"] = scheduling_item.get("from_time")
+		snapshot["actual_end_time"] = scheduling_item.get("to_time")
 
-	work_order = None
-	if snapshot["linked_work_order"] and frappe.db.exists("Work Order", snapshot["linked_work_order"]):
-		work_order = frappe.get_doc("Work Order", snapshot["linked_work_order"])
 	if not scheduling_item and work_order:
-		snapshot["actual_completed_qty"] = flt(work_order.produced_qty)
+		snapshot["actual_completed_qty"] = flt(work_order.get("produced_qty"))
 
-	planned_qty = flt(segment.planned_qty)
 	now_value = now_datetime()
-	start_time = get_datetime(segment.start_time)
-	end_time = get_datetime(segment.end_time)
+	planned_qty = flt(segment.get("planned_qty"))
+	start_time = get_datetime(segment.get("start_time")) if segment.get("start_time") else now_value
+	end_time = get_datetime(segment.get("end_time")) if segment.get("end_time") else start_time
 	actual_qty = flt(snapshot["actual_completed_qty"])
 	if actual_qty > planned_qty * 1.02:
 		snapshot["actual_status"] = "Overproduced"
@@ -7147,12 +7744,37 @@ def _get_segment_execution_snapshot(segment) -> dict[str, Any]:
 			snapshot["actual_status"] = "Slow Progress"
 	elif now_value > end_time:
 		snapshot["actual_status"] = "No Recent Update"
-	elif work_order and flt(work_order.produced_qty) > 0:
+	elif work_order and flt(work_order.get("produced_qty")) > 0:
 		snapshot["actual_status"] = "Running"
 
 	if snapshot["actual_status"] in ("Delayed", "No Recent Update", "Slow Progress"):
 		snapshot["delay_minutes"] = max((now_value - end_time).total_seconds() / 60, 0)
 	return snapshot
+
+
+def _get_segment_execution_snapshot(segment) -> dict[str, Any]:
+	scheduling_item = None
+	has_scheduling_item = frappe.db.exists("DocType", "Scheduling Item")
+	if has_scheduling_item and segment.get("linked_scheduling_item") and frappe.db.exists(
+		"Scheduling Item", segment.get("linked_scheduling_item")
+	):
+		scheduling_item = frappe.get_doc("Scheduling Item", segment.get("linked_scheduling_item"))
+	elif has_scheduling_item and frappe.db.has_column("Scheduling Item", "custom_aps_segment_reference"):
+		row = frappe.get_all(
+			"Scheduling Item",
+			filters={"custom_aps_segment_reference": segment.get("name")},
+			fields=["name"],
+			limit=1,
+			order_by="modified desc",
+		)
+		if row:
+			scheduling_item = frappe.get_doc("Scheduling Item", row[0].name)
+
+	work_order = None
+	linked_work_order = scheduling_item.get("work_order") if scheduling_item else segment.get("linked_work_order")
+	if linked_work_order and frappe.db.exists("Work Order", linked_work_order):
+		work_order = frappe.get_doc("Work Order", linked_work_order)
+	return _build_segment_execution_snapshot(segment, scheduling_item, work_order)
 
 
 def _rollup_result_actual_status(segment_statuses: list[str]) -> str:

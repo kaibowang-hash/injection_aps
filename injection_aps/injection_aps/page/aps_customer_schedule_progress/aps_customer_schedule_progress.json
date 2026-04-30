@@ -1,0 +1,45 @@
+{
+ "content": null,
+ "doctype": "Page",
+ "module": "Injection APS",
+ "name": "aps-customer-schedule-progress",
+ "page_name": "aps-customer-schedule-progress",
+ "roles": [
+  {
+   "role": "System Manager"
+  },
+  {
+   "role": "GMC"
+  },
+  {
+   "role": "PMC"
+  },
+  {
+   "role": "Manufacturing Manager"
+  },
+  {
+   "role": "Manufacturing User"
+  },
+  {
+   "role": "Sales Manager"
+  },
+  {
+   "role": "Sales User"
+  },
+  {
+   "role": "Purchase Manager"
+  },
+  {
+   "role": "Purchase User"
+  },
+  {
+   "role": "Stock Manager"
+  },
+  {
+   "role": "Stock User"
+  }
+ ],
+ "standard": "Yes",
+ "system_page": 0,
+ "title": "Customer Schedule Progress"
+}

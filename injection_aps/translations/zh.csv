@@ -1412,3 +1412,49 @@ request,请求
 {0} rows,{0} 行
 晚班,晚班
 白班,白班
+Customer Schedule Progress,客户排期进度
+"Customer delivery rows are matched against available stock, actual execution, and the selected APS run projection.",客户交付排期行会匹配可用库存、实际执行进度和所选 APS 运算的预计产出。
+Loading customer schedule progress...,正在加载客户排期进度...
+Customer schedule progress refreshed.,客户排期进度已刷新。
+Failed to load customer schedule progress.,客户排期进度加载失败。
+Using APS Run {0},使用 APS 运算 {0}
+No APS Run,未选择 APS 运算
+Select or create APS Run,请选择或创建 APS 运算
+Rows were truncated by the current page limit.,当前页面行数已按上限截断。
+Schedule Qty,排期数量
+Stock Covered,库存覆盖
+Production Covered,生产覆盖
+Uncovered,未覆盖
+Risk / Late,风险 / 逾期
+No.,序号
+Schedule,排期
+Customer Part No,客户料号
+Delivery Date,送货日期
+Delivered,已交付
+Stock,库存
+Production,生产
+Projected Done,预计完成
+Variance Hrs,差异小时
+Risk Reason,风险原因
+APS Result,APS 结果
+Schedule Progress,排期进度
+"Customer schedule rows matched with stock, actual execution, and APS projection.",客户排期行与库存、实际执行、APS 预计产出匹配。
+Open Schedule,打开排期
+Open APS Run,打开 APS 运算
+Open APS Result {0},打开 APS 结果 {0}
+Open Board,打开看板
+Delivered,已交付
+On Track,按期
+At Risk,有风险
+Late,逾期
+APS Planning Run {0} was not found.,未找到 APS 运算 {0}。
+Actual production status is {0}.,实际生产状态为 {0}。
+APS result risk status is {0}.,APS 结果风险状态为 {0}。
+Schedule segment status is {0}.,排程段状态为 {0}。
+Delivered quantity covers this customer schedule row.,已交付数量已覆盖该客户排期行。
+Available stock covers the remaining schedule quantity.,可用库存已覆盖剩余排期数量。
+Delivery date has passed and {0} is still uncovered.,送货日期已过，仍有 {0} 未覆盖。
+Stock and the selected APS run still leave {0} uncovered.,库存和所选 APS 运算后仍有 {0} 未覆盖。
+Projected completion is later than the delivery date.,预计完成时间晚于送货日期。
+Projected completion is within 24 hours of the delivery deadline.,预计完成时间距离交付截止不足 24 小时。
+Projected production covers this schedule before the delivery date.,预计产出可在送货日期前覆盖该排期。
