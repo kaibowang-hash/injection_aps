@@ -606,6 +606,32 @@ def get_net_requirement_page_data(
 
 
 @frappe.whitelist()
+def get_customer_schedule_progress_data(
+	company=None,
+	customer=None,
+	item_code=None,
+	schedule_scope=None,
+	date_from=None,
+	date_to=None,
+	status=None,
+	run_name=None,
+	limit=None,
+):
+	_require_read_access()
+	return planning.get_customer_schedule_progress_data(
+		company=company,
+		customer=customer,
+		item_code=item_code,
+		schedule_scope=schedule_scope,
+		date_from=date_from,
+		date_to=date_to,
+		status=status,
+		run_name=run_name,
+		limit=limit,
+	)
+
+
+@frappe.whitelist()
 def update_net_requirement_row(name=None, values=None):
 	_require_plan_access()
 	if not name or not frappe.db.exists("APS Net Requirement", name):

@@ -203,6 +203,7 @@ STANDARD_CUSTOM_FIELDS = {
 
 APS_OWNED_PAGE_NAMES = [
 	"aps-schedule-console",
+	"aps-customer-schedule-progress",
 	"aps-net-requirement-workbench",
 	"aps-run-console",
 	"aps-schedule-gantt",
