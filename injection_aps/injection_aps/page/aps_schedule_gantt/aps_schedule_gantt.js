@@ -217,7 +217,7 @@ class InjectionAPSScheduleGantt {
 				__("Blocked / Risk Demands"),
 				"aps_blocked_risk_demands",
 				[
-					{ label: __("Result"), fieldname: "name" },
+					{ label: __("Result", null, "Injection APS"), fieldname: "name" },
 					{ label: __("Item"), fieldname: "item_code" },
 					{ label: __("Item Name"), fieldname: "item_name" },
 					{ label: __("Customer"), fieldname: "customer" },
@@ -843,12 +843,12 @@ class InjectionAPSScheduleGantt {
 					handler: async () => this.openResultDrawer(resultName, segmentName),
 				},
 				{
-					label: __("Result"),
+					label: __("Result", null, "Injection APS"),
 					icon: "external-link",
 					handler: async () => frappe.set_route("Form", "APS Schedule Result", resultName),
 				},
 				{
-					label: __("Run"),
+					label: __("Run", null, "Injection APS"),
 					icon: "branch",
 					handler: async () => {
 						if (runName) {
@@ -1411,7 +1411,7 @@ class InjectionAPSScheduleGantt {
 						<thead>
 							<tr>
 								<th>${__("Source")}</th>
-								<th>${__("Demand")}</th>
+								<th>${__("Demand", null, "Injection APS")}</th>
 								<th>${__("Qty")}</th>
 								<th>${__("Customer Ref")}</th>
 								<th>${__("Remark")}</th>
@@ -1455,7 +1455,7 @@ class InjectionAPSScheduleGantt {
 									(row) => `
 										<tr>
 											<td>${link(row.mold_route, row.mold || "-")} / ${injection_aps.ui.escape(row.mold_name || "")}</td>
-											<td>${injection_aps.ui.escape(injection_aps.ui.translate(row.mold_status || ""))}${row.is_family_mold ? ` / ${__("Family")}` : ""}</td>
+											<td>${injection_aps.ui.escape(injection_aps.ui.translate(row.mold_status || ""))}${row.is_family_mold ? ` / ${__("Family", null, "Injection APS")}` : ""}</td>
 											<td>${injection_aps.ui.escape(injection_aps.ui.format_number(row.machine_tonnage || 0))}</td>
 											<td>${injection_aps.ui.escape(injection_aps.ui.format_number(row.cavity_count || 0))}</td>
 											<td>${injection_aps.ui.escape(injection_aps.ui.format_number(row.effective_output_qty || 0))} / ${injection_aps.ui.escape(injection_aps.ui.format_number(row.cycle_time_seconds || 0))}s</td>
@@ -1511,9 +1511,9 @@ class InjectionAPSScheduleGantt {
 					<div class="ia-panel">
 						<h4>${__("Planning")}</h4>
 						<div class="ia-kv">
-							<div class="ia-kv-row"><div class="ia-kv-key">${__("Requested")}</div><div class="ia-kv-value">${injection_aps.ui.escape(result.requested_date || "")}</div></div>
+							<div class="ia-kv-row"><div class="ia-kv-key">${__("Requested", null, "Injection APS")}</div><div class="ia-kv-value">${injection_aps.ui.escape(result.requested_date || "")}</div></div>
 							<div class="ia-kv-row"><div class="ia-kv-key">${__("Source")}</div><div class="ia-kv-value">${injection_aps.ui.escape(injection_aps.ui.translate(result.demand_source || ""))}</div></div>
-							<div class="ia-kv-row"><div class="ia-kv-key">${__("Run")}</div><div class="ia-kv-value">${link(routeLinks.planning_run, result.planning_run || "")}</div></div>
+							<div class="ia-kv-row"><div class="ia-kv-key">${__("Run", null, "Injection APS")}</div><div class="ia-kv-value">${link(routeLinks.planning_run, result.planning_run || "")}</div></div>
 							<div class="ia-kv-row"><div class="ia-kv-key">${__("Net Req")}</div><div class="ia-kv-value">${link(routeLinks.net_requirement, result.net_requirement || "")}</div></div>
 						</div>
 					</div>
@@ -1528,7 +1528,7 @@ class InjectionAPSScheduleGantt {
 							<div class="ia-kv-row"><div class="ia-kv-key">${__("Daily Capacity")}</div><div class="ia-kv-value">${injection_aps.ui.escape(injection_aps.ui.format_number(selectedSegment.daily_capacity_qty || 0))}</div></div>
 							<div class="ia-kv-row"><div class="ia-kv-key">${__("Capacity Source")}</div><div class="ia-kv-value">${injection_aps.ui.escape(injection_aps.ui.translate(selectedSegment.capacity_source_label || selectedSegment.capacity_source || ""))}</div></div>
 							<div class="ia-kv-row"><div class="ia-kv-key">${__("Work Order")}</div><div class="ia-kv-value">${link(selectedSegment.work_order_route, selectedSegment.linked_work_order || "")}</div></div>
-							<div class="ia-kv-row"><div class="ia-kv-key">${__("Scheduling")}</div><div class="ia-kv-value">${link(selectedSegment.work_order_scheduling_route, selectedSegment.linked_work_order_scheduling || "")}</div></div>
+							<div class="ia-kv-row"><div class="ia-kv-key">${__("Scheduling", null, "Injection APS")}</div><div class="ia-kv-value">${link(selectedSegment.work_order_scheduling_route, selectedSegment.linked_work_order_scheduling || "")}</div></div>
 							<div class="ia-kv-row"><div class="ia-kv-key">${__("Manufacture Entry")}</div><div class="ia-kv-value">${link(selectedSegment.latest_stock_entry_route, selectedSegment.latest_stock_entry || "")}</div></div>
 						</div>
 					</div>
@@ -1713,9 +1713,9 @@ class InjectionAPSScheduleGantt {
 				[
 					{ label: __("Severity"), fieldname: "severity" },
 					{ label: __("Type"), fieldname: "exception_type" },
-					{ label: __("Message"), fieldname: "message" },
+					{ label: __("Message", null, "Injection APS"), fieldname: "message" },
 					{ label: __("Blocking"), fieldname: "is_blocking", fieldtype: "Check" },
-					{ label: __("Machine"), fieldname: "workstation" },
+					{ label: __("Machine", null, "Injection APS"), fieldname: "workstation" },
 					{ label: __("Source Doctype"), fieldname: "source_doctype" },
 					{ label: __("Source Name"), fieldname: "source_name" },
 				],
@@ -1735,10 +1735,10 @@ class InjectionAPSScheduleGantt {
 					{ label: __("Actual Status"), fieldname: "actual_status" },
 					{ label: __("Actual Qty"), fieldname: "actual_completed_qty", fieldtype: "Float" },
 					{ label: __("Risk"), fieldname: "risk_flags" },
-					{ label: __("Start"), fieldname: "start_time" },
-					{ label: __("End"), fieldname: "end_time" },
+					{ label: __("Start", null, "Injection APS"), fieldname: "start_time" },
+					{ label: __("End", null, "Injection APS"), fieldname: "end_time" },
 					{ label: __("Work Order"), fieldname: "linked_work_order" },
-					{ label: __("Scheduling"), fieldname: "linked_work_order_scheduling" },
+					{ label: __("Scheduling", null, "Injection APS"), fieldname: "linked_work_order_scheduling" },
 				],
 				segments,
 				`${result.item_code || ""} / ${result.customer || ""}`

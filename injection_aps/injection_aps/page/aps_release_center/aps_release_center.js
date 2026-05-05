@@ -170,7 +170,7 @@ class InjectionAPSReleaseCenter {
 			injection_aps.ui.render_cards(this.summary, [
 				{ label: __("WO Proposal Batches"), value: (data.work_order_proposal_batches || []).length },
 				{ label: __("Day/Night Proposal Batches"), value: (data.shift_schedule_proposal_batches || []).length },
-				{ label: __("Delayed"), value: executionHealth.delayed_segments || 0 },
+				{ label: __("Delayed", null, "Injection APS"), value: executionHealth.delayed_segments || 0 },
 				{ label: __("No Update"), value: executionHealth.no_recent_update_segments || 0 },
 				{ label: __("Today Manufacture"), value: executionHealth.today_completed_entries || 0 },
 				{ label: __("Blocking"), value: blocking, note: __("Manual handling is required before formal apply.") },
@@ -196,7 +196,7 @@ class InjectionAPSReleaseCenter {
 				{ label: __("Status"), fieldname: "status" },
 				{ label: __("Approval"), fieldname: "approval_state" },
 				{ label: __("Rows"), fieldname: "proposal_count" },
-				{ label: __("Applied"), fieldname: "applied_count" },
+				{ label: __("Applied", null, "Injection APS"), fieldname: "applied_count" },
 				{ label: __("Actions"), fieldname: "actions_html" },
 			],
 			rows,
@@ -323,7 +323,7 @@ class InjectionAPSReleaseCenter {
 				{ label: __("Approval"), fieldname: "approval_state" },
 				{ label: __("WO Proposal Batch"), fieldname: "work_order_proposal_batch" },
 				{ label: __("Rows"), fieldname: "proposal_count" },
-				{ label: __("Applied"), fieldname: "applied_count" },
+				{ label: __("Applied", null, "Injection APS"), fieldname: "applied_count" },
 				{ label: __("Actions"), fieldname: "actions_html" },
 			],
 			rows,
@@ -450,10 +450,10 @@ class InjectionAPSReleaseCenter {
 				{ label: __("Batch"), fieldname: "name" },
 				{ label: __("APS Run"), fieldname: "planning_run" },
 				{ label: __("Status"), fieldname: "status" },
-				{ label: __("From"), fieldname: "release_from_date" },
-				{ label: __("To"), fieldname: "release_to_date" },
-				{ label: __("Work Orders"), fieldname: "generated_work_orders" },
-				{ label: __("Scheduling"), fieldname: "work_order_scheduling" },
+				{ label: __("From", null, "Injection APS"), fieldname: "release_from_date" },
+				{ label: __("To", null, "Injection APS"), fieldname: "release_to_date" },
+				{ label: __("Work Orders", null, "Injection APS"), fieldname: "generated_work_orders" },
+				{ label: __("Scheduling", null, "Injection APS"), fieldname: "work_order_scheduling" },
 			],
 			rows,
 			(column, value) => {
@@ -494,8 +494,8 @@ class InjectionAPSReleaseCenter {
 				{ label: __("Severity"), fieldname: "severity" },
 				{ label: __("Type"), fieldname: "exception_type" },
 				{ label: __("Item"), fieldname: "item_code" },
-				{ label: __("Machine"), fieldname: "workstation" },
-				{ label: __("Message"), fieldname: "message" },
+				{ label: __("Machine", null, "Injection APS"), fieldname: "workstation" },
+				{ label: __("Message", null, "Injection APS"), fieldname: "message" },
 				{ label: __("Actions"), fieldname: "actions_html" },
 			],
 			rows,
@@ -592,7 +592,7 @@ class InjectionAPSReleaseCenter {
 				<div class="ia-status-line">
 					<div class="ia-status-cell"><span class="ia-status-label">${__("Severity")}</span><div class="ia-status-value">${injection_aps.ui.escape(detail.severity || "-")}</div></div>
 					<div class="ia-status-cell"><span class="ia-status-label">${__("Type")}</span><div class="ia-status-value">${injection_aps.ui.escape(translatedExceptionType || "-")}</div></div>
-					<div class="ia-status-cell ia-status-cell-wide"><span class="ia-status-label">${__("Message")}</span><div class="ia-status-value">${injection_aps.ui.escape(translatedMessage || "-")}</div></div>
+					<div class="ia-status-cell ia-status-cell-wide"><span class="ia-status-label">${__("Message", null, "Injection APS")}</span><div class="ia-status-value">${injection_aps.ui.escape(translatedMessage || "-")}</div></div>
 				</div>
 				<div class="ia-mini-grid">
 					<div class="ia-panel">
@@ -634,7 +634,7 @@ class InjectionAPSReleaseCenter {
 			injection_aps.ui.render_cards(this.impactSummary, [
 				{ label: __("Insert Order Impact"), value: __("None"), note: __("Use the page-level insert order impact tool when needed. It is no longer mixed into exception handling.") },
 			]);
-			injection_aps.ui.render_table(this.impactTable, [{ label: __("Message"), fieldname: "message" }], []);
+			injection_aps.ui.render_table(this.impactTable, [{ label: __("Message", null, "Injection APS"), fieldname: "message" }], []);
 			return;
 		}
 
@@ -649,10 +649,10 @@ class InjectionAPSReleaseCenter {
 			[
 				{ label: __("Lane"), fieldname: "lane_key" },
 				{ label: __("Mold"), fieldname: "mould_reference" },
-				{ label: __("Machine"), fieldname: "workstation" },
+				{ label: __("Machine", null, "Injection APS"), fieldname: "workstation" },
 				{ label: __("Qty"), fieldname: "planned_qty" },
-				{ label: __("Start"), fieldname: "start_time" },
-				{ label: __("End"), fieldname: "end_time" },
+				{ label: __("Start", null, "Injection APS"), fieldname: "start_time" },
+				{ label: __("End", null, "Injection APS"), fieldname: "end_time" },
 			],
 			this.lastImpact.parallelization_plan || [],
 			(column, value) => {
