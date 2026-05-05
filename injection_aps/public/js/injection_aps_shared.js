@@ -6,6 +6,7 @@ frappe.provide("injection_aps.ui");
 	}
 
 	injection_aps.ui.__initialized = true;
+	injection_aps.ui.translation_context = "Injection APS";
 	injection_aps.ui.__busy_keys = new Set();
 	injection_aps.ui.__freeze_depth = 0;
 	injection_aps.ui.__action_role_map = {
@@ -79,11 +80,11 @@ frappe.provide("injection_aps.ui");
 		return `<svg class="ia-aps-icon${sizeClass}" aria-hidden="true"><use href="/assets/injection_aps/icons/aps-icons.svg#filter"></use></svg>`;
 	};
 
-	injection_aps.ui.translate = function (value) {
+	injection_aps.ui.translate = function (value, context) {
 		if (value == null || value === "") {
 			return "";
 		}
-		return __(String(value));
+		return __(String(value), null, context || injection_aps.ui.translation_context);
 	};
 
 	injection_aps.ui.pill = function (label, tone) {

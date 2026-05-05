@@ -97,7 +97,7 @@ class InjectionAPSScheduleConsole {
 				blocking_reason: "",
 				actions: [
 					{ label: __("Import and Rebuild"), action_key: "import_and_promote", enabled: 1 },
-					{ label: __("Import"), action_key: "import_only", enabled: 1 },
+					{ label: __("Import", null, "Injection APS"), action_key: "import_only", enabled: 1 },
 					{ label: __("Net Requirements"), action_key: "open_net_requirement", enabled: this.lastImported ? 1 : 0, route: "aps-net-requirement-workbench" },
 				],
 			}
@@ -233,7 +233,7 @@ class InjectionAPSScheduleConsole {
 			{ label: __("Import Strategy"), value: injection_aps.ui.translate(preview.import_strategy || "-") },
 			{ label: __("Rows"), value: preview.row_count || 0 },
 			{
-				label: __("Changes"),
+				label: __("Changes", null, "Injection APS"),
 				value: summaryRows.length || 0,
 				note: [
 					parseContext.parser_mode ? `${__("Mode")}:${injection_aps.ui.translate(parseContext.parser_mode)}` : "",
@@ -616,7 +616,7 @@ class InjectionAPSScheduleConsole {
 			{ label: __("Schedule Date"), fieldname: "schedule_date" },
 			{ label: __("Qty"), fieldname: "qty" },
 			{ label: __("Prev Qty"), fieldname: "previous_qty" },
-			{ label: __("Change"), fieldname: "change_type" },
+			{ label: __("Change", null, "Injection APS"), fieldname: "change_type" },
 			{ label: __("Source"), fieldname: "source_origin" },
 		];
 		if (!previewRows.length) {

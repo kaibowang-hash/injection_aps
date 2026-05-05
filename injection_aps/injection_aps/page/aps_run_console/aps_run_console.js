@@ -80,7 +80,7 @@ class InjectionAPSRunConsole {
 		}
 
 		const columns = [
-			{ label: __("Run"), fieldname: "name" },
+			{ label: __("Run", null, "Injection APS"), fieldname: "name" },
 			{ label: __("Plant Floors"), fieldname: "selected_plant_floor_summary" },
 			{ label: __("Planning Date"), fieldname: "planning_date" },
 			{ label: __("Status"), fieldname: "status" },
@@ -129,7 +129,7 @@ class InjectionAPSRunConsole {
 				}
 				if (column.fieldname === "execution_health") {
 					const health = row.execution_health || {};
-					return `${__("Run")}:${health.running || 0} / ${__("Delay")}:${health.delayed || 0} / ${__("No Update")}:${health.no_recent_update || 0}`;
+					return `${__("Run", null, "Injection APS Execution")}:${health.running || 0} / ${__("Delay")}:${health.delayed || 0} / ${__("No Update")}:${health.no_recent_update || 0}`;
 				}
 					if (column.fieldname === "actions_html") {
 						const displayActions = (injection_aps.ui.get_value(row, "next_actions.actions", []) || [])

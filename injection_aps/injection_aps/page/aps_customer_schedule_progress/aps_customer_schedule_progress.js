@@ -55,13 +55,13 @@ class InjectionAPSCustomerScheduleProgress {
 		this.fromField = this.page.add_field({
 			fieldtype: "Date",
 			fieldname: "date_from",
-			label: __("From"),
+			label: __("From", null, "Injection APS"),
 			change: () => this.refreshFromFilter(),
 		});
 		this.toField = this.page.add_field({
 			fieldtype: "Date",
 			fieldname: "date_to",
-			label: __("To"),
+			label: __("To", null, "Injection APS"),
 			change: () => this.refreshFromFilter(),
 		});
 		this.statusField = this.page.add_field({
@@ -162,13 +162,13 @@ class InjectionAPSCustomerScheduleProgress {
 		const columns = [
 			{ label: __("No."), fieldname: "_row_no", fieldtype: "Int", className: "ia-col-seq" },
 			{ label: __("Customer"), fieldname: "customer" },
-			{ label: __("Schedule"), fieldname: "schedule" },
+			{ label: __("Schedule", null, "Injection APS"), fieldname: "schedule" },
 			{ label: __("Version"), fieldname: "version_no" },
 			{ label: __("Item"), fieldname: "item_code" },
 			{ label: __("Customer Part No"), fieldname: "customer_part_no" },
 			{ label: __("Delivery Date"), fieldname: "schedule_date" },
 			{ label: __("Qty"), fieldname: "required_qty", fieldtype: "Float" },
-			{ label: __("Delivered"), fieldname: "delivered_qty", fieldtype: "Float" },
+			{ label: __("Delivered", null, "Injection APS"), fieldname: "delivered_qty", fieldtype: "Float" },
 			{ label: __("Stock"), fieldname: "stock_covered_qty", fieldtype: "Float" },
 			{ label: __("Production"), fieldname: "production_covered_qty", fieldtype: "Float" },
 			{ label: __("Uncovered"), fieldname: "uncovered_qty", fieldtype: "Float" },

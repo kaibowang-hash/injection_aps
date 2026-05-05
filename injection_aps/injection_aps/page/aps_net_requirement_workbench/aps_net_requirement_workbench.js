@@ -117,7 +117,7 @@ class InjectionAPSNetRequirementWorkbench {
 					{ label: __("Item"), fieldname: "item_code" },
 					{ label: __("Customer"), fieldname: "customer" },
 					{ label: __("Demand Date"), fieldname: "demand_date" },
-					{ label: __("Demand"), fieldname: "demand_qty" },
+					{ label: __("Demand", null, "Injection APS"), fieldname: "demand_qty" },
 					{ label: __("Stock"), fieldname: "available_stock_qty" },
 					{ label: __("Open WO"), fieldname: "open_work_order_qty" },
 					{ label: __("Safety Gap"), fieldname: "safety_stock_gap_qty" },
@@ -254,7 +254,7 @@ class InjectionAPSNetRequirementWorkbench {
 			title: __("Edit Row"),
 			fields: [
 				{ fieldname: "demand_date", fieldtype: "Date", label: __("Demand Date"), default: row.demand_date },
-				{ fieldname: "demand_qty", fieldtype: "Float", label: __("Demand"), default: row.demand_qty },
+				{ fieldname: "demand_qty", fieldtype: "Float", label: __("Demand", null, "Injection APS"), default: row.demand_qty },
 				{ fieldname: "available_stock_qty", fieldtype: "Float", label: __("Stock"), default: row.available_stock_qty },
 				{ fieldname: "open_work_order_qty", fieldtype: "Float", label: __("Open WO"), default: row.open_work_order_qty },
 				{ fieldname: "safety_stock_gap_qty", fieldtype: "Float", label: __("Safety Gap"), default: row.safety_stock_gap_qty },
