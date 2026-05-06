@@ -5137,6 +5137,9 @@ def _get_available_mold_rows(item_code: str) -> list[dict[str, Any]]:
 			mp.priority,
 			mp.is_default_product,
 			mp.item_code,
+			mp.output_group,
+			mp.configuration_label,
+			mp.color_spec,
 			mp.output_qty,
 			mp.cavity_output_qty
 		from `tabMold` m
@@ -5178,13 +5181,28 @@ def _get_preferred_mold_row(item_code: str) -> dict[str, Any] | None:
 	return _get_primary_mold_row(item_code)
 
 
-def _get_family_output_rows(mold_name: str, primary_item_code: str) -> list[dict[str, Any]]:
+def _get_family_output_rows(
+	mold_name: str,
+	primary_item_code: str,
+	output_group: str | None = None,
+) -> list[dict[str, Any]]:
 	if not mold_name or not frappe.db.exists("DocType", "Mold Product"):
 		return []
 	primary_item_code = _resolve_item_name(primary_item_code)
+	primary_output_group = output_group
+	if not primary_output_group:
+		primary_output_group = frappe.db.get_value(
+			"Mold Product",
+			{"parent": mold_name, "parenttype": "Mold", "item_code": primary_item_code},
+			"output_group",
+		)
+	primary_output_group = primary_output_group or "Default"
 	query = """
 		select
 			mp.item_code,
+			mp.output_group,
+			mp.configuration_label,
+			mp.color_spec,
 			mp.output_qty,
 			mp.cavity_output_qty
 		from `tabMold Product` mp
@@ -5192,10 +5210,11 @@ def _get_family_output_rows(mold_name: str, primary_item_code: str) -> list[dict
 		where mp.parent = %s
 			and mp.parenttype = 'Mold'
 			and mp.item_code != %s
+			and ifnull(mp.output_group, 'Default') = %s
 			and item.item_group in ({0})
 		order by mp.priority asc, mp.idx asc
 	""".format(", ".join(["%s"] * len(SCHEDULABLE_ITEM_GROUPS)))
-	params = [mold_name, primary_item_code, *SCHEDULABLE_ITEM_GROUPS]
+	params = [mold_name, primary_item_code, primary_output_group, *SCHEDULABLE_ITEM_GROUPS]
 	return frappe.db.sql(query, params, as_dict=True)
 
 
@@ -5372,6 +5391,9 @@ def _get_result_mold_rows(result, segments: list[dict[str, Any]]) -> list[dict[s
 			m.standard_cycle_seconds,
 			m.is_family_mold,
 			mp.item_code,
+			mp.output_group,
+			mp.configuration_label,
+			mp.color_spec,
 			mp.output_qty,
 			mp.cavity_output_qty,
 			mp.priority
@@ -5407,6 +5429,9 @@ def _get_mold_master_rows_for_item(item_code: str) -> list[dict[str, Any]]:
 			m.standard_cycle_seconds,
 			m.is_family_mold,
 			mp.item_code,
+			mp.output_group,
+			mp.configuration_label,
+			mp.color_spec,
 			mp.output_qty,
 			mp.cavity_output_qty,
 			mp.priority
@@ -5853,6 +5878,9 @@ def _select_machine_candidates(
 			candidate["preferred"] = cint(rule.get("preferred")) if rule else 0
 			candidate["priority"] = cint(rule.get("priority")) if rule else cint(capability.get("queue_sequence") or 999)
 			candidate["mould_reference"] = mold_row.get("mold")
+			candidate["output_group"] = mold_row.get("output_group") or "Default"
+			candidate["configuration_label"] = mold_row.get("configuration_label")
+			candidate["color_spec"] = mold_row.get("color_spec")
 			candidate["mold_name"] = mold_row.get("mold_name")
 			candidate["cavity_count"] = flt(
 				mold_row.get("cavity_output_qty") or mold_row.get("output_qty") or mold_row.get("cavity_count")
@@ -6092,6 +6120,7 @@ def _choose_best_slot(
 			"is_locked": 0,
 			"is_manual": 0,
 			"_output_qty": proposal["output_qty"],
+			"_output_group": proposal.get("output_group") or "Default",
 			"_is_family_mold": proposal["is_family_mold"],
 		}
 		selected_segments.append(segment)
@@ -6206,6 +6235,7 @@ def _choose_best_slot(
 	for segment in selected_segments:
 		clean_segment = dict(segment)
 		clean_segment.pop("_output_qty", None)
+		clean_segment.pop("_output_group", None)
 		clean_segment.pop("_is_family_mold", None)
 		clean_segments.append(clean_segment)
 	clean_segments.extend(family_segments)
@@ -6344,6 +6374,9 @@ def _build_candidate_proposal(
 		"workstation": candidate.get("workstation"),
 		"plant_floor": candidate.get("plant_floor"),
 		"mould_reference": candidate.get("mould_reference"),
+		"output_group": candidate.get("output_group") or "Default",
+		"configuration_label": candidate.get("configuration_label"),
+		"color_spec": candidate.get("color_spec"),
 		"lane_key": candidate.get("lane_key"),
 		"is_family_mold": cint(candidate.get("is_family_mold")),
 		"output_qty": flt(candidate.get("output_qty")),
@@ -6555,7 +6588,11 @@ def _build_family_side_outputs(
 		cycles = flt(segment.get("planned_qty")) / primary_output_qty
 		family_group = f"FAM-{frappe.generate_hash(length=8)}"
 		segment["family_group"] = family_group
-		for sibling in _get_family_output_rows(segment.get("mould_reference"), item_code):
+		for sibling in _get_family_output_rows(
+			segment.get("mould_reference"),
+			item_code,
+			segment.get("_output_group"),
+		):
 			sibling_output_qty = flt(sibling.get("cavity_output_qty") or sibling.get("output_qty"))
 			side_qty = flt(cycles * sibling_output_qty)
 			if side_qty <= 0:
