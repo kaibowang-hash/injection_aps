@@ -11,7 +11,9 @@
   "release_to_date",
   "status",
   "generated_work_orders",
-  "work_order_scheduling"
+  "work_order_scheduling",
+  "released_wos_section",
+  "released_work_order_schedulings"
  ],
  "fields": [
   {
@@ -67,6 +69,19 @@
    "fieldtype": "Link",
    "label": "Work Order Scheduling",
    "options": "Work Order Scheduling",
+   "read_only": 1
+  },
+  {
+   "collapsible": 1,
+   "fieldname": "released_wos_section",
+   "fieldtype": "Section Break",
+   "label": "Released WOS"
+  },
+  {
+   "fieldname": "released_work_order_schedulings",
+   "fieldtype": "Table",
+   "label": "Released WOS",
+   "options": "APS Released WOS Item",
    "read_only": 1
   }
  ],

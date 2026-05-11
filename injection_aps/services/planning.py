@@ -46,6 +46,8 @@ BLOCKING_MOLD_STATUSES = (
 APS_ALLOWED_MACHINE_STATUSES = ("Available", "Running", "Setup")
 FROZEN_SCHEDULING_STATUSES = ("Material Transfer", "Job Card", "Manufacture")
 ACTIVE_SCHEDULING_STATUSES = ("", "Schedule Confirmed", "Material Transfer", "Job Card", "Manufacture")
+ACTIVE_DOWNTIME_STATUSES = ("Active", "Applied")
+CONFIRMED_ADJUSTMENT_STATUSES = ("Confirmed", "Applied")
 ANCHOR_STRENGTH_HARD = 100
 ANCHOR_STRENGTH_RELEASED = 70
 ANCHOR_STRENGTH_LOCKED = 50
@@ -90,6 +92,201 @@ def _normalize_item_code(value: str | None) -> str:
 def _build_campaign_key(item_code: str | None, mould_reference: str | None, workstation: str | None) -> str:
 	item_code = _normalize_item_code(item_code)
 	return "::".join([item_code or "", mould_reference or "", workstation or ""])
+
+
+def _intervals_overlap(left_start, left_end, right_start, right_end) -> bool:
+	if not left_start or not left_end or not right_start or not right_end:
+		return False
+	return get_datetime(left_start) < get_datetime(right_end) and get_datetime(left_end) > get_datetime(right_start)
+
+
+def _get_active_downtime_windows(
+	company: str | None = None,
+	plant_floors: list[str] | str | None = None,
+	horizon_start=None,
+	horizon_end=None,
+	run_name: str | None = None,
+) -> list[dict[str, Any]]:
+	if not frappe.db.exists("DocType", "APS Downtime Window"):
+		return []
+	selected_plant_floors = _coerce_plant_floor_list(plant_floors=plant_floors)
+	conditions = ["status in ({0})".format(", ".join(["%s"] * len(ACTIVE_DOWNTIME_STATUSES)))]
+	values: list[Any] = list(ACTIVE_DOWNTIME_STATUSES)
+	if company:
+		conditions.append("company = %s")
+		values.append(company)
+	if horizon_start:
+		conditions.append("end_time > %s")
+		values.append(get_datetime(horizon_start))
+	if horizon_end:
+		conditions.append("start_time < %s")
+		values.append(get_datetime(horizon_end))
+	if selected_plant_floors:
+		conditions.append("(ifnull(plant_floor, '') = '' or plant_floor in ({0}))".format(", ".join(["%s"] * len(selected_plant_floors))))
+		values.extend(selected_plant_floors)
+	if run_name:
+		conditions.append("(ifnull(planning_run, '') = '' or planning_run = %s)")
+		values.append(run_name)
+	return frappe.db.sql(
+		"""
+		select
+			name,
+			company,
+			scope,
+			plant_floor,
+			workstation,
+			start_time,
+			end_time,
+			reason,
+			status,
+			planning_run
+		from `tabAPS Downtime Window`
+		where {conditions}
+		order by start_time asc, end_time asc
+		""".format(conditions=" and ".join(conditions)),
+		values,
+		as_dict=True,
+	)
+
+
+def _downtime_applies_to_target(
+	window: dict[str, Any],
+	workstation: str | None = None,
+	plant_floor: str | None = None,
+	company: str | None = None,
+) -> bool:
+	if company and window.get("company") and window.get("company") != company:
+		return False
+	scope = window.get("scope") or "Plant Floor"
+	if scope == "Company":
+		return True
+	if scope == "Workstation":
+		return bool(workstation) and window.get("workstation") == workstation
+	if window.get("plant_floor") and plant_floor and window.get("plant_floor") != plant_floor:
+		return False
+	return bool(plant_floor) or not window.get("plant_floor")
+
+
+def _get_matching_downtime_windows(
+	downtime_windows: list[dict[str, Any]] | None,
+	workstation: str | None = None,
+	plant_floor: str | None = None,
+	company: str | None = None,
+) -> list[dict[str, Any]]:
+	return [
+		row
+		for row in sorted(downtime_windows or [], key=lambda item: (get_datetime(item.get("start_time")), get_datetime(item.get("end_time"))))
+		if _downtime_applies_to_target(row, workstation=workstation, plant_floor=plant_floor, company=company)
+	]
+
+
+def _shift_start_past_downtime(start_time, downtime_windows: list[dict[str, Any]] | None):
+	start_value = get_datetime(start_time)
+	changed = True
+	while changed:
+		changed = False
+		for row in downtime_windows or []:
+			window_start = get_datetime(row.get("start_time"))
+			window_end = get_datetime(row.get("end_time"))
+			if window_start <= start_value < window_end:
+				start_value = window_end
+				changed = True
+				break
+	return start_value
+
+
+def _available_run_hours_between(start_time, end_time, downtime_windows: list[dict[str, Any]] | None) -> float:
+	start_value = get_datetime(start_time)
+	end_value = get_datetime(end_time)
+	if end_value <= start_value:
+		return 0
+	available_seconds = (end_value - start_value).total_seconds()
+	for row in downtime_windows or []:
+		window_start = max(start_value, get_datetime(row.get("start_time")))
+		window_end = min(end_value, get_datetime(row.get("end_time")))
+		if window_start < window_end:
+			available_seconds -= (window_end - window_start).total_seconds()
+	return max(available_seconds / 3600, 0)
+
+
+def _estimate_end_for_qty_around_downtime(
+	start_time,
+	qty: float,
+	hourly_capacity_qty: float,
+	downtime_windows: list[dict[str, Any]] | None,
+	horizon_end=None,
+):
+	rate = max(flt(hourly_capacity_qty), 0)
+	current = _shift_start_past_downtime(start_time, downtime_windows)
+	if rate <= 0 or flt(qty) <= 0:
+		return current
+	remaining_hours = flt(qty) / rate
+	limit = get_datetime(horizon_end) if horizon_end else None
+	for row in downtime_windows or []:
+		window_start = get_datetime(row.get("start_time"))
+		window_end = get_datetime(row.get("end_time"))
+		if window_end <= current:
+			continue
+		if current < window_start:
+			slot_end = min(window_start, limit) if limit else window_start
+			slot_hours = max((slot_end - current).total_seconds() / 3600, 0)
+			if remaining_hours <= slot_hours:
+				return current + timedelta(hours=remaining_hours)
+			remaining_hours -= slot_hours
+			current = window_end
+		elif window_start <= current < window_end:
+			current = window_end
+		if limit and current >= limit:
+			break
+	return current + timedelta(hours=remaining_hours)
+
+
+def _allocate_qty_around_downtime(
+	start_time,
+	qty: float,
+	hourly_capacity_qty: float,
+	horizon_end,
+	downtime_windows: list[dict[str, Any]] | None,
+) -> tuple[list[dict[str, Any]], float]:
+	rate = max(flt(hourly_capacity_qty), 0)
+	remaining = flt(qty)
+	current = _shift_start_past_downtime(start_time, downtime_windows)
+	limit = get_datetime(horizon_end)
+	chunks: list[dict[str, Any]] = []
+	if rate <= 0 or remaining <= 0 or current >= limit:
+		return chunks, remaining
+	windows = list(downtime_windows or [])
+	while remaining > 0 and current < limit:
+		next_window = next((row for row in windows if get_datetime(row.get("end_time")) > current), None)
+		slot_end = limit
+		if next_window:
+			window_start = get_datetime(next_window.get("start_time"))
+			window_end = get_datetime(next_window.get("end_time"))
+			if current < window_start:
+				slot_end = min(window_start, limit)
+			else:
+				current = max(current, window_end)
+				continue
+		slot_hours = max((slot_end - current).total_seconds() / 3600, 0)
+		slot_qty = slot_hours * rate
+		chunk_qty = min(remaining, slot_qty)
+		if chunk_qty > 0:
+			chunk_end = current + timedelta(hours=chunk_qty / rate)
+			chunks.append(
+				{
+					"start_time": current,
+					"end_time": chunk_end,
+					"planned_qty": chunk_qty,
+					"downtime_window": next_window.get("name") if next_window and chunk_end >= get_datetime(next_window.get("start_time")) else None,
+				}
+			)
+			remaining -= chunk_qty
+			current = chunk_end
+		if remaining > 0 and next_window and current >= get_datetime(next_window.get("start_time")):
+			current = max(current, get_datetime(next_window.get("end_time")))
+		elif slot_qty <= 0:
+			break
+	return chunks, max(remaining, 0)
 
 
 def _coerce_plant_floor_list(plant_floors: Any = None, plant_floor: str | None = None) -> list[str]:
@@ -1019,6 +1216,13 @@ def run_planning_run(
 
 	capability_rows = _get_machine_capability_rows(plant_floors=selected_plant_floors)
 	workstation_state = _build_workstation_state_map(capability_rows)
+	downtime_windows = _get_active_downtime_windows(
+		company=run_doc.company,
+		plant_floors=selected_plant_floors,
+		horizon_start=horizon_start,
+		horizon_end=horizon_end,
+		run_name=run_doc.name,
+	)
 	locked_segments = _get_locked_segments(selected_plant_floors)
 	execution_anchor_rows = _get_execution_anchor_rows(selected_plant_floors)
 	mold_state = _build_mold_state_map(locked_segments)
@@ -1061,20 +1265,61 @@ def run_planning_run(
 				capability_rows=capability_rows,
 				plant_floors=selected_plant_floors,
 			)
-
-			best = _choose_best_slot(
-				item_code=row.item_code,
+			adjustment_best = _build_confirmed_adjustment_best(
+				run_doc=run_doc,
+				net_row=row,
 				item_context=item_context,
 				qty=planning_qty,
-				demand_date=row.demand_date,
-				horizon_start=horizon_start,
-				horizon_end=horizon_end,
-				workstation_state=workstation_state,
-				mold_state=mold_state,
 				candidates=candidates,
 				settings=settings,
-				selected_plant_floors=selected_plant_floors,
+				workstation_state=workstation_state,
+				mold_state=mold_state,
+				horizon_start=horizon_start,
+				horizon_end=horizon_end,
+				downtime_windows=downtime_windows,
 			)
+			if adjustment_best:
+				best = adjustment_best
+				residual_qty = max(planning_qty - flt(adjustment_best.get("scheduled_qty")), 0)
+				if residual_qty > 0:
+					residual_best = _choose_best_slot(
+						item_code=row.item_code,
+						item_context=item_context,
+						qty=residual_qty,
+						demand_date=row.demand_date,
+						horizon_start=horizon_start,
+						horizon_end=horizon_end,
+						workstation_state=workstation_state,
+						mold_state=mold_state,
+						candidates=candidates,
+						settings=settings,
+						selected_plant_floors=selected_plant_floors,
+						downtime_windows=downtime_windows,
+					)
+					best["segments"] = (best.get("segments") or []) + (residual_best.get("segments") or [])
+					best["scheduled_qty"] = flt(best.get("scheduled_qty")) + flt(residual_best.get("scheduled_qty"))
+					best["unscheduled_qty"] = max(planning_qty - flt(best.get("scheduled_qty")), 0)
+					best["selected_moulds"] = list(dict.fromkeys((best.get("selected_moulds") or []) + (residual_best.get("selected_moulds") or [])))
+					best["exceptions"] = (best.get("exceptions") or []) + (residual_best.get("exceptions") or [])
+					best["copy_mold_parallel"] = 1 if len(best["selected_moulds"]) > 1 else best.get("copy_mold_parallel")
+					if residual_best.get("risk_status") in ("Attention", "Critical", "Blocked"):
+						best["risk_status"] = residual_best.get("risk_status")
+						best["result_status"] = residual_best.get("result_status")
+			else:
+				best = _choose_best_slot(
+					item_code=row.item_code,
+					item_context=item_context,
+					qty=planning_qty,
+					demand_date=row.demand_date,
+					horizon_start=horizon_start,
+					horizon_end=horizon_end,
+					workstation_state=workstation_state,
+					mold_state=mold_state,
+					candidates=candidates,
+					settings=settings,
+					selected_plant_floors=selected_plant_floors,
+					downtime_windows=downtime_windows,
+				)
 		total_scheduled_for_row = credit_applied + flt(best["scheduled_qty"])
 		total_unscheduled_for_row = max(original_planning_qty - total_scheduled_for_row, 0)
 		family_messages = []
@@ -1637,91 +1882,23 @@ def generate_shift_schedule_proposals(
 	run_name: str | None = None,
 	work_order_proposal_batch: str | None = None,
 	release_horizon_days: int | None = None,
+	release_from_date=None,
+	shift_type: str | None = None,
 ) -> dict[str, Any]:
-	if not work_order_proposal_batch:
-		work_order_proposal_batch = frappe.db.get_value(
-			"APS Work Order Proposal Batch",
-			{"planning_run": run_name, "status": "Applied"},
-			"name",
-			order_by="modified desc",
-		)
-	if not work_order_proposal_batch:
-		frappe.throw(_("Apply a work order proposal batch before generating shift schedule proposals."))
-	wo_batch = frappe.get_doc("APS Work Order Proposal Batch", work_order_proposal_batch)
-	run_doc = frappe.get_doc("APS Planning Run", wo_batch.planning_run)
-	release_horizon_days = cint(release_horizon_days or get_settings_dict()["release_horizon_days"] or 3)
-	release_to = getdate(add_days(today(), release_horizon_days))
-
-	items = []
-	for row in wo_batch.items:
-		if row.review_status != "Applied":
-			continue
-		work_order_name = row.target_work_order or row.existing_work_order
-		if not work_order_name:
-			continue
-		current_segments = []
-		if row.result_reference and frappe.db.exists("APS Schedule Result", row.result_reference):
-			for segment in _get_primary_segments_for_result(row.result_reference):
-				if getdate(segment.get("start_time")) > release_to:
-					continue
-				current_segments.append(segment)
-
-		matched_existing_rows = set()
-		for segment in current_segments:
-			existing_row = _find_matching_scheduling_row(
-				work_order_name=work_order_name,
-				segment=segment,
-				matched_row_names=matched_existing_rows,
-				release_to=release_to,
-			)
-			if existing_row:
-				matched_existing_rows.add(existing_row.get("name"))
-			action = _classify_shift_schedule_action(existing_row, segment)
-			items.append(
-				{
-					"result_reference": row.result_reference,
-					"segment_reference": segment.get("name"),
-					"action": action,
-					"item_code": row.item_code,
-					"work_order": work_order_name,
-					"plant_floor": segment.get("plant_floor"),
-					"posting_date": getdate(segment.get("start_time")),
-					"shift_type": _determine_shift_type(segment.get("start_time")),
-					"workstation": segment.get("workstation"),
-					"planned_start_time": segment.get("start_time"),
-					"planned_end_time": segment.get("end_time"),
-					"planned_qty": segment.get("planned_qty"),
-					"existing_scheduling": existing_row.get("work_order_scheduling") if existing_row else None,
-					"existing_scheduling_item": existing_row.get("name") if existing_row else None,
-					"review_status": "Pending",
-					"review_note": _("Formal scheduling will be reconciled in place for this segment."),
-				}
-			)
-
-		for existing_row in _get_formal_scheduling_reconciliation_rows(work_order_name, release_to=release_to):
-			if existing_row.get("name") in matched_existing_rows or existing_row.get("is_frozen"):
-				continue
-			if row.action in ("Cancel Unstarted", "Close Residual") or existing_row.get("custom_aps_segment_reference"):
-				items.append(
-					{
-						"result_reference": row.result_reference or existing_row.get("custom_aps_result_reference"),
-						"segment_reference": existing_row.get("custom_aps_segment_reference") or f"cancel::{existing_row.get('name')}",
-						"action": "Cancel Existing",
-						"item_code": row.item_code,
-						"work_order": work_order_name,
-						"plant_floor": existing_row.get("plant_floor"),
-						"posting_date": existing_row.get("posting_date"),
-						"shift_type": existing_row.get("shift_type"),
-						"workstation": existing_row.get("workstation"),
-						"planned_start_time": existing_row.get("planned_start_date"),
-						"planned_end_time": existing_row.get("planned_end_date"),
-						"planned_qty": existing_row.get("scheduling_qty"),
-						"existing_scheduling": existing_row.get("work_order_scheduling"),
-						"existing_scheduling_item": existing_row.get("name"),
-						"review_status": "Pending",
-						"review_note": _("Unexecuted formal scheduling row will be cancelled or removed."),
-					}
-				)
+	context = _build_shift_schedule_release_context(
+		run_name=run_name,
+		work_order_proposal_batch=work_order_proposal_batch,
+		release_horizon_days=release_horizon_days,
+		release_from_date=release_from_date,
+		shift_type=shift_type,
+	)
+	run_doc = context["run_doc"]
+	wo_batch = context["work_order_proposal_batch_doc"]
+	release_from = context["release_from"]
+	release_to = context["release_to"]
+	release_shift_type = context["shift_type"]
+	items = context["items"]
+	summary = _summarize_shift_schedule_items(items)
 
 	batch = frappe.get_doc(
 		{
@@ -1734,7 +1911,14 @@ def generate_shift_schedule_proposals(
 			"status": "Ready For Review",
 			"approval_state": "Pending",
 			"proposal_count": len(items),
-			"notes": _("Generated from APS work order proposal batch {0}. Review against existing day/night shift scheduling before formal reconciliation.").format(wo_batch.name),
+			"notes": _(
+				"Generated from APS work order proposal batch {0} for {1} to {2} ({3}). Review against existing day/night shift scheduling before formal reconciliation."
+			).format(
+				wo_batch.name,
+				frappe.format(release_from, {"fieldtype": "Date"}),
+				frappe.format(release_to, {"fieldtype": "Date"}),
+				release_shift_type or _("All Shifts"),
+			),
 			"items": items,
 		}
 	).insert(ignore_permissions=True)
@@ -1757,8 +1941,280 @@ def generate_shift_schedule_proposals(
 		"run": run_doc.name,
 		"shift_schedule_proposal_batch": batch.name,
 		"proposal_count": len(items),
+		"release_from": release_from,
 		"release_to": release_to,
+		"shift_type": release_shift_type or "All",
+		"action_counts": summary["action_counts"],
+		"total_planned_qty": summary["total_planned_qty"],
 	}
+
+
+def _normalize_release_shift_type(shift_type: str | None) -> str | None:
+	value = (shift_type or "").strip()
+	if not value or value in ("All", "Both", "All Shifts", "两班", "全部", "全部班次"):
+		return None
+	if value in ("白班", "Day", "Day Shift"):
+		return "白班"
+	if value in ("晚班", "Night", "Night Shift"):
+		return "晚班"
+	return value
+
+
+def _build_shift_schedule_release_context(
+	run_name: str | None = None,
+	work_order_proposal_batch: str | None = None,
+	release_horizon_days: int | None = None,
+	release_from_date=None,
+	shift_type: str | None = None,
+) -> dict[str, Any]:
+	if not work_order_proposal_batch:
+		work_order_proposal_batch = frappe.db.get_value(
+			"APS Work Order Proposal Batch",
+			{"planning_run": run_name, "status": "Applied"},
+			"name",
+			order_by="modified desc",
+		)
+	if not work_order_proposal_batch:
+		frappe.throw(_("Apply a work order proposal batch before generating shift schedule proposals."))
+	wo_batch = frappe.get_doc("APS Work Order Proposal Batch", work_order_proposal_batch)
+	run_doc = frappe.get_doc("APS Planning Run", wo_batch.planning_run)
+	release_horizon_days = (
+		cint(release_horizon_days)
+		if release_horizon_days not in (None, "")
+		else cint(get_settings_dict()["release_horizon_days"] or 1)
+	)
+	release_from = getdate(release_from_date or today())
+	release_to = getdate(add_days(release_from, release_horizon_days))
+	release_shift_type = _normalize_release_shift_type(shift_type)
+	items = _build_shift_schedule_proposal_items(
+		wo_batch=wo_batch,
+		release_from=release_from,
+		release_to=release_to,
+		shift_type=release_shift_type,
+	)
+	return {
+		"run_doc": run_doc,
+		"work_order_proposal_batch_doc": wo_batch,
+		"release_from": release_from,
+		"release_to": release_to,
+		"release_horizon_days": release_horizon_days,
+		"shift_type": release_shift_type,
+		"items": items,
+	}
+
+
+def _build_shift_schedule_proposal_items(
+	wo_batch,
+	release_from,
+	release_to,
+	shift_type: str | None = None,
+) -> list[dict[str, Any]]:
+	items = []
+	for row in wo_batch.items:
+		if row.review_status != "Applied":
+			continue
+		work_order_name = row.target_work_order or row.existing_work_order
+		if not work_order_name:
+			continue
+		current_segments = []
+		frozen_qty_by_segment: dict[str, float] = defaultdict(float)
+		for existing_row in _get_formal_scheduling_reconciliation_rows(work_order_name, release_to=release_to):
+			if existing_row.get("is_frozen") and existing_row.get("custom_aps_segment_reference"):
+				frozen_qty_by_segment[existing_row.get("custom_aps_segment_reference")] += flt(existing_row.get("scheduling_qty"))
+		if row.result_reference and frappe.db.exists("APS Schedule Result", row.result_reference):
+			for segment in _get_primary_segments_for_result(row.result_reference):
+				if getdate(segment.get("end_time") or segment.get("start_time")) < release_from or getdate(segment.get("start_time")) > release_to:
+					continue
+				if frozen_qty_by_segment.get(segment.get("name"), 0) >= flt(segment.get("planned_qty")) - 0.0001:
+					continue
+				current_segments.extend(
+					_split_segment_into_shift_slices(
+						segment,
+						release_from=release_from,
+						release_to=release_to,
+					)
+				)
+
+		matched_existing_rows = set()
+		for segment in current_segments:
+			segment_shift_type = segment.get("shift_type") or _determine_shift_type(segment.get("start_time"))
+			if shift_type and segment_shift_type != shift_type:
+				continue
+			existing_row = _find_matching_scheduling_row(
+				work_order_name=work_order_name,
+				segment=segment,
+				matched_row_names=matched_existing_rows,
+				release_from=release_from,
+				release_to=release_to,
+			)
+			if existing_row:
+				matched_existing_rows.add(existing_row.get("name"))
+			action = _classify_shift_schedule_action(existing_row, segment)
+			items.append(
+				{
+					"result_reference": row.result_reference,
+					"segment_reference": segment.get("name"),
+					"action": action,
+					"item_code": row.item_code,
+					"work_order": work_order_name,
+					"plant_floor": segment.get("plant_floor"),
+					"posting_date": segment.get("posting_date") or getdate(segment.get("start_time")),
+					"shift_type": segment_shift_type,
+					"workstation": segment.get("workstation"),
+					"planned_start_time": segment.get("start_time"),
+					"planned_end_time": segment.get("end_time"),
+					"planned_qty": segment.get("planned_qty"),
+					"existing_scheduling": existing_row.get("work_order_scheduling") if existing_row else None,
+					"existing_scheduling_item": existing_row.get("name") if existing_row else None,
+					"review_status": "Pending",
+					"review_note": (
+						_("Formal scheduling will be reconciled as daily shift slices for this segment.")
+						if cint(segment.get("slice_count")) > 1
+						else _("Formal scheduling will be reconciled in place for this segment.")
+					),
+				}
+			)
+
+		for existing_row in _get_formal_scheduling_reconciliation_rows(work_order_name, release_from=release_from, release_to=release_to):
+			if existing_row.get("name") in matched_existing_rows or existing_row.get("is_frozen"):
+				continue
+			if shift_type and (existing_row.get("shift_type") or "") != shift_type:
+				continue
+			if row.action in ("Cancel Unstarted", "Close Residual") or existing_row.get("custom_aps_segment_reference"):
+				items.append(
+					{
+						"result_reference": row.result_reference or existing_row.get("custom_aps_result_reference"),
+						"segment_reference": existing_row.get("custom_aps_segment_reference") or f"cancel::{existing_row.get('name')}",
+						"action": "Cancel Existing",
+						"item_code": row.item_code,
+						"work_order": work_order_name,
+						"plant_floor": existing_row.get("plant_floor"),
+						"posting_date": existing_row.get("posting_date"),
+						"shift_type": existing_row.get("shift_type"),
+						"workstation": existing_row.get("workstation"),
+						"planned_start_time": existing_row.get("planned_start_date"),
+						"planned_end_time": existing_row.get("planned_end_date"),
+						"planned_qty": existing_row.get("scheduling_qty"),
+						"existing_scheduling": existing_row.get("work_order_scheduling"),
+						"existing_scheduling_item": existing_row.get("name"),
+						"review_status": "Pending",
+						"review_note": _("Unexecuted formal scheduling row will be cancelled or removed."),
+					}
+				)
+	return items
+
+
+def _summarize_shift_schedule_items(items: list[dict[str, Any]]) -> dict[str, Any]:
+	action_counts = defaultdict(int)
+	total_planned_qty = 0.0
+	for row in items or []:
+		action_counts[row.get("action") or ""] += 1
+		if row.get("action") != "Cancel Existing":
+			total_planned_qty += flt(row.get("planned_qty"))
+	return {"action_counts": dict(action_counts), "total_planned_qty": total_planned_qty}
+
+
+def preview_shift_schedule_release(
+	run_name: str | None = None,
+	work_order_proposal_batch: str | None = None,
+	release_horizon_days: int | None = None,
+	release_from_date=None,
+	shift_type: str | None = None,
+) -> dict[str, Any]:
+	context = _build_shift_schedule_release_context(
+		run_name=run_name,
+		work_order_proposal_batch=work_order_proposal_batch,
+		release_horizon_days=release_horizon_days,
+		release_from_date=release_from_date,
+		shift_type=shift_type,
+	)
+	items = context["items"]
+	summary = _summarize_shift_schedule_items(items)
+	pending_batches = _get_pending_shift_batches_for_release(
+		context["run_doc"].name,
+		context["release_from"],
+		context["release_to"],
+		context["shift_type"],
+	)
+	return {
+		"run": context["run_doc"].name,
+		"work_order_proposal_batch": context["work_order_proposal_batch_doc"].name,
+		"release_from": context["release_from"],
+		"release_to": context["release_to"],
+		"shift_type": context["shift_type"] or "All",
+		"proposal_count": len(items),
+		"action_counts": summary["action_counts"],
+		"total_planned_qty": summary["total_planned_qty"],
+		"pending_batches": pending_batches,
+		"preview_rows": items[:80],
+		"truncated": len(items) > 80,
+	}
+
+
+def _get_pending_shift_batches_for_release(run_name: str, release_from, release_to, shift_type: str | None = None) -> list[dict[str, Any]]:
+	candidate_batches = frappe.get_all(
+		"APS Shift Schedule Proposal Batch",
+		filters={
+			"planning_run": run_name,
+			"status": ("in", ["Ready For Review", "Partially Reviewed", "Reviewed"]),
+		},
+		fields=["name", "status", "proposal_count", "modified"],
+		order_by="modified desc",
+		limit=20,
+	)
+	if not candidate_batches:
+		return []
+	batch_names = [row.name for row in candidate_batches]
+	item_filters = {
+		"parent": ("in", batch_names),
+		"posting_date": ("between", [release_from, release_to]),
+	}
+	if shift_type:
+		item_filters["shift_type"] = shift_type
+	child_rows = frappe.get_all(
+		"APS Shift Schedule Proposal Item",
+		filters=item_filters,
+		fields=["parent"],
+	)
+	count_by_parent = defaultdict(int)
+	for row in child_rows:
+		count_by_parent[row.parent] += 1
+	return [
+		{**row, "matching_count": count_by_parent.get(row.name, 0)}
+		for row in candidate_batches
+		if count_by_parent.get(row.name, 0)
+	]
+
+
+def _validate_shift_proposal_work_order_totals(batch, approved_rows: list[Any]):
+	by_work_order: dict[str, list[Any]] = defaultdict(list)
+	for row in approved_rows:
+		if row.work_order:
+			by_work_order[row.work_order].append(row)
+	for work_order_name, rows in by_work_order.items():
+		work_order_qty = flt(frappe.db.get_value("Work Order", work_order_name, "qty"))
+		if work_order_qty <= 0:
+			continue
+		touched_items = {
+			row.existing_scheduling_item
+			for row in rows
+			if row.existing_scheduling_item
+		}
+		remaining_existing_qty = 0.0
+		for existing in _get_formal_scheduling_reconciliation_rows(work_order_name):
+			if existing.get("name") in touched_items and not _is_frozen_scheduling_row(existing):
+				continue
+			remaining_existing_qty += flt(existing.get("scheduling_qty"))
+		approved_qty = sum(flt(row.planned_qty) for row in rows if row.action != "Cancel Existing")
+		total_qty = remaining_existing_qty + approved_qty
+		if total_qty > work_order_qty + 0.0001:
+			frappe.throw(
+				_("WOS proposals for Work Order {0} would schedule {1}, exceeding Work Order qty {2}.").format(
+					work_order_name,
+					frappe.format(total_qty, {"fieldtype": "Float"}),
+					frappe.format(work_order_qty, {"fieldtype": "Float"}),
+				)
+			)
 
 
 def apply_shift_schedule_proposals(batch_name: str) -> dict[str, Any]:
@@ -1771,12 +2227,14 @@ def apply_shift_schedule_proposals(batch_name: str) -> dict[str, Any]:
 	approved_rows = [row for row in batch.items if row.review_status == "Approved"]
 	if not approved_rows:
 		frappe.throw(_("No shift proposal rows are marked Approved. Review the batch before formal scheduling."))
+	_validate_shift_proposal_work_order_totals(batch, approved_rows)
 
 	grouped = defaultdict(list)
 	for row in approved_rows:
 		grouped[(str(row.posting_date), row.shift_type or "", row.workstation or "", row.work_order or "")].append(row)
 
 	scheduling_docs = set()
+	scheduling_item_names = set()
 	applied_rows = 0
 	applied_result_names = set()
 	applied_segment_names = set()
@@ -1793,6 +2251,8 @@ def apply_shift_schedule_proposals(batch_name: str) -> dict[str, Any]:
 				applied_segment_names.add(row.segment_reference)
 			if scheduling.get("docname"):
 				scheduling_docs.add(scheduling["docname"])
+			if scheduling.get("scheduling_item"):
+				scheduling_item_names.add(scheduling["scheduling_item"])
 		except Exception as exc:
 			row.review_status = "Skipped"
 			row.review_note = str(exc)
@@ -1801,12 +2261,13 @@ def apply_shift_schedule_proposals(batch_name: str) -> dict[str, Any]:
 	batch.approved_on = now_datetime()
 	batch.save(ignore_permissions=True)
 
+	released_wos_rows = _build_release_batch_wos_rows(scheduling_docs)
 	release_batch = frappe.get_doc(
 		{
 			"doctype": "APS Release Batch",
 			"planning_run": batch.planning_run,
 			"company": batch.company,
-			"release_from_date": today(),
+			"release_from_date": min((getdate(row.posting_date) for row in batch.items), default=getdate(today())),
 			"release_to_date": max((getdate(row.posting_date) for row in batch.items), default=getdate(today())),
 			"status": "Released" if applied_rows else "Draft",
 			"generated_work_orders": len(
@@ -1817,8 +2278,14 @@ def apply_shift_schedule_proposals(batch_name: str) -> dict[str, Any]:
 				}
 			),
 			"work_order_scheduling": sorted(scheduling_docs)[0] if len(scheduling_docs) == 1 else None,
+			"released_work_order_schedulings": released_wos_rows,
 		}
 	).insert(ignore_permissions=True)
+	_backlink_release_batch_to_wos(
+		release_batch.name,
+		scheduling_docs=scheduling_docs,
+		scheduling_item_names=scheduling_item_names,
+	)
 
 	if applied_rows and (applied_result_names or applied_segment_names):
 		_set_run_result_segment_status(
@@ -1840,6 +2307,111 @@ def apply_shift_schedule_proposals(batch_name: str) -> dict[str, Any]:
 		"work_order_schedulings": sorted(scheduling_docs),
 		"applied_rows": applied_rows,
 	}
+
+
+def _build_release_batch_wos_rows(scheduling_docs) -> list[dict[str, Any]]:
+	rows = []
+	for docname in sorted(set(scheduling_docs or [])):
+		if not docname or not frappe.db.exists("Work Order Scheduling", docname):
+			continue
+		doc = frappe.get_doc("Work Order Scheduling", docname)
+		scheduling_items = doc.get("scheduling_items") or []
+		rows.append(
+			{
+				"work_order_scheduling": doc.name,
+				"posting_date": doc.get("posting_date"),
+				"shift_type": doc.get("shift_type"),
+				"total_qty": flt(doc.get("total_qty")) or sum(flt(row.get("scheduling_qty")) for row in scheduling_items),
+				"scheduling_item_count": len(scheduling_items),
+				"status": doc.get("status"),
+			}
+		)
+	return sorted(rows, key=lambda row: (str(row.get("posting_date") or ""), row.get("shift_type") or "", row.get("work_order_scheduling") or ""))
+
+
+def _backlink_release_batch_to_wos(
+	release_batch_name: str,
+	scheduling_docs=None,
+	scheduling_item_names=None,
+) -> None:
+	if not release_batch_name:
+		return
+	scheduling_docs = sorted(set(scheduling_docs or []))
+	scheduling_item_names = sorted(set(scheduling_item_names or []))
+	if scheduling_docs and frappe.db.has_column("Work Order Scheduling", "custom_aps_release_batch"):
+		for docname in scheduling_docs:
+			if frappe.db.exists("Work Order Scheduling", docname):
+				frappe.db.set_value(
+					"Work Order Scheduling",
+					docname,
+					"custom_aps_release_batch",
+					release_batch_name,
+					update_modified=False,
+				)
+	if scheduling_item_names and frappe.db.has_column("Scheduling Item", "custom_aps_release_batch"):
+		frappe.db.sql(
+			"""
+			update `tabScheduling Item`
+			set custom_aps_release_batch = %(release_batch)s
+			where name in %(scheduling_item_names)s
+			""",
+			{
+				"release_batch": release_batch_name,
+				"scheduling_item_names": tuple(scheduling_item_names),
+			},
+		)
+
+
+def backfill_release_batch_wos_links(run_name: str | None = None) -> dict[str, Any]:
+	filters = _strip_none({"planning_run": run_name})
+	release_batches = frappe.get_all(
+		"APS Release Batch",
+		filters=filters,
+		fields=["name", "planning_run", "release_from_date", "release_to_date", "work_order_scheduling"],
+		order_by="creation asc",
+	)
+	updated_batches = 0
+	linked_wos = 0
+	for row in release_batches:
+		doc = frappe.get_doc("APS Release Batch", row.name)
+		if doc.get("released_work_order_schedulings"):
+			continue
+		scheduling_docs = []
+		if row.work_order_scheduling and frappe.db.exists("Work Order Scheduling", row.work_order_scheduling):
+			scheduling_docs = [row.work_order_scheduling]
+		elif row.planning_run and row.release_from_date and row.release_to_date:
+			scheduling_docs = frappe.get_all(
+				"Work Order Scheduling",
+				filters={
+					"custom_aps_run": row.planning_run,
+					"posting_date": ("between", [row.release_from_date, row.release_to_date]),
+				},
+				pluck="name",
+				order_by="posting_date asc, shift_type asc, name asc",
+			)
+		if not scheduling_docs:
+			continue
+		for wos_row in _build_release_batch_wos_rows(scheduling_docs):
+			doc.append("released_work_order_schedulings", wos_row)
+		if len(scheduling_docs) == 1 and not doc.work_order_scheduling:
+			doc.work_order_scheduling = scheduling_docs[0]
+		doc.save(ignore_permissions=True)
+		scheduling_item_names = []
+		if frappe.db.exists("DocType", "Scheduling Item"):
+			scheduling_item_names = frappe.get_all(
+				"Scheduling Item",
+				filters={"parent": ("in", scheduling_docs)},
+				pluck="name",
+			)
+		_backlink_release_batch_to_wos(
+			doc.name,
+			scheduling_docs=scheduling_docs,
+			scheduling_item_names=scheduling_item_names,
+		)
+		updated_batches += 1
+		linked_wos += len(set(scheduling_docs))
+	frappe.db.commit()
+	return {"updated_batches": updated_batches, "linked_wos": linked_wos}
 
 
 def reject_shift_schedule_proposals(batch_name: str, reason: str) -> dict[str, Any]:
@@ -2356,7 +2928,7 @@ def _get_customer_schedule_progress_execution_snapshots(segments: list[dict[str,
 		dict.fromkeys(segment.get("linked_scheduling_item") for segment in segments if segment.get("linked_scheduling_item"))
 	)
 	scheduling_by_name = {}
-	scheduling_by_segment = {}
+	scheduling_by_segment = defaultdict(list)
 	if frappe.db.exists("DocType", "Scheduling Item"):
 		fields = ["name", "parent", "work_order", "completed_qty", "from_time", "to_time", "modified"]
 		if linked_scheduling_names:
@@ -2376,14 +2948,14 @@ def _get_customer_schedule_progress_execution_snapshots(segments: list[dict[str,
 				order_by="modified desc",
 			):
 				segment_name = row.get("custom_aps_segment_reference")
-				if segment_name and segment_name not in scheduling_by_segment:
-					scheduling_by_segment[segment_name] = row
+				if segment_name:
+					scheduling_by_segment[segment_name].append(row)
 
 	work_order_names = []
 	for segment in segments:
 		if segment.get("linked_work_order"):
 			work_order_names.append(segment.get("linked_work_order"))
-	for scheduling_item in [*scheduling_by_name.values(), *scheduling_by_segment.values()]:
+	for scheduling_item in [*scheduling_by_name.values(), *(item for rows in scheduling_by_segment.values() for item in rows)]:
 		if scheduling_item.get("work_order"):
 			work_order_names.append(scheduling_item.get("work_order"))
 	work_order_names = list(dict.fromkeys(work_order_names))
@@ -2400,11 +2972,22 @@ def _get_customer_schedule_progress_execution_snapshots(segments: list[dict[str,
 
 	snapshots = {}
 	for segment in segments:
-		scheduling_item = scheduling_by_name.get(segment.get("linked_scheduling_item")) or scheduling_by_segment.get(
-			segment.get("name")
+		scheduling_items = []
+		linked_item = scheduling_by_name.get(segment.get("linked_scheduling_item"))
+		if linked_item:
+			scheduling_items.append(linked_item)
+		for scheduling_item in scheduling_by_segment.get(segment.get("name")) or []:
+			if scheduling_item.get("name") not in {row.get("name") for row in scheduling_items}:
+				scheduling_items.append(scheduling_item)
+		linked_work_order = (
+			next((row.get("work_order") for row in scheduling_items if row.get("work_order")), None)
+			or segment.get("linked_work_order")
 		)
-		linked_work_order = scheduling_item.get("work_order") if scheduling_item else segment.get("linked_work_order")
-		snapshots[segment.name] = _build_segment_execution_snapshot(segment, scheduling_item, work_orders.get(linked_work_order))
+		snapshots[segment.name] = _build_segment_execution_snapshot(
+			segment,
+			scheduling_items,
+			work_orders.get(linked_work_order),
+		)
 	return snapshots
 
 
@@ -2648,6 +3231,12 @@ def analyze_insert_order_impact(
 	available_molds = _get_available_mold_rows(item_code)
 	capability_rows = _get_machine_capability_rows(plant_floors=selected_plant_floors)
 	workstation_state = _build_workstation_state_map(capability_rows)
+	downtime_windows = _get_active_downtime_windows(
+		company=company,
+		plant_floors=selected_plant_floors,
+		horizon_start=get_datetime(now_datetime()),
+		horizon_end=get_datetime(add_days(required_date, 7)),
+	)
 	locked_segments = _get_locked_segments(selected_plant_floors)
 	mold_state = _build_mold_state_map(locked_segments)
 	_apply_locked_segments_to_state(workstation_state, locked_segments)
@@ -2668,6 +3257,8 @@ def analyze_insert_order_impact(
 		mold_state=mold_state,
 		candidates=candidates,
 		settings=settings,
+		selected_plant_floors=selected_plant_floors,
+		downtime_windows=downtime_windows,
 	)
 	impacted = []
 	impacted_customers = set()
@@ -3518,6 +4109,902 @@ def _format_manual_adjustment_datetime(value) -> str:
 	return frappe.format(get_datetime(value), {"fieldtype": "Datetime"})
 
 
+def _segment_duration_hours(segment: dict[str, Any]) -> float:
+	if not segment.get("start_time") or not segment.get("end_time"):
+		return 0
+	return max((get_datetime(segment.get("end_time")) - get_datetime(segment.get("start_time"))).total_seconds() / 3600, 0)
+
+
+def _segment_effective_hourly_rate(segment: dict[str, Any]) -> float:
+	duration_hours = _segment_duration_hours(segment)
+	if duration_hours <= 0:
+		return 0
+	return flt(segment.get("planned_qty")) / duration_hours
+
+
+def _is_segment_execution_protected(segment: dict[str, Any]) -> bool:
+	if cint(segment.get("is_locked")):
+		return True
+	if segment.get("segment_status") in MANUAL_ADJUSTMENT_BLOCKED_SEGMENT_STATUSES:
+		return True
+	if segment.get("actual_start_time") or segment.get("actual_end_time") or flt(segment.get("actual_completed_qty")) > 0:
+		return True
+	if segment.get("actual_status") in ("Running", "Completed", "Delayed", "Slow Progress", "Overproduced"):
+		return True
+	return False
+
+
+def _get_segment_with_result(segment_name: str) -> tuple[dict[str, Any], Any, Any]:
+	rows = frappe.get_all(
+		"APS Schedule Segment",
+		filters={"name": segment_name},
+		fields=[
+			"name",
+			"parent",
+			"workstation",
+			"plant_floor",
+			"start_time",
+			"end_time",
+			"planned_qty",
+			"sequence_no",
+			"lane_key",
+			"campaign_key",
+			"parallel_group",
+			"family_group",
+			"segment_kind",
+			"primary_item_code",
+			"co_product_item_code",
+			"setup_minutes",
+			"changeover_minutes",
+			"mould_reference",
+			"schedule_explanation",
+			"manual_change_note",
+			"segment_note",
+			"risk_flags",
+			"segment_status",
+			"linked_work_order",
+			"linked_work_order_scheduling",
+			"linked_scheduling_item",
+			"actual_status",
+			"actual_completed_qty",
+			"actual_start_time",
+			"actual_end_time",
+			"delay_minutes",
+			"anchor_strength",
+			"execution_anchor_source",
+			"color_code",
+			"material_code",
+			"is_locked",
+			"is_manual",
+		],
+		limit=1,
+	)
+	if not rows:
+		frappe.throw(_("APS Schedule Segment {0} was not found.").format(segment_name))
+	segment = rows[0]
+	result_doc = frappe.get_doc("APS Schedule Result", segment.parent)
+	run_doc = frappe.get_doc("APS Planning Run", result_doc.planning_run)
+	return segment, result_doc, run_doc
+
+
+def _record_segment_adjustment(
+	adjustment_type: str,
+	run_doc,
+	result_doc,
+	segment: dict[str, Any],
+	target_start_time=None,
+	target_end_time=None,
+	target_qty: float | None = None,
+	target_workstation: str | None = None,
+	target_mould_reference: str | None = None,
+	split_group: str | None = None,
+	split_index: int | None = None,
+	split_reason: str | None = None,
+	downtime_window: str | None = None,
+	impact_summary: str | None = None,
+	payload: dict[str, Any] | None = None,
+	status: str = "Confirmed",
+):
+	if not frappe.db.exists("DocType", "APS Segment Adjustment"):
+		return None
+	doc = frappe.get_doc(
+		{
+			"doctype": "APS Segment Adjustment",
+			"planning_run": run_doc.name,
+			"company": run_doc.company,
+			"plant_floor": segment.get("plant_floor") or result_doc.plant_floor,
+			"net_requirement": result_doc.net_requirement,
+			"result_reference": result_doc.name,
+			"segment_reference": segment.get("name"),
+			"adjustment_type": adjustment_type,
+			"status": status,
+			"item_code": result_doc.item_code,
+			"customer": result_doc.customer,
+			"workstation": segment.get("workstation"),
+			"target_workstation": target_workstation or segment.get("workstation"),
+			"target_mould_reference": target_mould_reference or segment.get("mould_reference"),
+			"target_start_time": target_start_time,
+			"target_end_time": target_end_time,
+			"target_qty": flt(target_qty),
+			"split_group": split_group,
+			"split_index": split_index or 0,
+			"split_reason": split_reason,
+			"downtime_window": downtime_window,
+			"impact_summary": impact_summary,
+			"payload_json": json.dumps(payload or {}, default=str, ensure_ascii=False, indent=2),
+		}
+	)
+	doc.insert(ignore_permissions=True)
+	return doc.name
+
+
+def _apply_segments_to_planning_state(
+	segments: list[dict[str, Any]],
+	workstation_state: dict[str, dict[str, Any]],
+	mold_state: dict[str, dict[str, Any]],
+):
+	for segment in segments:
+		state = workstation_state.get(segment.get("workstation"))
+		end_time = get_datetime(segment.get("end_time"))
+		if state is not None:
+			state["next_available"] = end_time
+			state["last_color_code"] = segment.get("color_code") or ""
+			state["last_material_code"] = segment.get("material_code") or ""
+			state["last_mould_reference"] = segment.get("mould_reference") or ""
+			state["last_end_time"] = end_time
+		mold_name = segment.get("mould_reference")
+		if mold_name:
+			mold_state[mold_name] = {
+				"next_available": end_time,
+				"last_workstation": segment.get("workstation") or "",
+				"last_end_time": end_time,
+				"anchor_item_code": _normalize_item_code(segment.get("primary_item_code")),
+				"anchor_strength": segment.get("anchor_strength") or ANCHOR_STRENGTH_SOFT,
+				"anchor_source": segment.get("execution_anchor_source") or "APS Segment Adjustment",
+				"anchor_campaign_key": segment.get("campaign_key") or "",
+			}
+
+
+def _get_confirmed_adjustment_rows(run_name: str, net_requirement: str | None) -> list[dict[str, Any]]:
+	if not net_requirement or not frappe.db.exists("DocType", "APS Segment Adjustment"):
+		return []
+	return frappe.get_all(
+		"APS Segment Adjustment",
+		filters={
+			"planning_run": run_name,
+			"net_requirement": net_requirement,
+			"status": ("in", CONFIRMED_ADJUSTMENT_STATUSES),
+			"adjustment_type": ("in", ["Split", "Move", "Resize"]),
+		},
+		fields=[
+			"name",
+			"adjustment_type",
+			"target_workstation",
+			"target_mould_reference",
+			"target_start_time",
+			"target_end_time",
+			"target_qty",
+			"split_group",
+			"split_reason",
+			"payload_json",
+			"modified",
+		],
+		order_by="target_start_time asc, modified asc",
+	)
+
+
+def _get_adjustment_pieces(adjustment: dict[str, Any]) -> list[dict[str, Any]]:
+	payload = {}
+	if adjustment.get("payload_json"):
+		try:
+			payload = json.loads(adjustment.get("payload_json") or "{}")
+		except Exception:
+			payload = {}
+	if payload.get("proposed_segments"):
+		return [
+			{
+				"start_time": row.get("start_time"),
+				"end_time": row.get("end_time"),
+				"planned_qty": row.get("planned_qty"),
+				"split_index": row.get("split_index"),
+			}
+			for row in payload.get("proposed_segments") or []
+		]
+	if payload.get("start_time") or payload.get("end_time"):
+		return [
+			{
+				"start_time": payload.get("start_time"),
+				"end_time": payload.get("end_time"),
+				"planned_qty": payload.get("planned_qty"),
+				"split_index": 0,
+			}
+		]
+	return [
+		{
+			"start_time": adjustment.get("target_start_time"),
+			"end_time": adjustment.get("target_end_time"),
+			"planned_qty": adjustment.get("target_qty"),
+			"split_index": 0,
+		}
+	]
+
+
+def _build_confirmed_adjustment_best(
+	run_doc,
+	net_row: dict[str, Any],
+	item_context: dict[str, Any],
+	qty: float,
+	candidates: list[dict[str, Any]],
+	settings: dict[str, Any],
+	workstation_state: dict[str, dict[str, Any]],
+	mold_state: dict[str, dict[str, Any]],
+	horizon_start,
+	horizon_end,
+	downtime_windows: list[dict[str, Any]] | None = None,
+) -> dict[str, Any] | None:
+	adjustments = _get_confirmed_adjustment_rows(run_doc.name, net_row.get("name"))
+	if not adjustments:
+		return None
+	segments = []
+	exceptions = []
+	remaining_qty = flt(qty)
+	sequence_no = 1
+	for adjustment in adjustments:
+		if remaining_qty <= 0:
+			break
+		candidate = next(
+			(
+				row
+				for row in candidates
+				if row.get("workstation") == adjustment.get("target_workstation")
+				and (
+					not adjustment.get("target_mould_reference")
+					or row.get("mould_reference") == adjustment.get("target_mould_reference")
+				)
+			),
+			None,
+		)
+		if not candidate:
+			exceptions.append(
+				{
+					"severity": "Warning",
+					"exception_type": "Adjustment Replay Skipped",
+					"message": _("Confirmed adjustment {0} could not find its target machine/mold lane.").format(adjustment.get("name")),
+					"workstation": adjustment.get("target_workstation"),
+					"resolution_hint": _("Review APS Segment Adjustment or current machine capability."),
+					"is_blocking": 0,
+				}
+			)
+			continue
+		matching_windows = _get_matching_downtime_windows(
+			downtime_windows,
+			workstation=candidate.get("workstation"),
+			plant_floor=candidate.get("plant_floor"),
+		)
+		for piece in _get_adjustment_pieces(adjustment):
+			if remaining_qty <= 0:
+				break
+			if not piece.get("start_time") or not piece.get("end_time"):
+				continue
+			start_time = get_datetime(piece.get("start_time"))
+			end_time = get_datetime(piece.get("end_time"))
+			if end_time <= start_time:
+				continue
+			duration = end_time - start_time
+			state = workstation_state.get(candidate.get("workstation")) or {}
+			mold_row = mold_state.get(candidate.get("mould_reference")) or {}
+			start_time = max(
+				get_datetime(horizon_start),
+				start_time,
+				get_datetime(state.get("next_available") or horizon_start),
+				get_datetime(mold_row.get("next_available") or horizon_start),
+			)
+			start_time = _shift_start_past_downtime(start_time, matching_windows)
+			end_time = start_time + duration
+			while True:
+				overlap = next((row for row in matching_windows if _intervals_overlap(start_time, end_time, row.get("start_time"), row.get("end_time"))), None)
+				if not overlap:
+					break
+				start_time = get_datetime(overlap.get("end_time"))
+				end_time = start_time + duration
+			if start_time >= get_datetime(horizon_end):
+				continue
+			planned_qty = min(remaining_qty, flt(piece.get("planned_qty") or adjustment.get("target_qty")))
+			if planned_qty <= 0:
+				continue
+			segment = {
+				"workstation": candidate.get("workstation"),
+				"plant_floor": candidate.get("plant_floor"),
+				"start_time": start_time,
+				"end_time": end_time,
+				"planned_qty": planned_qty,
+				"sequence_no": sequence_no,
+				"lane_key": candidate.get("lane_key"),
+				"campaign_key": _build_campaign_key(net_row.get("item_code"), candidate.get("mould_reference"), candidate.get("workstation")),
+				"parallel_group": "",
+				"family_group": "",
+				"segment_kind": "Manual",
+				"primary_item_code": net_row.get("item_code"),
+				"co_product_item_code": "",
+				"setup_minutes": 0,
+				"changeover_minutes": 0,
+				"mould_reference": candidate.get("mould_reference"),
+				"schedule_explanation": _("Replayed confirmed APS segment adjustment {0}.").format(adjustment.get("name")),
+				"manual_change_note": adjustment.get("name"),
+				"original_segment": "",
+				"split_group": adjustment.get("split_group") or "",
+				"split_index": cint(piece.get("split_index") or 0),
+				"split_reason": adjustment.get("split_reason") or "",
+				"risk_flags": "",
+				"segment_status": "Planned",
+				"anchor_strength": ANCHOR_STRENGTH_SOFT,
+				"execution_anchor_source": "APS Segment Adjustment",
+				"color_code": item_context.get("color_code"),
+				"material_code": item_context.get("material_code"),
+				"is_locked": 0,
+				"is_manual": 1,
+			}
+			segments.append(segment)
+			_apply_segments_to_planning_state([segment], workstation_state, mold_state)
+			remaining_qty -= planned_qty
+			sequence_no += 1
+	if not segments:
+		return None
+	scheduled_qty = sum(flt(segment.get("planned_qty")) for segment in segments)
+	due_datetime = _get_due_datetime(net_row.get("demand_date"))
+	risk_status = "Attention" if any(get_datetime(segment.get("end_time")) > due_datetime for segment in segments) else "Normal"
+	return {
+		"scheduled_qty": scheduled_qty,
+		"unscheduled_qty": max(flt(qty) - scheduled_qty, 0),
+		"result_status": "Risk" if risk_status != "Normal" else "Planned",
+		"risk_status": risk_status,
+		"segments": segments,
+		"selected_moulds": list(dict.fromkeys(segment.get("mould_reference") for segment in segments if segment.get("mould_reference"))),
+		"copy_mold_parallel": 0,
+		"family_mold_result": 0,
+		"primary_mould_reference": segments[0].get("mould_reference") if segments else "",
+		"schedule_explanation": _("Replayed confirmed manual APS adjustments before scheduling residual quantity."),
+		"family_side_outputs": [],
+		"family_output_summary": "",
+		"exceptions": exceptions,
+	}
+
+
+def _build_segment_split_preview(
+	segment_name: str,
+	split_time=None,
+	split_qty: float | None = None,
+	downtime_window: str | None = None,
+	split_reason: str | None = None,
+) -> dict[str, Any]:
+	segment, result_doc, run_doc = _get_segment_with_result(segment_name)
+	if segment.segment_kind == "Family Co-Product":
+		frappe.throw(_("Family Co-Product segment cannot be adjusted directly. Move the primary segment instead."))
+	if _is_segment_execution_protected(segment):
+		return {
+			"allowed": 0,
+			"blocking_reasons": [_("Segment {0} is locked, released, or already has execution feedback.").format(segment_name)],
+		}
+	rate = _segment_effective_hourly_rate(segment)
+	if rate <= 0:
+		return {"allowed": 0, "blocking_reasons": [_("Segment has no usable capacity rate for splitting.")]}
+	start_time = get_datetime(segment.start_time)
+	end_time = get_datetime(segment.end_time)
+	total_qty = flt(segment.planned_qty)
+	reason = split_reason or _("Manual Split")
+	after_start_time = None
+	if downtime_window:
+		if not frappe.db.exists("APS Downtime Window", downtime_window):
+			frappe.throw(_("APS Downtime Window {0} was not found.").format(downtime_window))
+		window = frappe.get_doc("APS Downtime Window", downtime_window)
+		if not _downtime_applies_to_target(
+			window.as_dict(),
+			workstation=segment.workstation,
+			plant_floor=segment.plant_floor,
+			company=run_doc.company,
+		):
+			return {"allowed": 0, "blocking_reasons": [_("Downtime window does not apply to this segment lane.")]}
+		if not _intervals_overlap(start_time, end_time, window.start_time, window.end_time):
+			return {"allowed": 0, "blocking_reasons": [_("Downtime window does not overlap this segment.")]}
+		split_dt = max(start_time, min(end_time, get_datetime(window.start_time)))
+		after_start_time = max(get_datetime(window.end_time), split_dt)
+		reason = window.reason or _("Downtime Window")
+	elif split_time:
+		split_dt = get_datetime(split_time)
+	elif split_qty is not None:
+		before_qty = flt(split_qty)
+		if before_qty <= 0 or before_qty >= total_qty:
+			return {"allowed": 0, "blocking_reasons": [_("Split quantity must be between 0 and the segment planned quantity.")]}
+		split_dt = start_time + timedelta(hours=before_qty / rate)
+	else:
+		return {"allowed": 0, "blocking_reasons": [_("Provide split_time, split_qty, or downtime_window.")]}
+	if split_dt <= start_time or split_dt >= end_time:
+		return {"allowed": 0, "blocking_reasons": [_("Split point must be inside the segment time window.")]}
+	before_qty = min(max((split_dt - start_time).total_seconds() / 3600 * rate, 0), total_qty)
+	after_qty = max(total_qty - before_qty, 0)
+	if before_qty <= 0 or after_qty <= 0:
+		return {"allowed": 0, "blocking_reasons": [_("Split would create an empty segment.")]}
+	after_start_time = after_start_time or split_dt
+	after_end_time = after_start_time + timedelta(hours=after_qty / rate)
+	split_group = f"SPL-{frappe.generate_hash(length=8)}"
+	proposed_segments = [
+		{
+			"segment_name": segment.name,
+			"start_time": start_time,
+			"end_time": split_dt,
+			"planned_qty": before_qty,
+			"split_index": 1,
+			"is_existing": 1,
+		},
+		{
+			"segment_name": None,
+			"start_time": after_start_time,
+			"end_time": after_end_time,
+			"planned_qty": after_qty,
+			"split_index": 2,
+			"is_existing": 0,
+		},
+	]
+	return {
+		"allowed": 1,
+		"planning_run": run_doc.name,
+		"result_name": result_doc.name,
+		"segment_name": segment.name,
+		"split_group": split_group,
+		"split_reason": reason,
+		"downtime_window": downtime_window,
+		"hourly_capacity_qty": rate,
+		"total_qty": total_qty,
+		"proposed_segments": proposed_segments,
+		"impact_summary": _("Split {0} into {1} + {2}.").format(
+			segment.name,
+			frappe.format(before_qty, {"fieldtype": "Float"}),
+			frappe.format(after_qty, {"fieldtype": "Float"}),
+		),
+	}
+
+
+def preview_segment_split(
+	segment_name: str,
+	split_time=None,
+	split_qty: float | None = None,
+	downtime_window: str | None = None,
+	split_reason: str | None = None,
+) -> dict[str, Any]:
+	return _build_segment_split_preview(
+		segment_name=segment_name,
+		split_time=split_time,
+		split_qty=split_qty,
+		downtime_window=downtime_window,
+		split_reason=split_reason,
+	)
+
+
+def apply_segment_split(
+	segment_name: str,
+	split_time=None,
+	split_qty: float | None = None,
+	downtime_window: str | None = None,
+	split_reason: str | None = None,
+) -> dict[str, Any]:
+	preview = preview_segment_split(
+		segment_name=segment_name,
+		split_time=split_time,
+		split_qty=split_qty,
+		downtime_window=downtime_window,
+		split_reason=split_reason,
+	)
+	if not preview.get("allowed"):
+		frappe.throw("\n".join(preview.get("blocking_reasons") or [_("Segment split is blocked.")]))
+	segment, result_doc, run_doc = _get_segment_with_result(segment_name)
+	result_doc = frappe.get_doc("APS Schedule Result", result_doc.name)
+	original_child = next((row for row in result_doc.segments if row.name == segment_name), None)
+	if not original_child:
+		frappe.throw(_("APS Schedule Segment {0} was not found on its result.").format(segment_name))
+	proposed = preview.get("proposed_segments") or []
+	first = proposed[0]
+	second = proposed[1]
+	original_child.end_time = first["end_time"]
+	original_child.planned_qty = first["planned_qty"]
+	original_child.segment_kind = "Manual"
+	original_child.is_manual = 1
+	original_child.manual_change_note = preview.get("impact_summary")
+	original_child.original_segment = original_child.original_segment or segment_name
+	original_child.split_group = preview.get("split_group")
+	original_child.split_index = 1
+	original_child.split_reason = preview.get("split_reason")
+	new_child = result_doc.append(
+		"segments",
+		{
+			"workstation": segment.workstation,
+			"plant_floor": segment.plant_floor,
+			"start_time": second["start_time"],
+			"end_time": second["end_time"],
+			"planned_qty": second["planned_qty"],
+			"sequence_no": cint(segment.sequence_no) + 1,
+			"lane_key": segment.lane_key,
+			"campaign_key": segment.campaign_key,
+			"parallel_group": segment.parallel_group,
+			"family_group": segment.family_group,
+			"segment_kind": "Manual",
+			"primary_item_code": segment.primary_item_code,
+			"co_product_item_code": segment.co_product_item_code,
+			"setup_minutes": 0,
+			"changeover_minutes": 0,
+			"mould_reference": segment.mould_reference,
+			"schedule_explanation": segment.schedule_explanation,
+			"manual_change_note": preview.get("impact_summary"),
+			"segment_note": segment.segment_note,
+			"original_segment": segment_name,
+			"split_group": preview.get("split_group"),
+			"split_index": 2,
+			"split_reason": preview.get("split_reason"),
+			"risk_flags": segment.risk_flags,
+			"segment_status": "Planned",
+			"anchor_strength": ANCHOR_STRENGTH_SOFT,
+			"execution_anchor_source": "Manual Split",
+			"color_code": segment.color_code,
+			"material_code": segment.material_code,
+			"is_locked": 0,
+			"is_manual": 1,
+		},
+	)
+	if segment.family_group:
+		_apply_family_split_for_primary(result_doc, segment, first, second, preview)
+	result_doc.save(ignore_permissions=True)
+	_refresh_result_after_manual_adjustment(result_doc.name)
+	if run_doc.status in ("Approved", "Work Order Proposed", "Shift Proposed", "Applied"):
+		run_doc.db_set({"status": "Planned", "approval_state": "Pending"})
+	_record_segment_adjustment(
+		"Split",
+		run_doc,
+		result_doc,
+		segment,
+		target_start_time=first["start_time"],
+		target_end_time=second["end_time"],
+		target_qty=preview.get("total_qty"),
+		split_group=preview.get("split_group"),
+		split_reason=preview.get("split_reason"),
+		downtime_window=preview.get("downtime_window"),
+		impact_summary=preview.get("impact_summary"),
+		payload=preview,
+	)
+	return {
+		"planning_run": run_doc.name,
+		"result_name": result_doc.name,
+		"segment_name": segment_name,
+		"new_segment_name": new_child.name,
+		"split_group": preview.get("split_group"),
+		"next_actions": get_next_actions_for_context("APS Planning Run", run_doc.name),
+	}
+
+
+def _apply_family_split_for_primary(result_doc, primary_segment: dict[str, Any], first: dict[str, Any], second: dict[str, Any], preview: dict[str, Any]):
+	base_qty = flt(primary_segment.get("planned_qty"))
+	if base_qty <= 0:
+		return
+	family_rows = [
+		row
+		for row in result_doc.segments
+		if row.name != primary_segment.get("name")
+		and row.family_group == primary_segment.get("family_group")
+		and row.segment_kind == "Family Co-Product"
+	]
+	for row in family_rows:
+		ratio = flt(row.planned_qty) / base_qty
+		first_qty = flt(first.get("planned_qty")) * ratio
+		second_qty = flt(second.get("planned_qty")) * ratio
+		row.end_time = first.get("end_time")
+		row.planned_qty = first_qty
+		row.manual_change_note = preview.get("impact_summary")
+		row.original_segment = row.original_segment or row.name
+		row.split_group = preview.get("split_group")
+		row.split_index = 1
+		row.split_reason = preview.get("split_reason")
+		result_doc.append(
+			"segments",
+			{
+				"workstation": row.workstation,
+				"plant_floor": row.plant_floor,
+				"start_time": second.get("start_time"),
+				"end_time": second.get("end_time"),
+				"planned_qty": second_qty,
+				"sequence_no": cint(row.sequence_no) + 1,
+				"lane_key": row.lane_key,
+				"campaign_key": row.campaign_key,
+				"parallel_group": row.parallel_group,
+				"family_group": row.family_group,
+				"segment_kind": "Family Co-Product",
+				"primary_item_code": row.primary_item_code,
+				"co_product_item_code": row.co_product_item_code,
+				"setup_minutes": 0,
+				"changeover_minutes": 0,
+				"mould_reference": row.mould_reference,
+				"schedule_explanation": row.schedule_explanation,
+				"manual_change_note": preview.get("impact_summary"),
+				"segment_note": row.segment_note,
+				"original_segment": row.name,
+				"split_group": preview.get("split_group"),
+				"split_index": 2,
+				"split_reason": preview.get("split_reason"),
+				"risk_flags": row.risk_flags,
+				"segment_status": "Planned",
+				"anchor_strength": ANCHOR_STRENGTH_SOFT,
+				"execution_anchor_source": "Manual Split",
+				"color_code": row.color_code,
+				"material_code": row.material_code,
+				"is_locked": 0,
+				"is_manual": 1,
+			},
+		)
+
+
+def create_or_update_downtime_window(
+	name: str | None = None,
+	company: str | None = None,
+	scope: str | None = None,
+	plant_floor: str | None = None,
+	workstation: str | None = None,
+	start_time=None,
+	end_time=None,
+	reason: str | None = None,
+	status: str | None = "Active",
+	planning_run: str | None = None,
+	notes: str | None = None,
+) -> dict[str, Any]:
+	if not frappe.db.exists("DocType", "APS Downtime Window"):
+		frappe.throw(_("APS Downtime Window is not installed. Run migrate first."))
+	if name:
+		doc = frappe.get_doc("APS Downtime Window", name)
+	else:
+		doc = frappe.get_doc({"doctype": "APS Downtime Window"})
+	if planning_run and not company:
+		company = frappe.db.get_value("APS Planning Run", planning_run, "company")
+	doc.company = company or doc.company or get_settings_dict().get("default_company")
+	doc.scope = scope or doc.scope or ("Workstation" if workstation else "Plant Floor")
+	doc.plant_floor = plant_floor or doc.plant_floor
+	doc.workstation = workstation or doc.workstation
+	doc.start_time = get_datetime(start_time or doc.start_time)
+	doc.end_time = get_datetime(end_time or doc.end_time)
+	doc.reason = reason if reason is not None else doc.reason
+	doc.status = status or doc.status or "Active"
+	doc.planning_run = planning_run or doc.planning_run
+	doc.notes = notes if notes is not None else doc.notes
+	doc.save(ignore_permissions=True) if not doc.is_new() else doc.insert(ignore_permissions=True)
+	impact = None
+	if planning_run:
+		impact = preview_schedule_impact(run_name=planning_run, downtime_window=doc.name)
+	return {
+		"downtime_window": doc.name,
+		"status": doc.status,
+		"impact_preview": impact,
+	}
+
+
+def _get_run_impact_segments(run_name: str) -> list[dict[str, Any]]:
+	result_rows = frappe.get_all(
+		"APS Schedule Result",
+		filters={"planning_run": run_name},
+		fields=["name", "item_code", "customer", "requested_date", "net_requirement"],
+	)
+	result_map = {row.name: row for row in result_rows}
+	segment_rows = frappe.get_all(
+		"APS Schedule Segment",
+		filters={"parent": ("in", list(result_map) or [""]), "segment_kind": ("!=", "Family Co-Product")},
+		fields=[
+			"name",
+			"parent",
+			"workstation",
+			"plant_floor",
+			"start_time",
+			"end_time",
+			"planned_qty",
+			"segment_status",
+			"is_locked",
+			"is_manual",
+			"mould_reference",
+			"linked_work_order",
+			"linked_work_order_scheduling",
+			"linked_scheduling_item",
+			"actual_status",
+			"actual_completed_qty",
+			"actual_start_time",
+			"actual_end_time",
+		],
+		order_by="start_time asc, end_time asc",
+	)
+	for row in segment_rows:
+		parent = result_map.get(row.parent)
+		row["item_code"] = parent.item_code if parent else None
+		row["customer"] = parent.customer if parent else None
+		row["requested_date"] = parent.requested_date if parent else None
+		row["net_requirement"] = parent.net_requirement if parent else None
+	return segment_rows
+
+
+def _build_schedule_impact_preview(run_name: str, downtime_window: str | None = None) -> dict[str, Any]:
+	run_doc = frappe.get_doc("APS Planning Run", run_name)
+	windows = []
+	if downtime_window:
+		if not frappe.db.exists("APS Downtime Window", downtime_window):
+			frappe.throw(_("APS Downtime Window {0} was not found.").format(downtime_window))
+		windows = [frappe.get_doc("APS Downtime Window", downtime_window).as_dict()]
+	else:
+		windows = _get_active_downtime_windows(
+			company=run_doc.company,
+			plant_floors=_get_run_selected_plant_floors(run_doc),
+			horizon_start=run_doc.horizon_start or now_datetime(),
+			horizon_end=run_doc.horizon_end or add_days(today(), run_doc.horizon_days or 14),
+			run_name=run_name,
+		)
+	segments = _get_run_impact_segments(run_name)
+	availability_by_workstation: dict[str, Any] = {}
+	availability_by_mold: dict[str, Any] = {}
+	proposed_updates = []
+	blockers = []
+	for segment in segments:
+		segment_start = get_datetime(segment.start_time)
+		segment_end = get_datetime(segment.end_time)
+		duration = segment_end - segment_start
+		matching_windows = _get_matching_downtime_windows(windows, workstation=segment.workstation, plant_floor=segment.plant_floor, company=run_doc.company)
+		is_relevant = any(_intervals_overlap(segment_start, segment_end, row.get("start_time"), row.get("end_time")) or segment_start >= get_datetime(row.get("start_time")) for row in matching_windows)
+		current_workstation_available = availability_by_workstation.get(segment.workstation)
+		current_mold_available = availability_by_mold.get(segment.mould_reference)
+		if not is_relevant:
+			availability_by_workstation[segment.workstation] = max(current_workstation_available or segment_end, segment_end)
+			if segment.mould_reference:
+				availability_by_mold[segment.mould_reference] = max(current_mold_available or segment_end, segment_end)
+			continue
+		if _is_segment_execution_protected(segment):
+			if any(_intervals_overlap(segment_start, segment_end, row.get("start_time"), row.get("end_time")) for row in matching_windows):
+				blockers.append(
+					{
+						"segment_name": segment.name,
+						"item_code": segment.item_code,
+						"reason": _("Segment is locked or already has execution feedback."),
+					}
+				)
+			availability_by_workstation[segment.workstation] = max(current_workstation_available or segment_end, segment_end)
+			if segment.mould_reference:
+				availability_by_mold[segment.mould_reference] = max(current_mold_available or segment_end, segment_end)
+			continue
+		new_start = max(segment_start, current_workstation_available or segment_start, current_mold_available or segment_start)
+		new_start = _shift_start_past_downtime(new_start, matching_windows)
+		new_end = new_start + duration
+		while True:
+			shifted = _shift_start_past_downtime(new_start, matching_windows)
+			if shifted != new_start:
+				new_start = shifted
+				new_end = new_start + duration
+				continue
+			overlap = next((row for row in matching_windows if _intervals_overlap(new_start, new_end, row.get("start_time"), row.get("end_time"))), None)
+			if not overlap:
+				break
+			new_start = get_datetime(overlap.get("end_time"))
+			new_end = new_start + duration
+		if new_start != segment_start or new_end != segment_end:
+			risk = ""
+			if segment.requested_date and new_end > _get_due_datetime(segment.requested_date):
+				risk = _("Late Delivery Risk")
+			proposed_updates.append(
+				{
+					"segment_name": segment.name,
+					"result_name": segment.parent,
+					"item_code": segment.item_code,
+					"customer": segment.customer,
+					"workstation": segment.workstation,
+					"mould_reference": segment.mould_reference,
+					"old_start_time": segment_start,
+					"old_end_time": segment_end,
+					"new_start_time": new_start,
+					"new_end_time": new_end,
+					"planned_qty": segment.planned_qty,
+					"linked_work_order": segment.linked_work_order,
+					"linked_work_order_scheduling": segment.linked_work_order_scheduling,
+					"wos_action": "Move Existing" if segment.linked_work_order_scheduling else "New",
+					"delivery_risk": risk,
+				}
+			)
+		availability_by_workstation[segment.workstation] = new_end
+		if segment.mould_reference:
+			availability_by_mold[segment.mould_reference] = new_end
+	delivery_risks = [row for row in proposed_updates if row.get("delivery_risk")]
+	return {
+		"allowed": 0 if blockers else 1,
+		"planning_run": run_name,
+		"downtime_window": downtime_window,
+		"proposed_updates": proposed_updates,
+		"affected_count": len(proposed_updates),
+		"blockers": blockers,
+		"delivery_risks": delivery_risks,
+		"wos_changes": [
+			{
+				"segment_name": row.get("segment_name"),
+				"work_order": row.get("linked_work_order"),
+				"existing_scheduling": row.get("linked_work_order_scheduling"),
+				"action": row.get("wos_action"),
+				"planned_qty": row.get("planned_qty"),
+				"new_start_time": row.get("new_start_time"),
+				"new_end_time": row.get("new_end_time"),
+			}
+			for row in proposed_updates
+		],
+	}
+
+
+def preview_schedule_impact(run_name: str, downtime_window: str | None = None, segment_name: str | None = None) -> dict[str, Any]:
+	if not run_name and segment_name:
+		run_name = frappe.db.get_value("APS Schedule Result", frappe.db.get_value("APS Schedule Segment", segment_name, "parent"), "planning_run")
+	if not run_name:
+		frappe.throw(_("Planning Run is required for schedule impact preview."))
+	return _build_schedule_impact_preview(run_name=run_name, downtime_window=downtime_window)
+
+
+def apply_schedule_impact(run_name: str, downtime_window: str | None = None) -> dict[str, Any]:
+	preview = preview_schedule_impact(run_name=run_name, downtime_window=downtime_window)
+	if not preview.get("allowed"):
+		frappe.throw("\n".join(row.get("reason") or row.get("segment_name") for row in preview.get("blockers") or []))
+	run_doc = frappe.get_doc("APS Planning Run", run_name)
+	applied = 0
+	result_names = set()
+	for row in preview.get("proposed_updates") or []:
+		segment, result_doc, _run_doc = _get_segment_with_result(row.get("segment_name"))
+		frappe.db.set_value(
+			"APS Schedule Segment",
+			row.get("segment_name"),
+			{
+				"start_time": row.get("new_start_time"),
+				"end_time": row.get("new_end_time"),
+				"is_manual": 1,
+				"manual_change_note": _("Schedule impact applied from downtime window {0}.").format(downtime_window or "-"),
+				"anchor_strength": ANCHOR_STRENGTH_SOFT,
+				"execution_anchor_source": "Downtime Impact",
+			},
+		)
+		_record_segment_adjustment(
+			"Downtime Impact",
+			run_doc,
+			result_doc,
+			segment,
+			target_start_time=row.get("new_start_time"),
+			target_end_time=row.get("new_end_time"),
+			target_qty=row.get("planned_qty"),
+			downtime_window=downtime_window,
+			impact_summary=_("Moved by downtime impact preview."),
+			payload=row,
+			status="Applied",
+		)
+		result_names.add(result_doc.name)
+		applied += 1
+	for result_name in result_names:
+		_refresh_result_after_manual_adjustment(result_name)
+	if applied and run_doc.status in ("Approved", "Work Order Proposed", "Shift Proposed", "Applied"):
+		run_doc.db_set({"status": "Planned", "approval_state": "Pending"})
+	for risk in preview.get("delivery_risks") or []:
+		_ensure_open_exception(
+			planning_run=run_name,
+			severity="Warning",
+			exception_type="Late Delivery Risk",
+			message=_("Downtime impact moves segment {0} past requested date.").format(risk.get("segment_name")),
+			item_code=risk.get("item_code"),
+			customer=risk.get("customer"),
+			workstation=risk.get("workstation"),
+			source_doctype="APS Schedule Segment",
+			source_name=risk.get("segment_name"),
+			resolution_hint=_("Review customer delivery and release revised WOS proposals."),
+			is_blocking=0,
+		)
+	overlap_summary = _validate_run_segment_overlaps(run_name, persist_exceptions=True)
+	mold_overlap_summary = _validate_run_mold_overlaps(run_name, persist_exceptions=True)
+	return {
+		"planning_run": run_name,
+		"applied_count": applied,
+		"overlap_count": overlap_summary.get("count"),
+		"mold_overlap_count": mold_overlap_summary.get("count"),
+		"next_actions": get_next_actions_for_context("APS Planning Run", run_name),
+	}
+
+
 def apply_manual_schedule_adjustment(
 	segment_name: str,
 	target_workstation: str | None = None,
@@ -3625,6 +5112,20 @@ def apply_manual_schedule_adjustment(
 			resolution_hint=_("Review override approval before syncing or releasing."),
 			is_blocking=0,
 		)
+	updated_segment, _updated_result, _updated_run = _get_segment_with_result(segment_name)
+	_record_segment_adjustment(
+		"Resize" if target_end_time else "Move",
+		run_doc,
+		result_doc,
+		updated_segment,
+		target_start_time=preview.get("start_time"),
+		target_end_time=preview.get("end_time"),
+		target_qty=preview.get("planned_qty"),
+		target_workstation=preview.get("target_workstation"),
+		target_mould_reference=preview.get("target_mould_reference"),
+		impact_summary=manual_note or preview.get("schedule_explanation"),
+		payload=preview,
+	)
 
 	return {
 		"segment_name": segment_name,
@@ -3702,6 +5203,10 @@ def get_schedule_result_detail(result_name: str) -> dict[str, Any]:
 			"risk_flags",
 			"segment_note",
 			"manual_change_note",
+			"original_segment",
+			"split_group",
+			"split_index",
+			"split_reason",
 			"linked_work_order",
 			"linked_work_order_scheduling",
 			"linked_scheduling_item",
@@ -3810,7 +5315,7 @@ def get_settings_dict() -> dict[str, Any]:
 		"default_company": settings.default_company,
 		"default_plant_floor": settings.default_plant_floor,
 		"planning_horizon_days": cint(settings.planning_horizon_days or 14),
-		"release_horizon_days": cint(settings.release_horizon_days or 3),
+		"release_horizon_days": cint(settings.release_horizon_days or 1),
 		"freeze_days": cint(settings.freeze_days or 2),
 		"minimum_parallel_split_qty": flt(settings.minimum_parallel_split_qty or 500),
 		"minimum_run_window_hours": flt(settings.minimum_run_window_hours or 2),
@@ -5952,6 +7457,7 @@ def _choose_best_slot(
 	candidates: list[dict[str, Any]],
 	settings: dict[str, Any],
 	selected_plant_floors: list[str] | None = None,
+	downtime_windows: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
 	if not _get_available_mold_rows(item_code):
 		diagnostic = _build_mold_unavailable_diagnostic(item_code, selected_plant_floors=selected_plant_floors)
@@ -6016,6 +7522,7 @@ def _choose_best_slot(
 			workstation_state=workstation_state,
 			mold_state=mold_state,
 			settings=settings,
+			downtime_windows=downtime_windows,
 		)
 		if proposal.get("is_blocked"):
 			blocking_exceptions.extend(proposal.get("exceptions") or [])
@@ -6078,7 +7585,8 @@ def _choose_best_slot(
 	remaining = flt(qty)
 	total_changeover = 0
 
-	for sequence_no, proposal in enumerate(selected_options, start=1):
+	sequence_no = 1
+	for proposal in selected_options:
 		if remaining <= 0:
 			break
 		allocatable_qty = min(remaining, proposal["available_qty"] if use_parallel else max(proposal["available_qty"], remaining))
@@ -6087,46 +7595,81 @@ def _choose_best_slot(
 		if allocatable_qty <= 0:
 			continue
 
-		run_hours = max(allocatable_qty / max(proposal["hourly_capacity_qty"], 1), 0)
-		end_time = proposal["start_time"] + timedelta(hours=run_hours)
-		segment_status = "Planned"
-		if end_time > get_datetime(horizon_end):
-			end_time = get_datetime(horizon_end)
-		segment = {
-			"workstation": proposal["workstation"],
-			"plant_floor": proposal.get("plant_floor"),
-			"start_time": proposal["start_time"],
-			"end_time": end_time,
-			"planned_qty": allocatable_qty,
-			"sequence_no": sequence_no,
-			"lane_key": proposal["lane_key"],
-			"campaign_key": proposal.get("campaign_key") or _build_campaign_key(item_code, proposal.get("mould_reference"), proposal.get("workstation")),
-			"parallel_group": parallel_group,
-			"family_group": "",
-			"segment_kind": "Primary",
-			"primary_item_code": item_code,
-			"co_product_item_code": "",
-			"setup_minutes": proposal["setup_minutes"],
-			"changeover_minutes": proposal["setup_minutes"],
-			"mould_reference": proposal["mould_reference"],
-			"schedule_explanation": proposal["schedule_explanation"],
-			"manual_change_note": "",
-			"risk_flags": "\n".join(sorted({row.get("exception_type") for row in proposal["exceptions"] if row.get("exception_type")})),
-			"segment_status": segment_status,
-			"anchor_strength": proposal.get("anchor_strength") or 0,
-			"execution_anchor_source": proposal.get("execution_anchor_source") or "",
-			"color_code": item_context.get("color_code"),
-			"material_code": item_context.get("material_code"),
-			"is_locked": 0,
-			"is_manual": 0,
-			"_output_qty": proposal["output_qty"],
-			"_output_group": proposal.get("output_group") or "Default",
-			"_is_family_mold": proposal["is_family_mold"],
-		}
-		selected_segments.append(segment)
+		chunks, unscheduled_from_downtime = _allocate_qty_around_downtime(
+			start_time=proposal["start_time"],
+			qty=allocatable_qty,
+			hourly_capacity_qty=proposal["hourly_capacity_qty"],
+			horizon_end=horizon_end,
+			downtime_windows=proposal.get("downtime_windows") or [],
+		)
+		if unscheduled_from_downtime > 0:
+			exceptions.append(
+				{
+					"severity": "Warning",
+					"exception_type": "Downtime Capacity Loss",
+					"message": _("Downtime windows prevented {0} of {1} from being scheduled inside the horizon.").format(
+						frappe.format(unscheduled_from_downtime, {"fieldtype": "Float"}),
+						item_code,
+					),
+					"workstation": proposal.get("workstation"),
+					"resolution_hint": _("Extend the APS horizon or release more qualified capacity."),
+					"is_blocking": 0,
+				}
+			)
+		if len(chunks) > 1:
+			exceptions.append(
+				{
+					"severity": "Warning",
+					"exception_type": "Downtime Split",
+					"message": _("APS split {0} around downtime on {1}.").format(item_code, proposal.get("workstation")),
+					"workstation": proposal.get("workstation"),
+					"resolution_hint": _("Review the split sequence before approving WOS proposals."),
+					"is_blocking": 0,
+				}
+			)
+		split_group = f"SPL-{frappe.generate_hash(length=8)}" if len(chunks) > 1 else ""
+		for chunk_index, chunk in enumerate(chunks, start=1):
+			segment_status = "Planned"
+			segment = {
+				"workstation": proposal["workstation"],
+				"plant_floor": proposal.get("plant_floor"),
+				"start_time": chunk["start_time"],
+				"end_time": chunk["end_time"],
+				"planned_qty": chunk["planned_qty"],
+				"sequence_no": sequence_no,
+				"lane_key": proposal["lane_key"],
+				"campaign_key": proposal.get("campaign_key") or _build_campaign_key(item_code, proposal.get("mould_reference"), proposal.get("workstation")),
+				"parallel_group": parallel_group,
+				"family_group": "",
+				"segment_kind": "Primary",
+				"primary_item_code": item_code,
+				"co_product_item_code": "",
+				"setup_minutes": proposal["setup_minutes"] if chunk_index == 1 else 0,
+				"changeover_minutes": proposal["setup_minutes"] if chunk_index == 1 else 0,
+				"mould_reference": proposal["mould_reference"],
+				"schedule_explanation": proposal["schedule_explanation"],
+				"manual_change_note": "",
+				"original_segment": "",
+				"split_group": split_group,
+				"split_index": chunk_index if split_group else 0,
+				"split_reason": _("Downtime Window") if split_group else "",
+				"risk_flags": "\n".join(sorted({row.get("exception_type") for row in proposal["exceptions"] if row.get("exception_type")})),
+				"segment_status": segment_status,
+				"anchor_strength": proposal.get("anchor_strength") or 0,
+				"execution_anchor_source": proposal.get("execution_anchor_source") or "",
+				"color_code": item_context.get("color_code"),
+				"material_code": item_context.get("material_code"),
+				"is_locked": 0,
+				"is_manual": 0,
+				"_output_qty": proposal["output_qty"],
+				"_output_group": proposal.get("output_group") or "Default",
+				"_is_family_mold": proposal["is_family_mold"],
+			}
+			selected_segments.append(segment)
+			sequence_no += 1
 		exceptions.extend(proposal["exceptions"])
 		total_changeover += flt(proposal["setup_minutes"])
-		remaining -= allocatable_qty
+		remaining -= sum(flt(chunk.get("planned_qty")) for chunk in chunks)
 
 	if not selected_segments:
 		return {
@@ -6275,6 +7818,7 @@ def _build_candidate_proposal(
 	workstation_state: dict[str, dict[str, Any]],
 	mold_state: dict[str, dict[str, Any]],
 	settings: dict[str, Any],
+	downtime_windows: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
 	state = workstation_state.get(candidate.get("workstation")) or {}
 	mold_row = mold_state.get(candidate.get("mould_reference")) or {}
@@ -6308,6 +7852,29 @@ def _build_candidate_proposal(
 		blocked = True
 
 	start_time = base_start + timedelta(minutes=setup_minutes)
+	candidate_downtime_windows = _get_matching_downtime_windows(
+		downtime_windows,
+		workstation=candidate.get("workstation"),
+		plant_floor=candidate.get("plant_floor"),
+	)
+	shifted_start_time = _shift_start_past_downtime(start_time, candidate_downtime_windows)
+	if shifted_start_time != start_time:
+		candidate_exceptions.append(
+			{
+				"severity": "Warning",
+				"exception_type": "Downtime Start Shift",
+				"message": _("Downtime shifted {0} start on {1} from {2} to {3}.").format(
+					item_code,
+					candidate.get("workstation"),
+					frappe.format(start_time, {"fieldtype": "Datetime"}),
+					frappe.format(shifted_start_time, {"fieldtype": "Datetime"}),
+				),
+				"workstation": candidate.get("workstation"),
+				"resolution_hint": _("Review active APS Downtime Window records."),
+				"is_blocking": 0,
+			}
+		)
+	start_time = shifted_start_time
 	capacity = _estimate_hourly_capacity(candidate=candidate, settings=settings)
 	hourly_capacity_qty = capacity["hourly_capacity_qty"]
 	if capacity.get("capacity_source") == "fallback_cycle":
@@ -6324,11 +7891,17 @@ def _build_candidate_proposal(
 			}
 		)
 
-	available_hours = max((get_datetime(horizon_end) - start_time).total_seconds() / 3600, 0)
+	available_hours = _available_run_hours_between(start_time, horizon_end, candidate_downtime_windows)
 	if flt(candidate.get("max_run_hours")) > 0:
 		available_hours = min(available_hours, flt(candidate.get("max_run_hours")))
 	available_qty = max(available_hours * hourly_capacity_qty, 0)
-	end_time_full_qty = start_time + timedelta(hours=_estimate_run_hours(qty=qty, candidate=candidate, settings=settings))
+	end_time_full_qty = _estimate_end_for_qty_around_downtime(
+		start_time=start_time,
+		qty=qty,
+		hourly_capacity_qty=hourly_capacity_qty,
+		downtime_windows=candidate_downtime_windows,
+		horizon_end=horizon_end,
+	)
 	anchor_strength = 0
 	execution_anchor_source = ""
 	continuity_rank = 3
@@ -6391,6 +7964,7 @@ def _build_candidate_proposal(
 		"anchor_strength": anchor_strength,
 		"execution_anchor_source": execution_anchor_source,
 		"exceptions": candidate_exceptions,
+		"downtime_windows": candidate_downtime_windows,
 		"score": (
 			continuity_rank,
 			-anchor_strength,
@@ -7251,30 +8825,31 @@ def _create_formal_work_order(
 		item_code=item_code,
 		company=run_doc.company,
 	)
-	work_order = frappe.get_doc(
-		{
-			"doctype": "Work Order",
-			"production_item": item_code,
-			"bom_no": bom_no,
-			"qty": qty,
-			"company": run_doc.company,
-			"planned_start_date": start_time,
-			"planned_end_date": end_time,
-			"wip_warehouse": warehouse_values.get("wip_warehouse"),
-			"source_warehouse": warehouse_values.get("source_warehouse"),
-			"fg_warehouse": warehouse_values.get("fg_warehouse"),
-			"scrap_warehouse": warehouse_values.get("scrap_warehouse"),
-			"custom_aps_run": run_doc.name,
-			"custom_aps_source": result.demand_source or "APS Planning Run",
-			"custom_aps_required_delivery_date": result.requested_date,
-			"custom_aps_is_urgent": result.is_urgent,
-			"custom_aps_release_status": "Planned",
-			"custom_aps_locked_for_reschedule": 1,
-			"custom_aps_schedule_reference": result.name,
-			"custom_aps_result_reference": result.name,
-			"custom_aps_proposal_batch": proposal_batch,
-		}
-	)
+	work_order_values = {
+		"doctype": "Work Order",
+		"production_item": item_code,
+		"bom_no": bom_no,
+		"qty": qty,
+		"company": run_doc.company,
+		"planned_start_date": start_time,
+		"planned_end_date": end_time,
+		"wip_warehouse": warehouse_values.get("wip_warehouse"),
+		"source_warehouse": warehouse_values.get("source_warehouse"),
+		"fg_warehouse": warehouse_values.get("fg_warehouse"),
+		"scrap_warehouse": warehouse_values.get("scrap_warehouse"),
+		"custom_aps_run": run_doc.name,
+		"custom_aps_source": result.demand_source or "APS Planning Run",
+		"custom_aps_required_delivery_date": result.requested_date,
+		"custom_aps_is_urgent": result.is_urgent,
+		"custom_aps_release_status": "Planned",
+		"custom_aps_locked_for_reschedule": 1,
+		"custom_aps_schedule_reference": result.name,
+		"custom_aps_result_reference": result.name,
+		"custom_aps_proposal_batch": proposal_batch,
+	}
+	if frappe.get_meta("Work Order").has_field("custom_purpose"):
+		work_order_values["custom_purpose"] = "Stock"
+	work_order = frappe.get_doc(work_order_values)
 	work_order.insert(ignore_permissions=True)
 	work_order.submit()
 	return work_order.name
@@ -7417,14 +8992,18 @@ def _is_frozen_scheduling_row(row: dict[str, Any] | None) -> bool:
 
 def _get_formal_scheduling_reconciliation_rows(
 	work_order_name: str,
+	release_from=None,
 	release_to=None,
 ) -> list[dict[str, Any]]:
 	snapshot = _get_work_order_reconciliation_snapshot(work_order_name)
 	rows = [dict(row) for row in (snapshot or {}).get("scheduling_rows") or []]
+	start_date = getdate(release_from) if release_from else None
 	limit_date = getdate(release_to) if release_to else None
 	result = []
 	for row in rows:
 		posting_date = getdate(row.get("posting_date")) if row.get("posting_date") else None
+		if start_date and posting_date and posting_date < start_date:
+			continue
 		if limit_date and posting_date and posting_date > limit_date:
 			continue
 		row["is_frozen"] = 1 if _is_frozen_scheduling_row(row) else 0
@@ -7533,24 +9112,34 @@ def _find_matching_scheduling_row(
 	work_order_name: str,
 	segment: dict[str, Any],
 	matched_row_names: set[str] | None = None,
+	release_from=None,
 	release_to=None,
 ) -> dict[str, Any] | None:
 	matched_row_names = matched_row_names or set()
 	rows = [
 		row
-		for row in _get_formal_scheduling_reconciliation_rows(work_order_name, release_to=release_to)
+		for row in _get_formal_scheduling_reconciliation_rows(work_order_name, release_from=release_from, release_to=release_to)
 		if row.get("name") not in matched_row_names and not row.get("is_frozen")
 	]
 	if not rows:
 		return None
-	target_posting_date = getdate(segment.get("start_time")) if segment.get("start_time") else None
-	target_shift_type = _determine_shift_type(segment.get("start_time")) if segment.get("start_time") else ""
+	target_posting_date = getdate(segment.get("posting_date") or segment.get("start_time")) if segment.get("start_time") else None
+	target_shift_type = segment.get("shift_type") or (_determine_shift_type(segment.get("start_time")) if segment.get("start_time") else "")
 	target_campaign_key = segment.get("campaign_key") or _build_campaign_key(
 		segment.get("primary_item_code"),
 		segment.get("mould_reference"),
 		segment.get("workstation"),
 	)
 	target_start = get_datetime(segment.get("start_time")) if segment.get("start_time") else now_datetime()
+	same_window_rows = [
+		row
+		for row in rows
+		if row.get("posting_date") == target_posting_date and (row.get("shift_type") or "") == target_shift_type
+	]
+	if same_window_rows:
+		rows = same_window_rows
+	elif cint(segment.get("slice_count")) > 1:
+		return None
 	best_row = None
 	best_score = None
 	for row in rows:
@@ -7572,8 +9161,8 @@ def _find_matching_scheduling_row(
 def _classify_shift_schedule_action(existing_row: dict[str, Any] | None, segment: dict[str, Any]) -> str:
 	if not existing_row:
 		return "New"
-	target_posting_date = getdate(segment.get("start_time")) if segment.get("start_time") else None
-	target_shift_type = _determine_shift_type(segment.get("start_time")) if segment.get("start_time") else ""
+	target_posting_date = getdate(segment.get("posting_date") or segment.get("start_time")) if segment.get("start_time") else None
+	target_shift_type = segment.get("shift_type") or (_determine_shift_type(segment.get("start_time")) if segment.get("start_time") else "")
 	target_plant_floor = segment.get("plant_floor")
 	target_workstation = segment.get("workstation")
 	target_start = get_datetime(segment.get("start_time")) if segment.get("start_time") else None
@@ -7600,6 +9189,87 @@ def _classify_shift_schedule_action(existing_row: dict[str, Any] | None, segment
 def _determine_shift_type(start_time) -> str:
 	start_dt = get_datetime(start_time)
 	return "白班" if 8 <= start_dt.hour < 20 else "晚班"
+
+
+def _get_shift_window_for_time(value) -> tuple[datetime, datetime, str]:
+	start_dt = get_datetime(value)
+	work_date = getdate(start_dt)
+	if 8 <= start_dt.hour < 20:
+		shift_start = get_datetime(f"{work_date} 08:00:00")
+		shift_end = get_datetime(f"{work_date} 20:00:00")
+		return shift_start, shift_end, "白班"
+	if start_dt.hour < 8:
+		previous_date = getdate(add_days(work_date, -1))
+		shift_start = get_datetime(f"{previous_date} 20:00:00")
+		shift_end = get_datetime(f"{work_date} 08:00:00")
+		return shift_start, shift_end, "晚班"
+	next_date = getdate(add_days(work_date, 1))
+	shift_start = get_datetime(f"{work_date} 20:00:00")
+	shift_end = get_datetime(f"{next_date} 08:00:00")
+	return shift_start, shift_end, "晚班"
+
+
+def _split_segment_into_shift_slices(segment: dict[str, Any], release_from=None, release_to=None) -> list[dict[str, Any]]:
+	start_time = get_datetime(segment.get("start_time")) if segment.get("start_time") else None
+	end_time = get_datetime(segment.get("end_time")) if segment.get("end_time") else None
+	planned_qty = flt(segment.get("planned_qty"))
+	if not start_time or not end_time or end_time <= start_time or planned_qty <= 0:
+		return [segment]
+
+	windows: list[tuple[datetime, datetime, datetime, str]] = []
+	current = start_time
+	while current < end_time:
+		shift_start, shift_end, shift_type = _get_shift_window_for_time(current)
+		slice_end = min(end_time, shift_end)
+		if slice_end <= current:
+			current = min(end_time, current + timedelta(hours=1))
+			continue
+		windows.append((current, slice_end, shift_start, shift_type))
+		current = slice_end
+
+	if not windows:
+		return []
+
+	release_from_date = getdate(release_from) if release_from else None
+	release_to_date = getdate(release_to) if release_to else None
+	total_seconds = max((end_time - start_time).total_seconds(), 1)
+	raw_quantities = [
+		max(planned_qty * max((slice_end - slice_start).total_seconds(), 0) / total_seconds, 0)
+		for slice_start, slice_end, _shift_start, _shift_type in windows
+	]
+	allocated_quantities = [int(qty) for qty in raw_quantities]
+	target_qty = max(int(planned_qty + 0.5), 0)
+	remaining_qty = target_qty - sum(allocated_quantities)
+	if remaining_qty > 0:
+		remainder_order = sorted(
+			range(len(raw_quantities)),
+			key=lambda idx: (raw_quantities[idx] - allocated_quantities[idx], -idx),
+			reverse=True,
+		)
+		for idx in remainder_order[:remaining_qty]:
+			allocated_quantities[idx] += 1
+	slices = []
+	for index, (slice_start, slice_end, shift_start, shift_type) in enumerate(windows, start=1):
+		posting_date = getdate(shift_start)
+		slice_qty = allocated_quantities[index - 1] if index - 1 < len(allocated_quantities) else 0
+		if release_from_date and posting_date < release_from_date:
+			continue
+		if release_to_date and posting_date > release_to_date:
+			continue
+		slice_row = dict(segment)
+		slice_row.update(
+			{
+				"start_time": slice_start,
+				"end_time": slice_end,
+				"planned_qty": slice_qty,
+				"posting_date": posting_date,
+				"shift_type": shift_type,
+				"slice_index": index,
+				"slice_count": len(windows),
+			}
+		)
+		slices.append(slice_row)
+	return slices
 
 
 def _upsert_formal_shift_scheduling(batch, row) -> dict[str, Any]:
@@ -7685,12 +9355,22 @@ def _upsert_formal_shift_scheduling(batch, row) -> dict[str, Any]:
 	if not child_row and row.existing_scheduling_item:
 		child_row = next((child for child in target_doc.get("scheduling_items") if child.name == row.existing_scheduling_item), None)
 	if not child_row:
+		target_start = get_datetime(row.planned_start_time) if row.planned_start_time else None
+		target_end = get_datetime(row.planned_end_time) if row.planned_end_time else None
 		child_row = next(
 			(
 				child
 				for child in target_doc.get("scheduling_items")
 				if child.get("work_order") == row.work_order
 				and child.get("custom_aps_segment_reference") == row.segment_reference
+				and (
+					not target_start
+					or get_datetime(child.get("planned_start_date") or target_start) == target_start
+				)
+				and (
+					not target_end
+					or get_datetime(child.get("planned_end_date") or target_end) == target_end
+				)
 			),
 			None,
 		)
@@ -7739,6 +9419,11 @@ def _upsert_formal_shift_scheduling(batch, row) -> dict[str, Any]:
 
 
 def _build_segment_execution_snapshot(segment, scheduling_item=None, work_order=None) -> dict[str, Any]:
+	scheduling_items = []
+	if isinstance(scheduling_item, (list, tuple)):
+		scheduling_items = [row for row in scheduling_item if row]
+	elif scheduling_item:
+		scheduling_items = [scheduling_item]
 	snapshot = {
 		"linked_work_order": segment.get("linked_work_order") or None,
 		"linked_work_order_scheduling": segment.get("linked_work_order_scheduling") or None,
@@ -7749,15 +9434,25 @@ def _build_segment_execution_snapshot(segment, scheduling_item=None, work_order=
 		"delay_minutes": 0.0,
 		"actual_status": "Not Started",
 	}
-	if scheduling_item:
-		snapshot["linked_scheduling_item"] = scheduling_item.get("name")
-		snapshot["linked_work_order"] = scheduling_item.get("work_order")
-		snapshot["linked_work_order_scheduling"] = scheduling_item.get("parent")
-		snapshot["actual_completed_qty"] = flt(scheduling_item.get("completed_qty"))
-		snapshot["actual_start_time"] = scheduling_item.get("from_time")
-		snapshot["actual_end_time"] = scheduling_item.get("to_time")
+	if scheduling_items:
+		ordered_items = sorted(
+			scheduling_items,
+			key=lambda row: (
+				get_datetime(row.get("from_time") or row.get("planned_start_date") or row.get("modified") or now_datetime()),
+				row.get("name") or "",
+			),
+		)
+		latest_item = ordered_items[-1]
+		snapshot["linked_scheduling_item"] = latest_item.get("name")
+		snapshot["linked_work_order"] = latest_item.get("work_order")
+		snapshot["linked_work_order_scheduling"] = latest_item.get("parent")
+		snapshot["actual_completed_qty"] = sum(flt(row.get("completed_qty")) for row in ordered_items)
+		start_times = [row.get("from_time") for row in ordered_items if row.get("from_time")]
+		end_times = [row.get("to_time") for row in ordered_items if row.get("to_time")]
+		snapshot["actual_start_time"] = min(start_times) if start_times else None
+		snapshot["actual_end_time"] = max(end_times) if end_times else None
 
-	if not scheduling_item and work_order:
+	if not scheduling_items and work_order:
 		snapshot["actual_completed_qty"] = flt(work_order.get("produced_qty"))
 
 	now_value = now_datetime()
@@ -7790,28 +9485,32 @@ def _build_segment_execution_snapshot(segment, scheduling_item=None, work_order=
 
 
 def _get_segment_execution_snapshot(segment) -> dict[str, Any]:
-	scheduling_item = None
+	scheduling_items = []
 	has_scheduling_item = frappe.db.exists("DocType", "Scheduling Item")
 	if has_scheduling_item and segment.get("linked_scheduling_item") and frappe.db.exists(
 		"Scheduling Item", segment.get("linked_scheduling_item")
 	):
-		scheduling_item = frappe.get_doc("Scheduling Item", segment.get("linked_scheduling_item"))
-	elif has_scheduling_item and frappe.db.has_column("Scheduling Item", "custom_aps_segment_reference"):
-		row = frappe.get_all(
+		scheduling_items.append(frappe.get_doc("Scheduling Item", segment.get("linked_scheduling_item")))
+	if has_scheduling_item and frappe.db.has_column("Scheduling Item", "custom_aps_segment_reference"):
+		rows = frappe.get_all(
 			"Scheduling Item",
 			filters={"custom_aps_segment_reference": segment.get("name")},
 			fields=["name"],
-			limit=1,
-			order_by="modified desc",
+			order_by="planned_start_date asc, modified asc",
 		)
-		if row:
-			scheduling_item = frappe.get_doc("Scheduling Item", row[0].name)
+		known_names = {row.name for row in scheduling_items}
+		for row in rows:
+			if row.name not in known_names:
+				scheduling_items.append(frappe.get_doc("Scheduling Item", row.name))
 
 	work_order = None
-	linked_work_order = scheduling_item.get("work_order") if scheduling_item else segment.get("linked_work_order")
+	linked_work_order = (
+		next((row.get("work_order") for row in scheduling_items if row.get("work_order")), None)
+		or segment.get("linked_work_order")
+	)
 	if linked_work_order and frappe.db.exists("Work Order", linked_work_order):
 		work_order = frappe.get_doc("Work Order", linked_work_order)
-	return _build_segment_execution_snapshot(segment, scheduling_item, work_order)
+	return _build_segment_execution_snapshot(segment, scheduling_items, work_order)
 
 
 def _rollup_result_actual_status(segment_statuses: list[str]) -> str:
@@ -8078,36 +9777,37 @@ def _ensure_released_work_order(run_doc, result: dict[str, Any], segment: dict[s
 	if run_doc.plant_floor and frappe.db.exists("DocType", "Plant Floor"):
 		plant_floor_doc = frappe.get_doc("Plant Floor", run_doc.plant_floor)
 
-	work_order = frappe.get_doc(
-		{
-			"doctype": "Work Order",
-			"production_item": item_code,
-			"bom_no": bom_no,
-			"qty": segment["planned_qty"],
-			"company": run_doc.company,
-			"planned_start_date": segment["start_time"],
-			"planned_end_date": segment["end_time"],
-			"wip_warehouse": _get_doc_field_value(
-				plant_floor_doc, settings.get("plant_floor_wip_warehouse_field")
-			),
-			"source_warehouse": _get_doc_field_value(
-				plant_floor_doc, settings.get("plant_floor_source_warehouse_field")
-			),
-			"fg_warehouse": _get_doc_field_value(
-				plant_floor_doc, settings.get("plant_floor_fg_warehouse_field")
-			),
-			"scrap_warehouse": _get_doc_field_value(
-				plant_floor_doc, settings.get("plant_floor_scrap_warehouse_field")
-			),
-			"custom_aps_run": run_doc.name,
-			"custom_aps_source": result.get("demand_source") or "APS Planning Run",
-			"custom_aps_required_delivery_date": result.get("requested_date"),
-			"custom_aps_is_urgent": result.get("is_urgent"),
-			"custom_aps_release_status": "Released",
-			"custom_aps_locked_for_reschedule": 1,
-			"custom_aps_schedule_reference": result["name"],
-		}
-	)
+	work_order_values = {
+		"doctype": "Work Order",
+		"production_item": item_code,
+		"bom_no": bom_no,
+		"qty": segment["planned_qty"],
+		"company": run_doc.company,
+		"planned_start_date": segment["start_time"],
+		"planned_end_date": segment["end_time"],
+		"wip_warehouse": _get_doc_field_value(
+			plant_floor_doc, settings.get("plant_floor_wip_warehouse_field")
+		),
+		"source_warehouse": _get_doc_field_value(
+			plant_floor_doc, settings.get("plant_floor_source_warehouse_field")
+		),
+		"fg_warehouse": _get_doc_field_value(
+			plant_floor_doc, settings.get("plant_floor_fg_warehouse_field")
+		),
+		"scrap_warehouse": _get_doc_field_value(
+			plant_floor_doc, settings.get("plant_floor_scrap_warehouse_field")
+		),
+		"custom_aps_run": run_doc.name,
+		"custom_aps_source": result.get("demand_source") or "APS Planning Run",
+		"custom_aps_required_delivery_date": result.get("requested_date"),
+		"custom_aps_is_urgent": result.get("is_urgent"),
+		"custom_aps_release_status": "Released",
+		"custom_aps_locked_for_reschedule": 1,
+		"custom_aps_schedule_reference": result["name"],
+	}
+	if frappe.get_meta("Work Order").has_field("custom_purpose"):
+		work_order_values["custom_purpose"] = "Stock"
+	work_order = frappe.get_doc(work_order_values)
 	work_order.flags.ignore_mandatory = True
 	work_order.insert(ignore_permissions=True)
 	work_order.submit()
@@ -8200,11 +9900,11 @@ def _get_work_order_warehouse_values(
 	item_code: str | None,
 	company: str | None,
 ) -> dict[str, str | None]:
-	item_default_warehouse = (
-		frappe.db.get_value("Item", item_code, "default_warehouse")
-		if item_code and frappe.db.exists("DocType", "Item")
-		else None
-	)
+	item_default_warehouse = None
+	if item_code and frappe.db.exists("DocType", "Item"):
+		item_meta = frappe.get_meta("Item")
+		if item_meta.has_field("default_warehouse"):
+			item_default_warehouse = frappe.db.get_value("Item", item_code, "default_warehouse")
 	wip_warehouse = _first_valid_warehouse(
 		[
 			_get_doc_field_value(plant_floor_doc, settings.get("plant_floor_wip_warehouse_field")),

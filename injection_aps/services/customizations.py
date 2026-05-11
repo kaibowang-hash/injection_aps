@@ -19,6 +19,8 @@ APS_TRANSACTION_DOCTYPES = (
 	"APS Work Order Proposal Batch",
 	"APS Shift Schedule Proposal Batch",
 	"APS Change Request",
+	"APS Downtime Window",
+	"APS Segment Adjustment",
 	"APS Release Batch",
 	"APS Exception Log",
 )
@@ -33,7 +35,7 @@ def ensure_default_settings():
 	settings = frappe.get_single("APS Settings")
 	settings.default_company = settings.default_company or frappe.defaults.get_user_default("Company")
 	settings.planning_horizon_days = settings.planning_horizon_days or 14
-	settings.release_horizon_days = settings.release_horizon_days or 3
+	settings.release_horizon_days = settings.release_horizon_days or 1
 	settings.freeze_days = settings.freeze_days or 2
 	settings.minimum_parallel_split_qty = settings.minimum_parallel_split_qty or 500
 	settings.minimum_run_window_hours = settings.minimum_run_window_hours or 2

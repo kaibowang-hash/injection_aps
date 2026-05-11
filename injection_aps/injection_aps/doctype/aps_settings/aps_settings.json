@@ -50,7 +50,7 @@
    "label": "Planning Horizon Days"
   },
   {
-   "default": "3",
+   "default": "1",
    "fieldname": "release_horizon_days",
    "fieldtype": "Int",
    "label": "Release Horizon Days"

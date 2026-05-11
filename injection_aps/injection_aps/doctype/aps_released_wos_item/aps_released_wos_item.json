@@ -1,0 +1,64 @@
+{
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "work_order_scheduling",
+  "posting_date",
+  "shift_type",
+  "total_qty",
+  "scheduling_item_count",
+  "status"
+ ],
+ "fields": [
+  {
+   "fieldname": "work_order_scheduling",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Work Order Scheduling",
+   "options": "Work Order Scheduling",
+   "read_only": 1,
+   "reqd": 1
+  },
+  {
+   "fieldname": "posting_date",
+   "fieldtype": "Date",
+   "in_list_view": 1,
+   "label": "Posting Date",
+   "read_only": 1
+  },
+  {
+   "fieldname": "shift_type",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Shift Type",
+   "read_only": 1
+  },
+  {
+   "fieldname": "total_qty",
+   "fieldtype": "Float",
+   "in_list_view": 1,
+   "label": "Total Qty",
+   "read_only": 1
+  },
+  {
+   "fieldname": "scheduling_item_count",
+   "fieldtype": "Int",
+   "label": "Scheduling Item Count",
+   "read_only": 1
+  },
+  {
+   "fieldname": "status",
+   "fieldtype": "Data",
+   "label": "Status",
+   "read_only": 1
+  }
+ ],
+ "istable": 1,
+ "links": [],
+ "module": "Injection APS",
+ "name": "APS Released WOS Item",
+ "permissions": [],
+ "sort_field": "idx",
+ "sort_order": "ASC"
+}

@@ -6,7 +6,7 @@ from frappe.model.document import Document
 class APSSettings(Document):
 	def validate(self):
 		self.planning_horizon_days = self.planning_horizon_days or 14
-		self.release_horizon_days = self.release_horizon_days or 3
+		self.release_horizon_days = self.release_horizon_days or 1
 		self.freeze_days = self.freeze_days or 2
 		self.default_setup_minutes = self.default_setup_minutes or 30
 		self.default_first_article_minutes = self.default_first_article_minutes or 45

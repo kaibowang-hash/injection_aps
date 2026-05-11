@@ -103,6 +103,71 @@ def _attach_review_counts(rows, child_doctype):
 	return rows
 
 
+def _format_released_wos_label(row):
+	parts = [row.get("work_order_scheduling")]
+	meta = " ".join(str(value) for value in [row.get("posting_date"), row.get("shift_type")] if value)
+	if meta:
+		parts.append(f"({meta})")
+	return " ".join(part for part in parts if part)
+
+
+def _attach_release_wos_details(release_batches):
+	release_batches = release_batches or []
+	names = [row.get("name") for row in release_batches if row.get("name")]
+	child_rows_by_parent = defaultdict(list)
+	if names and frappe.db.exists("DocType", "APS Released WOS Item"):
+		child_rows = frappe.get_all(
+			"APS Released WOS Item",
+			filters={"parent": ("in", names)},
+			fields=[
+				"parent",
+				"work_order_scheduling",
+				"posting_date",
+				"shift_type",
+				"total_qty",
+				"scheduling_item_count",
+				"status",
+			],
+			order_by="idx asc",
+		)
+		for child in child_rows:
+			child_rows_by_parent[child.parent].append(child)
+
+	for row in release_batches:
+		wos_rows = [dict(child) for child in child_rows_by_parent.get(row.get("name"), [])]
+		if not wos_rows and row.get("work_order_scheduling") and frappe.db.exists("Work Order Scheduling", row.work_order_scheduling):
+			wos = frappe.db.get_value(
+				"Work Order Scheduling",
+				row.work_order_scheduling,
+				["name", "posting_date", "shift_type", "total_qty", "status"],
+				as_dict=True,
+			)
+			if wos:
+				wos_rows = [
+					{
+						"work_order_scheduling": wos.name,
+						"posting_date": wos.posting_date,
+						"shift_type": wos.shift_type,
+						"total_qty": wos.total_qty,
+						"scheduling_item_count": frappe.db.count("Scheduling Item", {"parent": wos.name})
+						if frappe.db.exists("DocType", "Scheduling Item")
+						else 0,
+						"status": wos.status,
+					}
+				]
+		for wos_row in wos_rows:
+			wos_row["route"] = (
+				f"Form/Work Order Scheduling/{wos_row.get('work_order_scheduling')}"
+				if wos_row.get("work_order_scheduling")
+				else ""
+			)
+			wos_row["display_name"] = _format_released_wos_label(wos_row)
+		row["work_order_schedulings"] = wos_rows
+		row["work_order_scheduling_count"] = len(wos_rows)
+		row["work_order_scheduling_list"] = ", ".join(wos_row.get("display_name") or "" for wos_row in wos_rows)
+	return release_batches
+
+
 @frappe.whitelist()
 def export_table_xlsx(payload_json):
 	_require_read_access()
@@ -297,12 +362,26 @@ def reject_work_order_proposals(batch_name, reason):
 
 
 @frappe.whitelist()
-def generate_shift_schedule_proposals(run_name=None, work_order_proposal_batch=None, release_horizon_days=None):
+def preview_shift_schedule_release(run_name=None, work_order_proposal_batch=None, release_horizon_days=None, release_from_date=None, shift_type=None):
+	_require_release_access()
+	return planning.preview_shift_schedule_release(
+		run_name=run_name,
+		work_order_proposal_batch=work_order_proposal_batch,
+		release_horizon_days=release_horizon_days,
+		release_from_date=release_from_date,
+		shift_type=shift_type,
+	)
+
+
+@frappe.whitelist()
+def generate_shift_schedule_proposals(run_name=None, work_order_proposal_batch=None, release_horizon_days=None, release_from_date=None, shift_type=None):
 	_require_release_access()
 	return planning.generate_shift_schedule_proposals(
 		run_name=run_name,
 		work_order_proposal_batch=work_order_proposal_batch,
 		release_horizon_days=release_horizon_days,
+		release_from_date=release_from_date,
+		shift_type=shift_type,
 	)
 
 
@@ -435,6 +514,64 @@ def apply_manual_schedule_adjustment(segment_name, target_workstation=None, befo
 		allow_locked=frappe.utils.cint(allow_locked),
 		allow_risk_override=frappe.utils.cint(allow_risk_override),
 	)
+
+
+@frappe.whitelist()
+def preview_segment_split(segment_name, split_time=None, split_qty=None, downtime_window=None, split_reason=None):
+	_require_plan_access()
+	return planning.preview_segment_split(
+		segment_name=segment_name,
+		split_time=split_time,
+		split_qty=frappe.utils.flt(split_qty) if split_qty not in (None, "") else None,
+		downtime_window=downtime_window,
+		split_reason=split_reason,
+	)
+
+
+@frappe.whitelist()
+def apply_segment_split(segment_name, split_time=None, split_qty=None, downtime_window=None, split_reason=None):
+	_require_release_access()
+	return planning.apply_segment_split(
+		segment_name=segment_name,
+		split_time=split_time,
+		split_qty=frappe.utils.flt(split_qty) if split_qty not in (None, "") else None,
+		downtime_window=downtime_window,
+		split_reason=split_reason,
+	)
+
+
+@frappe.whitelist()
+def create_or_update_downtime_window(name=None, company=None, scope=None, plant_floor=None, workstation=None, start_time=None, end_time=None, reason=None, status="Active", planning_run=None, notes=None):
+	_require_release_access()
+	return planning.create_or_update_downtime_window(
+		name=name,
+		company=company,
+		scope=scope,
+		plant_floor=plant_floor,
+		workstation=workstation,
+		start_time=start_time,
+		end_time=end_time,
+		reason=reason,
+		status=status,
+		planning_run=planning_run,
+		notes=notes,
+	)
+
+
+@frappe.whitelist()
+def preview_schedule_impact(run_name=None, downtime_window=None, segment_name=None):
+	_require_plan_access()
+	return planning.preview_schedule_impact(
+		run_name=run_name,
+		downtime_window=downtime_window,
+		segment_name=segment_name,
+	)
+
+
+@frappe.whitelist()
+def apply_schedule_impact(run_name, downtime_window=None):
+	_require_release_access()
+	return planning.apply_schedule_impact(run_name=run_name, downtime_window=downtime_window)
 
 
 @frappe.whitelist()
@@ -745,6 +882,13 @@ def get_schedule_gantt_data(run_name):
 	run_doc = frappe.get_doc("APS Planning Run", run_name)
 	selected_plant_floors = planning._get_run_selected_plant_floors(run_doc)
 	lanes = planning._get_machine_capability_rows(selected_plant_floors)
+	downtime_windows = planning._get_active_downtime_windows(
+		company=run_doc.company,
+		plant_floors=selected_plant_floors,
+		horizon_start=run_doc.horizon_start,
+		horizon_end=run_doc.horizon_end,
+		run_name=run_name,
+	)
 	results = frappe.get_all(
 		"APS Schedule Result",
 		filters={"planning_run": run_name},
@@ -780,6 +924,7 @@ def get_schedule_gantt_data(run_name):
 			"tasks": [],
 			"rows": [],
 			"lanes": lanes,
+			"downtime_windows": downtime_windows,
 			"selected_plant_floors": selected_plant_floors,
 			"blocked_results": [],
 			"run": planning.get_next_actions_for_context("APS Planning Run", run_name),
@@ -816,6 +961,10 @@ def get_schedule_gantt_data(run_name):
 			"risk_flags",
 			"segment_note",
 			"manual_change_note",
+			"original_segment",
+			"split_group",
+			"split_index",
+			"split_reason",
 			"linked_work_order",
 			"linked_work_order_scheduling",
 			"linked_scheduling_item",
@@ -901,6 +1050,10 @@ def get_schedule_gantt_data(run_name):
 					"result_note": parent.notes,
 					"segment_note": row.segment_note,
 					"manual_change_note": row.manual_change_note,
+					"original_segment": row.original_segment,
+					"split_group": row.split_group,
+					"split_index": row.split_index,
+					"split_reason": row.split_reason,
 					"risk_flags": row.risk_flags,
 					"risk_badges": [risk_row.exception_type for risk_row in risk_rows],
 					"actual_status": row.actual_status or parent.actual_status,
@@ -955,6 +1108,7 @@ def get_schedule_gantt_data(run_name):
 		"tasks": tasks,
 		"rows": segments,
 		"lanes": lanes,
+		"downtime_windows": downtime_windows,
 		"selected_plant_floors": selected_plant_floors,
 		"blocked_results": blocked_results,
 		"run": planning.get_next_actions_for_context("APS Planning Run", run_name),
@@ -1014,6 +1168,7 @@ def get_release_center_data(run_name=None):
 		order_by="modified desc",
 		limit=50,
 	)
+	_attach_release_wos_details(release_batches)
 	exception_filters = {"status": "Open"}
 	if run_name:
 		exception_filters["planning_run"] = run_name

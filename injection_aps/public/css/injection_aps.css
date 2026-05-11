@@ -775,9 +775,25 @@
 	pointer-events: none;
 }
 
+.ia-gantt-downtime {
+	position: absolute;
+	inset-block: 0;
+	z-index: 1;
+	background: repeating-linear-gradient(
+		135deg,
+		rgba(148, 163, 184, 0.26) 0,
+		rgba(148, 163, 184, 0.26) 6px,
+		rgba(226, 232, 240, 0.4) 6px,
+		rgba(226, 232, 240, 0.4) 12px
+	);
+	border-inline: 1px solid rgba(100, 116, 139, 0.4);
+	pointer-events: none;
+}
+
 .ia-gantt-bar {
 	position: absolute;
 	top: 4px;
+	z-index: 2;
 	min-height: 40px;
 	border-radius: 8px;
 	padding: 4px 6px;
@@ -794,6 +810,67 @@
 	cursor: move;
 	user-select: none;
 	touch-action: none;
+}
+
+.ia-gantt-split-handle {
+	all: unset;
+	box-sizing: border-box;
+	position: absolute;
+	z-index: 18;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 22px;
+	height: 22px;
+	min-width: 22px;
+	max-width: 22px;
+	min-height: 22px;
+	max-height: 22px;
+	padding: 0;
+	border: 1px solid #e11d48;
+	border-radius: 8px;
+	background: #fff;
+	color: #be123c;
+	box-shadow: 0 4px 12px rgba(15, 23, 42, 0.22), 0 0 0 2px rgba(255, 255, 255, 0.9);
+	cursor: crosshair;
+	opacity: 0;
+	pointer-events: none;
+	transform: none;
+	transition: opacity 0.12s ease, background 0.12s ease, border-color 0.12s ease, color 0.12s ease;
+	overflow: hidden;
+	appearance: none;
+	-webkit-appearance: none;
+}
+
+.ia-gantt-split-handle.visible,
+.ia-gantt-split-handle:focus {
+	opacity: 1;
+	pointer-events: auto;
+}
+
+.ia-gantt-split-handle:hover {
+	background: #fff1f2;
+	border-color: #be123c;
+	color: #9f1239;
+}
+
+.ia-gantt-split-handle.disabled {
+	border-color: rgba(100, 116, 139, 0.32);
+	background: rgba(248, 250, 252, 0.92);
+	color: #64748b;
+	cursor: not-allowed;
+}
+
+.ia-gantt-split-handle.disabled:hover {
+	background: #f8fafc;
+	border-color: rgba(100, 116, 139, 0.42);
+	color: #475569;
+}
+
+.ia-gantt-split-handle .ia-aps-icon,
+.ia-gantt-split-handle .es-icon {
+	width: 14px;
+	height: 14px;
 }
 
 .ia-gantt-resize-handle {
@@ -815,6 +892,94 @@
 
 .ia-gantt-bar.origin-dim {
 	opacity: 0.35;
+}
+
+.ia-gantt-frame.ia-gantt-split-mode .ia-gantt-bar {
+	cursor: crosshair;
+}
+
+.ia-gantt-bar.split-target {
+	z-index: 12;
+	cursor: crosshair;
+	box-shadow: 0 0 0 2px #f43f5e, 0 8px 20px rgba(244, 63, 94, 0.22);
+}
+
+.ia-gantt-bar.split-target .ia-gantt-split-handle {
+	display: none;
+}
+
+.ia-gantt-bar.split-target::before {
+	content: "";
+	position: absolute;
+	inset: 0;
+	background: repeating-linear-gradient(
+		90deg,
+		rgba(255, 255, 255, 0) 0,
+		rgba(255, 255, 255, 0) 9px,
+		rgba(255, 255, 255, 0.28) 9px,
+		rgba(255, 255, 255, 0.28) 11px
+	);
+	pointer-events: none;
+}
+
+.ia-gantt-cut-line {
+	position: absolute;
+	top: -5px;
+	bottom: -5px;
+	width: 0;
+	border-left: 2px solid #e11d48;
+	transform: translateX(-1px);
+	pointer-events: none;
+	z-index: 15;
+}
+
+.ia-gantt-cut-line::before,
+.ia-gantt-cut-line::after {
+	content: "";
+	position: absolute;
+	left: -5px;
+	width: 10px;
+	height: 2px;
+	border-radius: 999px;
+	background: #e11d48;
+	box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.8);
+}
+
+.ia-gantt-cut-line::before {
+	top: 7px;
+	transform: rotate(35deg);
+}
+
+.ia-gantt-cut-line::after {
+	bottom: 7px;
+	transform: rotate(-35deg);
+}
+
+.ia-gantt-cut-tooltip {
+	position: absolute;
+	top: 50%;
+	z-index: 16;
+	display: inline-flex;
+	flex-direction: column;
+	gap: 1px;
+	max-width: 150px;
+	padding: 3px 6px;
+	border-radius: 7px;
+	background: rgba(15, 23, 42, 0.94);
+	color: #fff;
+	font-size: 9px;
+	font-weight: 700;
+	line-height: 1.15;
+	transform: translate(-50%, -50%);
+	pointer-events: none;
+	box-shadow: 0 8px 22px rgba(15, 23, 42, 0.25);
+}
+
+.ia-gantt-cut-tooltip span {
+	display: block;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
 }
 
 .ia-gantt-ghost {
@@ -1302,6 +1467,18 @@
 
 .ia-context-menu-item:hover {
 	background: #f8fbff;
+}
+
+.ia-context-menu-item.disabled,
+.ia-context-menu-item:disabled {
+	color: #94a3b8;
+	cursor: not-allowed;
+	opacity: 0.62;
+}
+
+.ia-context-menu-item.disabled:hover,
+.ia-context-menu-item:disabled:hover {
+	background: transparent;
 }
 
 .ia-context-menu-icon {
