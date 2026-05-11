@@ -18,6 +18,7 @@ class InjectionAPSReleaseCenter {
 		this.wrapper = wrapper;
 		this.wrapper.classList.add("ia-app-page");
 		this.lastImpact = null;
+		this.releaseDrawerState = null;
 		this.page = frappe.ui.make_app_page({
 			parent: wrapper,
 			title: __("Execution"),
@@ -155,7 +156,7 @@ class InjectionAPSReleaseCenter {
 			injection_aps.ui.render_actions(
 				this.actionHost,
 				(injection_aps.ui.get_value(data, "run_context.actions", []) || []).filter((row) =>
-					["generate_work_order_proposals", "generate_shift_schedule_proposals", "open_gantt"].includes(row.action_key)
+					["generate_work_order_proposals", "open_gantt"].includes(row.action_key)
 				),
 				async (action) => {
 					const response = await injection_aps.ui.run_action(action);
@@ -163,6 +164,7 @@ class InjectionAPSReleaseCenter {
 					await this.refresh();
 				}
 			);
+			this.renderWOSReleaseAction(data.run_context || null);
 
 			const executionHealth = data.execution_health || {};
 			const exceptions = data.exceptions || [];
@@ -185,6 +187,233 @@ class InjectionAPSReleaseCenter {
 			console.error(error);
 			injection_aps.ui.set_feedback(this.feedback, __("Failed to load execution center."), "error");
 		}
+	}
+
+	renderWOSReleaseAction(runContext) {
+		const actions = (runContext && runContext.actions) || [];
+		const action = actions.find((row) => row.action_key === "generate_shift_schedule_proposals");
+		if (!action || !Number(action.enabled || 0) || !injection_aps.ui.can_run_action(action)) {
+			return;
+		}
+		let strip = this.actionHost.querySelector(".ia-action-strip");
+		if (!strip) {
+			this.actionHost.innerHTML = `<div class="ia-action-strip"></div>`;
+			strip = this.actionHost.querySelector(".ia-action-strip");
+		}
+		const button = document.createElement("button");
+		button.type = "button";
+		button.className = `btn btn-xs ${strip.children.length ? "btn-default" : "btn-primary"} ia-action-btn`;
+		button.textContent = __("Release WOS");
+		button.title = __("Preview and generate day/night WOS proposals by date and shift.");
+		button.addEventListener("click", () => this.openWOSReleaseDrawer());
+		strip.appendChild(button);
+	}
+
+	getDefaultWOSReleaseDate() {
+		const today = frappe.datetime && frappe.datetime.get_today ? frappe.datetime.get_today() : new Date().toISOString().slice(0, 10);
+		const dates = [];
+		(this.data && this.data.release_batches ? this.data.release_batches : []).forEach((batch) => {
+			(batch.work_order_schedulings || []).forEach((row) => {
+				if (row.posting_date) {
+					dates.push(String(row.posting_date));
+				}
+			});
+		});
+		if (!dates.length) {
+			return today;
+		}
+		const uniqueDates = Array.from(new Set(dates)).sort();
+		return uniqueDates.find((dateValue) => dateValue >= today) || uniqueDates[0];
+	}
+
+	openWOSReleaseDrawer() {
+		const runName = this.getSelectedRun();
+		if (!runName) {
+			return;
+		}
+		this.releaseDrawerState = null;
+		const defaultDate = this.getDefaultWOSReleaseDate();
+		const html = `
+			<div class="ia-confirm-summary">
+				<div class="ia-panel">
+					<div class="ia-panel-head">
+						<h4>${__("Release Scope")}</h4>
+					</div>
+					<div class="row">
+						<div class="col-sm-6">
+							<label class="control-label">${__("Release Date")}</label>
+							<input type="date" class="form-control input-sm" data-wos-release-date value="${injection_aps.ui.escape(defaultDate)}">
+						</div>
+						<div class="col-sm-6">
+							<label class="control-label">${__("Shift Type")}</label>
+							<select class="form-control input-sm" data-wos-shift-type>
+								<option value="All">${__("Both Shifts")}</option>
+								<option value="白班">${__("白班")}</option>
+								<option value="晚班">${__("晚班")}</option>
+							</select>
+						</div>
+					</div>
+					<div class="ia-toolbar" style="margin-top: 10px;">
+						<button type="button" class="btn btn-sm btn-default" data-preview-wos-release>${__("Preview")}</button>
+						<button type="button" class="btn btn-sm btn-primary" data-generate-wos-release>${__("Generate Proposal Batch")}</button>
+					</div>
+				</div>
+				<div class="ia-feedback" data-wos-release-feedback></div>
+				<div class="ia-card-grid" data-wos-release-summary></div>
+				<div data-wos-release-warning></div>
+				<div data-wos-release-table></div>
+			</div>
+		`;
+		injection_aps.ui.open_drawer(__("Release WOS"), runName, html);
+		const drawer = injection_aps.ui.ensure_drawer();
+		drawer.querySelector("[data-preview-wos-release]").addEventListener("click", () => this.previewWOSRelease(drawer));
+		drawer.querySelector("[data-generate-wos-release]").addEventListener("click", () => this.generateWOSRelease(drawer));
+		this.previewWOSRelease(drawer);
+	}
+
+	getWOSReleaseDrawerValues(drawer) {
+		return {
+			run_name: this.getSelectedRun(),
+			release_from_date: drawer.querySelector("[data-wos-release-date]").value,
+			release_horizon_days: 0,
+			shift_type: drawer.querySelector("[data-wos-shift-type]").value || "All",
+		};
+	}
+
+	async previewWOSRelease(drawer) {
+		const values = this.getWOSReleaseDrawerValues(drawer);
+		const feedback = drawer.querySelector("[data-wos-release-feedback]");
+		if (!values.run_name || !values.release_from_date) {
+			injection_aps.ui.set_feedback(feedback, __("Select a release date first."), "warning");
+			return null;
+		}
+		const preview = await injection_aps.ui.xcall(
+			{
+				message: __("Previewing WOS release..."),
+				success_message: __("WOS release preview is ready."),
+				busy_key: `wos-release-preview:${values.run_name}:${values.release_from_date}:${values.shift_type}`,
+				feedback_target: feedback,
+				success_feedback: __("WOS release preview is ready."),
+			},
+			"injection_aps.api.app.preview_shift_schedule_release",
+			values
+		);
+		if (!preview) {
+			return null;
+		}
+		this.releaseDrawerState = { values, preview };
+		this.renderWOSReleasePreview(drawer, preview);
+		return preview;
+	}
+
+	renderWOSReleasePreview(drawer, preview) {
+		const summaryTarget = drawer.querySelector("[data-wos-release-summary]");
+		const warningTarget = drawer.querySelector("[data-wos-release-warning]");
+		const tableTarget = drawer.querySelector("[data-wos-release-table]");
+		const actionCounts = preview.action_counts || {};
+		injection_aps.ui.render_cards(summaryTarget, [
+			{ label: __("Rows"), value: preview.proposal_count || 0 },
+			{ label: __("New"), value: actionCounts.New || 0 },
+			{ label: __("Update"), value: (actionCounts["Update Existing"] || 0) + (actionCounts["Move Existing"] || 0) },
+			{ label: __("Cancel"), value: actionCounts["Cancel Existing"] || 0 },
+			{ label: __("Qty"), value: injection_aps.ui.format_number(preview.total_planned_qty || 0) },
+			{ label: __("Shift Type"), value: preview.shift_type || "All" },
+		]);
+		const pending = preview.pending_batches || [];
+		warningTarget.innerHTML = pending.length
+			? `<div class="ia-alert warning">${__("There are existing un-applied proposal batches for this date/shift.")} ${pending
+					.map((row) => injection_aps.ui.doc_link("APS Shift Schedule Proposal Batch", row.name, `${row.name} (${row.matching_count})`))
+					.join(" ")}</div>`
+			: "";
+		injection_aps.ui.render_table(
+			tableTarget,
+			[
+				{ label: __("Action"), fieldname: "action" },
+				{ label: __("WOS Date"), fieldname: "posting_date" },
+				{ label: __("Shift Type"), fieldname: "shift_type" },
+				{ label: __("Work Order"), fieldname: "work_order" },
+				{ label: __("Item"), fieldname: "item_code" },
+				{ label: __("Workstation"), fieldname: "workstation" },
+				{ label: __("Qty"), fieldname: "planned_qty", fieldtype: "Float" },
+				{ label: __("Existing WOS"), fieldname: "existing_scheduling" },
+			],
+			preview.preview_rows || [],
+			(column, value) => {
+				if (column.fieldname === "action") {
+					const tone = value === "New" ? "blue" : value === "Cancel Existing" ? "red" : value === "Keep Existing" ? "green" : "orange";
+					return injection_aps.ui.pill(injection_aps.ui.translate(value || ""), tone);
+				}
+				if (column.fieldname === "work_order" && value) {
+					return injection_aps.ui.doc_link("Work Order", value);
+				}
+				if (column.fieldname === "existing_scheduling" && value) {
+					return injection_aps.ui.doc_link("Work Order Scheduling", value);
+				}
+				if (column.fieldname === "planned_qty") {
+					return injection_aps.ui.format_number(value || 0);
+				}
+				return injection_aps.ui.escape(value == null ? "" : String(value));
+			},
+			{
+				show_count: true,
+				empty_message: __("No WOS proposal rows are needed for this date and shift."),
+			}
+		);
+		if (preview.truncated) {
+			tableTarget.insertAdjacentHTML("beforeend", `<div class="ia-muted" style="margin-top: 6px;">${__("Preview is truncated. Open the generated proposal batch to review all rows.")}</div>`);
+		}
+	}
+
+	async generateWOSRelease(drawer) {
+		const values = this.getWOSReleaseDrawerValues(drawer);
+		const current = this.releaseDrawerState;
+		const preview =
+			current &&
+			current.values &&
+			current.values.release_from_date === values.release_from_date &&
+			current.values.shift_type === values.shift_type
+				? current.preview
+				: await this.previewWOSRelease(drawer);
+		if (!preview) {
+			return;
+		}
+		if (!Number(preview.proposal_count || 0)) {
+			frappe.show_alert({ message: __("No WOS proposal rows are needed for this date and shift."), indicator: "orange" });
+			return;
+		}
+		const confirmed = await injection_aps.ui.confirm_action(
+			{ action_key: "generate_shift_schedule_proposals", confirm_required: 1 },
+			{
+				title: __("Confirm Generate WOS Proposal"),
+				summary_lines: [
+					__("APS Run: {0}").replace("{0}", values.run_name),
+					__("Date: {0}").replace("{0}", values.release_from_date),
+					__("Shift Type: {0}").replace("{0}", preview.shift_type || "All"),
+					__("Rows: {0}").replace("{0}", String(preview.proposal_count || 0)),
+					__("The proposal batch will still require manual review before formal WOS apply."),
+				],
+			}
+		);
+		if (!confirmed) {
+			return;
+		}
+		const response = await injection_aps.ui.xcall(
+			{
+				message: __("Generating WOS proposal batch..."),
+				success_message: __("WOS proposal batch generated."),
+				busy_key: `wos-release-generate:${values.run_name}:${values.release_from_date}:${values.shift_type}`,
+				feedback_target: drawer.querySelector("[data-wos-release-feedback]"),
+				success_feedback: __("WOS proposal batch generated."),
+			},
+			"injection_aps.api.app.generate_shift_schedule_proposals",
+			values
+		);
+		if (!response) {
+			return;
+		}
+		injection_aps.ui.close_drawer();
+		await this.refresh();
+		frappe.set_route("Form", "APS Shift Schedule Proposal Batch", response.shift_schedule_proposal_batch);
 	}
 
 	renderWorkOrderProposalTable(rows) {
@@ -453,7 +682,7 @@ class InjectionAPSReleaseCenter {
 				{ label: __("From", null, "Injection APS"), fieldname: "release_from_date" },
 				{ label: __("To", null, "Injection APS"), fieldname: "release_to_date" },
 				{ label: __("Work Orders", null, "Injection APS"), fieldname: "generated_work_orders" },
-				{ label: __("Scheduling", null, "Injection APS"), fieldname: "work_order_scheduling" },
+				{ label: __("Released WOS", null, "Injection APS"), fieldname: "work_order_schedulings", export_fieldtype: "Data" },
 			],
 			rows,
 			(column, value) => {
@@ -463,8 +692,8 @@ class InjectionAPSReleaseCenter {
 				if (column.fieldname === "status") {
 					return injection_aps.ui.pill(injection_aps.ui.translate(value), value === "Released" ? "green" : "orange");
 				}
-				if (column.fieldname === "work_order_scheduling" && value) {
-					return injection_aps.ui.doc_link("Work Order Scheduling", value);
+				if (column.fieldname === "work_order_schedulings") {
+					return this.renderReleasedWOSList(value || []);
 				}
 				if (["release_from_date", "release_to_date"].includes(column.fieldname)) {
 					return injection_aps.ui.format_date(value);
@@ -477,8 +706,42 @@ class InjectionAPSReleaseCenter {
 				export_sheet_name: __("Apply Logs"),
 				export_file_name: "aps_release_batches",
 				export_subtitle: __("Formally applied work order and scheduling logs."),
+				export_formatter: (column, value, row) => {
+					if (column.fieldname === "work_order_schedulings") {
+						return (row.work_order_schedulings || []).map((wos) => wos.display_name || wos.work_order_scheduling || "").join(", ");
+					}
+					if (["release_from_date", "release_to_date"].includes(column.fieldname)) {
+						return injection_aps.ui.format_date(value);
+					}
+					return value;
+				},
 			}
 		);
+	}
+
+	renderReleasedWOSList(rows) {
+		const wosRows = (rows || []).filter((row) => row && row.work_order_scheduling);
+		if (!wosRows.length) {
+			return `<div class="ia-muted">-</div>`;
+		}
+		const previewCount = 5;
+		const renderLinks = (items) =>
+			items
+			.map((row) => {
+				const label = row.display_name || row.work_order_scheduling;
+				return injection_aps.ui.doc_link("Work Order Scheduling", row.work_order_scheduling, label);
+			})
+			.join("");
+		if (wosRows.length <= previewCount) {
+			return `<div class="ia-list-preview">${renderLinks(wosRows)}</div>`;
+		}
+		return `
+			<div class="ia-list-preview">${renderLinks(wosRows.slice(0, previewCount))}<span class="ia-chip">+${wosRows.length - previewCount}</span></div>
+			<details class="ia-list-preview">
+				<summary>${__("Expand All")} (${wosRows.length})</summary>
+				<div class="ia-list-preview">${renderLinks(wosRows.slice(previewCount))}</div>
+			</details>
+	`;
 	}
 
 	renderExceptionTable(rows) {

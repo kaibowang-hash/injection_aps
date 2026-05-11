@@ -1,0 +1,139 @@
+{
+ "actions": [],
+ "allow_rename": 1,
+ "autoname": "APS-DW-.#####",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "company",
+  "scope",
+  "plant_floor",
+  "workstation",
+  "start_time",
+  "end_time",
+  "reason",
+  "status",
+  "planning_run",
+  "notes"
+ ],
+ "fields": [
+  {
+   "fieldname": "company",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Company",
+   "options": "Company",
+   "reqd": 1,
+   "search_index": 1
+  },
+  {
+   "default": "Plant Floor",
+   "fieldname": "scope",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Scope",
+   "options": "\nCompany\nPlant Floor\nWorkstation",
+   "reqd": 1
+  },
+  {
+   "fieldname": "plant_floor",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Plant Floor",
+   "options": "Plant Floor",
+   "search_index": 1
+  },
+  {
+   "fieldname": "workstation",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Workstation",
+   "options": "Workstation",
+   "search_index": 1
+  },
+  {
+   "fieldname": "start_time",
+   "fieldtype": "Datetime",
+   "in_list_view": 1,
+   "label": "Start Time",
+   "reqd": 1,
+   "search_index": 1
+  },
+  {
+   "fieldname": "end_time",
+   "fieldtype": "Datetime",
+   "in_list_view": 1,
+   "label": "End Time",
+   "reqd": 1,
+   "search_index": 1
+  },
+  {
+   "fieldname": "reason",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Reason"
+  },
+  {
+   "default": "Active",
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Status",
+   "options": "\nDraft\nActive\nApplied\nCancelled\nExpired",
+   "reqd": 1,
+   "search_index": 1
+  },
+  {
+   "fieldname": "planning_run",
+   "fieldtype": "Link",
+   "label": "Planning Run",
+   "options": "APS Planning Run",
+   "search_index": 1
+  },
+  {
+   "fieldname": "notes",
+   "fieldtype": "Small Text",
+   "label": "Notes"
+  }
+ ],
+ "links": [],
+ "module": "Injection APS",
+ "name": "APS Downtime Window",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Manufacturing Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "PMC",
+   "share": 1
+  }
+ ],
+ "sort_field": "start_time",
+ "sort_order": "DESC",
+ "track_changes": 1
+}

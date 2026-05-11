@@ -22,6 +22,10 @@
   "schedule_explanation",
   "manual_change_note",
   "segment_note",
+  "original_segment",
+  "split_group",
+  "split_index",
+  "split_reason",
   "risk_flags",
   "segment_status",
   "linked_work_order",
@@ -171,6 +175,32 @@
    "fieldname": "segment_note",
    "fieldtype": "Small Text",
    "label": "Segment Note"
+  },
+  {
+   "fieldname": "original_segment",
+   "fieldtype": "Data",
+   "label": "Original Segment",
+   "read_only": 1,
+   "search_index": 1
+  },
+  {
+   "fieldname": "split_group",
+   "fieldtype": "Data",
+   "label": "Split Group",
+   "read_only": 1,
+   "search_index": 1
+  },
+  {
+   "fieldname": "split_index",
+   "fieldtype": "Int",
+   "label": "Split Index",
+   "read_only": 1
+  },
+  {
+   "fieldname": "split_reason",
+   "fieldtype": "Small Text",
+   "label": "Split Reason",
+   "read_only": 1
   },
   {
    "fieldname": "risk_flags",

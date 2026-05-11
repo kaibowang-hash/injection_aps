@@ -22,6 +22,7 @@ frappe.provide("injection_aps.ui");
 		run_trial: ["System Manager", "GMC", "PMC", "Manufacturing Manager"],
 		approve: ["System Manager", "GMC", "Manufacturing Manager"],
 		generate_work_order_proposals: ["System Manager", "GMC", "Manufacturing Manager"],
+		preview_shift_schedule_release: ["System Manager", "GMC", "Manufacturing Manager"],
 		generate_shift_schedule_proposals: ["System Manager", "GMC", "Manufacturing Manager"],
 		apply_work_order_proposals: ["System Manager", "GMC", "Manufacturing Manager"],
 		apply_shift_schedule_proposals: ["System Manager", "GMC", "Manufacturing Manager"],
@@ -29,6 +30,11 @@ frappe.provide("injection_aps.ui");
 		reject_shift_schedule_proposals: ["System Manager", "GMC", "Manufacturing Manager"],
 		preview_manual_schedule_adjustment: ["System Manager", "GMC", "PMC", "Manufacturing Manager"],
 		apply_manual_schedule_adjustment: ["System Manager", "GMC", "Manufacturing Manager"],
+		preview_segment_split: ["System Manager", "GMC", "PMC", "Manufacturing Manager", "Manufacturing User"],
+		apply_segment_split: ["System Manager", "GMC", "Manufacturing Manager"],
+		create_or_update_downtime_window: ["System Manager", "GMC", "Manufacturing Manager"],
+		preview_schedule_impact: ["System Manager", "GMC", "PMC", "Manufacturing Manager"],
+		apply_schedule_impact: ["System Manager", "GMC", "Manufacturing Manager"],
 		update_schedule_notes: ["System Manager", "GMC", "PMC", "Manufacturing Manager"],
 		sync_execution: ["System Manager", "GMC", "PMC", "Manufacturing Manager", "Manufacturing User"],
 		rebuild_exceptions: ["System Manager", "GMC", "PMC", "Manufacturing Manager"],
@@ -995,7 +1001,12 @@ frappe.provide("injection_aps.ui");
 		const body = menu.querySelector(".ia-context-menu-body");
 		body.innerHTML = rows
 			.map((row, index) => `
-				<button type="button" class="ia-context-menu-item" data-context-index="${index}">
+				<button
+					type="button"
+					class="ia-context-menu-item${row.disabled ? " disabled" : ""}"
+					data-context-index="${index}"
+					${row.disabled ? 'disabled aria-disabled="true"' : ""}
+				>
 					${row.icon ? `<span class="ia-context-menu-icon">${injection_aps.ui.icon(row.icon, "xs")}</span>` : ""}
 					<span>${injection_aps.ui.escape(row.label)}</span>
 				</button>
@@ -1005,8 +1016,11 @@ frappe.provide("injection_aps.ui");
 			node.addEventListener("click", async (event) => {
 				event.stopPropagation();
 				const item = rows[Number(node.dataset.contextIndex || 0)];
+				if (!item || item.disabled) {
+					return;
+				}
 				injection_aps.ui.close_context_menu();
-				if (item && item.handler) {
+				if (item.handler) {
 					await item.handler();
 				}
 			});

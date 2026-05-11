@@ -89,6 +89,7 @@ FULL_FLAGS = {
 	"email",
 	"share",
 }
+PERMISSION_FLAGS = FULL_FLAGS | {"submit", "cancel", "amend"}
 CONFIG_WRITE_FLAGS = {"read", "select", "write", "create", "delete", "report", "export", "print", "email", "share"}
 
 APS_PAGE_NAMES = (
@@ -170,6 +171,22 @@ APS_DOCTYPE_PERMISSIONS = {
 		"Purchase User": READ_FLAGS,
 		"Sales Manager": READ_FLAGS,
 		"Sales User": READ_FLAGS,
+		"Manufacturing Manager": FULL_FLAGS,
+		"Manufacturing User": READ_FLAGS,
+		"Stock Manager": READ_FLAGS,
+		"Stock User": READ_FLAGS,
+	},
+	"APS Downtime Window": {
+		ROLE_GMC: FULL_FLAGS,
+		ROLE_PMC: READ_FLAGS,
+		"Manufacturing Manager": FULL_FLAGS,
+		"Manufacturing User": READ_FLAGS,
+		"Stock Manager": READ_FLAGS,
+		"Stock User": READ_FLAGS,
+	},
+	"APS Segment Adjustment": {
+		ROLE_GMC: FULL_FLAGS,
+		ROLE_PMC: READ_FLAGS,
 		"Manufacturing Manager": FULL_FLAGS,
 		"Manufacturing User": READ_FLAGS,
 		"Stock Manager": READ_FLAGS,
@@ -361,7 +378,7 @@ def ensure_custom_docperm(
 		"if_owner": 0,
 	}
 	name = frappe.db.get_value("Custom DocPerm", filters)
-	values = {flag: 1 for flag in flags}
+	values = {flag: 1 if flag in flags else 0 for flag in PERMISSION_FLAGS}
 	if name:
 		docperm = frappe.get_doc("Custom DocPerm", name)
 		changed = False

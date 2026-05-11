@@ -1,0 +1,225 @@
+{
+ "actions": [],
+ "allow_rename": 1,
+ "autoname": "APS-ADJ-.#####",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "planning_run",
+  "company",
+  "plant_floor",
+  "net_requirement",
+  "result_reference",
+  "segment_reference",
+  "adjustment_type",
+  "status",
+  "item_code",
+  "customer",
+  "workstation",
+  "target_workstation",
+  "target_mould_reference",
+  "target_start_time",
+  "target_end_time",
+  "target_qty",
+  "split_group",
+  "split_index",
+  "split_reason",
+  "downtime_window",
+  "impact_summary",
+  "payload_json",
+  "notes"
+ ],
+ "fields": [
+  {
+   "fieldname": "planning_run",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Planning Run",
+   "options": "APS Planning Run",
+   "reqd": 1,
+   "search_index": 1
+  },
+  {
+   "fieldname": "company",
+   "fieldtype": "Link",
+   "label": "Company",
+   "options": "Company",
+   "reqd": 1,
+   "search_index": 1
+  },
+  {
+   "fieldname": "plant_floor",
+   "fieldtype": "Link",
+   "label": "Plant Floor",
+   "options": "Plant Floor",
+   "search_index": 1
+  },
+  {
+   "fieldname": "net_requirement",
+   "fieldtype": "Link",
+   "label": "Net Requirement",
+   "options": "APS Net Requirement",
+   "search_index": 1
+  },
+  {
+   "fieldname": "result_reference",
+   "fieldtype": "Link",
+   "label": "APS Result",
+   "options": "APS Schedule Result",
+   "search_index": 1
+  },
+  {
+   "fieldname": "segment_reference",
+   "fieldtype": "Data",
+   "label": "APS Segment",
+   "search_index": 1
+  },
+  {
+   "fieldname": "adjustment_type",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Adjustment Type",
+   "options": "\nSplit\nMove\nResize\nDowntime Impact",
+   "reqd": 1
+  },
+  {
+   "default": "Confirmed",
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Status",
+   "options": "\nDraft\nPreviewed\nConfirmed\nApplied\nCancelled",
+   "reqd": 1,
+   "search_index": 1
+  },
+  {
+   "fieldname": "item_code",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Item Code",
+   "options": "Item",
+   "search_index": 1
+  },
+  {
+   "fieldname": "customer",
+   "fieldtype": "Link",
+   "label": "Customer",
+   "options": "Customer"
+  },
+  {
+   "fieldname": "workstation",
+   "fieldtype": "Link",
+   "label": "Original Workstation",
+   "options": "Workstation"
+  },
+  {
+   "fieldname": "target_workstation",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Target Workstation",
+   "options": "Workstation"
+  },
+  {
+   "fieldname": "target_mould_reference",
+   "fieldtype": "Data",
+   "label": "Target Mould Reference"
+  },
+  {
+   "fieldname": "target_start_time",
+   "fieldtype": "Datetime",
+   "in_list_view": 1,
+   "label": "Target Start Time"
+  },
+  {
+   "fieldname": "target_end_time",
+   "fieldtype": "Datetime",
+   "in_list_view": 1,
+   "label": "Target End Time"
+  },
+  {
+   "fieldname": "target_qty",
+   "fieldtype": "Float",
+   "label": "Target Qty"
+  },
+  {
+   "fieldname": "split_group",
+   "fieldtype": "Data",
+   "label": "Split Group",
+   "search_index": 1
+  },
+  {
+   "fieldname": "split_index",
+   "fieldtype": "Int",
+   "label": "Split Index"
+  },
+  {
+   "fieldname": "split_reason",
+   "fieldtype": "Small Text",
+   "label": "Split Reason"
+  },
+  {
+   "fieldname": "downtime_window",
+   "fieldtype": "Link",
+   "label": "Downtime Window",
+   "options": "APS Downtime Window"
+  },
+  {
+   "fieldname": "impact_summary",
+   "fieldtype": "Small Text",
+   "label": "Impact Summary",
+   "read_only": 1
+  },
+  {
+   "fieldname": "payload_json",
+   "fieldtype": "Code",
+   "label": "Payload JSON",
+   "options": "JSON",
+   "read_only": 1
+  },
+  {
+   "fieldname": "notes",
+   "fieldtype": "Small Text",
+   "label": "Notes"
+  }
+ ],
+ "links": [],
+ "module": "Injection APS",
+ "name": "APS Segment Adjustment",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Manufacturing Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "PMC",
+   "share": 1
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "track_changes": 1
+}

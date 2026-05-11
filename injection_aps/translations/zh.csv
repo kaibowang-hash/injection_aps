@@ -1083,6 +1083,105 @@ Mapping JSON,映射 JSON
 Sheet,工作表
 Header Row No,表头行号
 Data Start Row No,数据起始行号
+Split Segment,剪切排程段
+Cut Segment,剪切排程段
+Split by Time / Qty,按时间 / 数量切分
+Split Mode,切分方式
+Split Time,切分时间
+First Segment Qty,第一段数量
+Split Part,切分段
+Downtime Window,停产窗口
+Add Downtime Window,添加停产窗口
+Preview Downtime Impact,预览停产影响
+Preview Impact,预览影响
+Schedule Impact Preview,排产影响预览
+Apply Impact,确认影响重排
+Affected Segments,受影响排程段
+Delivery Risks,交付风险
+Old Start,原开始时间
+New Start,新开始时间
+No downstream segment needs to move.,后续没有需要移动的排程段。
+Previewing schedule impact...,正在预览排产影响...
+Impact preview is ready.,排产影响预览已生成。
+Applying schedule impact...,正在应用影响重排...
+Schedule impact applied.,影响重排已应用。
+Impact applied. Refreshing Gantt...,影响已应用，正在刷新甘特图...
+Previewing segment split...,正在预览排程段切分...
+Split preview is ready.,排程段切分预览已生成。
+Split preview is ready, but this user cannot apply the split.,排程段切分预览已生成，但当前用户不能应用切分。
+Split Preview,切分预览
+Split Blocked,切分被阻止
+Apply this segment split?,确认应用此排程段切分？
+Applying segment split...,正在应用排程段切分...
+Segment split applied.,排程段切分已应用。
+Segment split applied. Refreshing Gantt...,排程段切分已应用，正在刷新甘特图...
+Create and Preview,创建并预览
+Creating downtime window...,正在创建停产窗口...
+Downtime window created.,停产窗口已创建。
+Downtime window saved.,停产窗口已保存。
+Downtime,停产
+This segment cannot be visually split.,当前排程段不能可视化切分。
+No segment is selected.,未选中排程段。
+You do not have permission to split segments.,你没有切分排程段的权限。
+No segment is linked to this bar.,这个条形没有关联排程段。
+Switch to Machine view to split segments.,请切换到机台视图后再切分排程段。
+This segment has no valid time range.,当前排程段没有有效的时间范围。
+Family co-product segments follow the primary segment and cannot be split directly.,副产排程段跟随主排程段，不能单独切分。
+Locked segments cannot be split.,已锁定的排程段不能切分。
+Released or completed segments cannot be split from Gantt.,已下发或已完成的排程段不能在甘特图中切分。
+Visual split cancelled.,已取消可视化切分。
+Visual cut mode: move over the segment and click where to cut. Press Esc to cancel.,可视化剪切模式：在排程段上移动鼠标并点击剪切位置。按 Esc 取消。
+Click to cut,点击剪切
+No split preview was generated.,没有生成切分预览。
+Previewing visual segment split...,正在预览可视化排程段切分...
+Visual split preview is ready.,可视化切分预览已生成。
+Cut segment at {0}?,确认在 {0} 剪开排程段？
+Applying visual segment split...,正在应用可视化排程段切分...
+Visual segment split applied.,可视化排程段切分已应用。
+Visual segment split applied. Refreshing Gantt...,可视化排程段切分已应用，正在刷新甘特图...
+Visual Cut,可视化剪切
+Release WOS,下发 WOS
+Release Scope,下发范围
+Release Date,下发日期
+Shift Type,班次
+Both Shifts,白夜班
+Generate Proposal Batch,生成建议批次
+Previewing WOS release...,正在预览 WOS 下发...
+WOS release preview is ready.,WOS 下发预览已生成。
+Rows,行数
+New,新增
+Update,更新
+Cancel,取消
+Qty,数量
+WOS Date,WOS 日期
+Existing WOS,已有 WOS
+Confirm Generate WOS Proposal,确认生成 WOS 建议
+APS Run: {0},APS 运算单：{0}
+Date: {0},日期：{0}
+Shift Type: {0},班次：{0}
+Rows: {0},行数：{0}
+The proposal batch will still require manual review before formal WOS apply.,建议批次仍需人工审核后才能正式应用到 WOS。
+Preview and generate day/night WOS proposals by date and shift.,按日期和班次预览并生成白/夜班 WOS 建议。
+Preview is truncated. Open the generated proposal batch to review all rows.,预览已截断。请打开生成的建议批次查看全部行。
+No WOS proposal rows are needed for this date and shift.,该日期和班次没有需要生成的 WOS 建议行。
+All Shifts,全部班次
+Generated from APS work order proposal batch {0} for {1} to {2} ({3}). Review against existing day/night shift scheduling before formal reconciliation.,由 APS 工单建议批次 {0} 生成，范围 {1} 至 {2}（{3}）。正式同步前请对照已有白/夜班 WOS 排产。
+WOS proposals for Work Order {0} would schedule {1}, exceeding Work Order qty {2}.,工单 {0} 的 WOS 建议排产数量将达到 {1}，超过工单数量 {2}。
+Downtime window does not apply to this segment lane.,停产窗口不适用于该排程段所在机台。
+Downtime window does not overlap this segment.,停产窗口未与该排程段重叠。
+Segment has no usable capacity rate for splitting.,该排程段没有可用于切分的产能速率。
+Provide split_time, split_qty, or downtime_window.,请提供切分时间、切分数量或停产窗口。
+Split point must be inside the segment time window.,切分点必须位于排程段时间范围内。
+Split quantity must be between 0 and the segment planned quantity.,切分数量必须大于 0 且小于排程段计划数量。
+Split would create an empty segment.,切分会产生空排程段。
+Split {0} into {1} + {2}.,已将 {0} 切分为 {1} + {2}。
+APS Downtime Window is not installed. Run migrate first.,APS 停产窗口尚未安装。请先执行 migrate。
+APS Downtime Window {0} was not found.,未找到 APS 停产窗口 {0}。
+Planning Run is required for schedule impact preview.,预览排产影响需要指定 APS 运算单。
+Schedule impact applied from downtime window {0}.,已根据停产窗口 {0} 应用排产影响。
+Moved by downtime impact preview.,已按停产影响预览移动。
+Downtime impact moves segment {0} past requested date.,停产影响会将排程段 {0} 推迟到需求日期之后。
+Review customer delivery and release revised WOS proposals.,请复核客户交付并下发修订后的 WOS 建议。
 Item Reference Column,物料引用列
 Customer Part No Column,客户料号列
 Description Column,描述列
@@ -1381,3 +1480,24 @@ Approved,已审批,APS Shift Schedule Proposal Batch
 Active,生效中,APS Color Transition Rule
 Blocked,已阻断,APS Color Transition Rule
 Run,运行,Injection APS Execution
+Release WOS,下发 WOS,Injection APS Execution
+Release Scope,下发范围,Injection APS Execution
+Release Date,下发日期,Injection APS Execution
+Shift Type,班次,Injection APS Execution
+Both Shifts,白夜班,Injection APS Execution
+Generate Proposal Batch,生成建议批次,Injection APS Execution
+Previewing WOS release...,正在预览 WOS 下发...,Injection APS Execution
+WOS release preview is ready.,WOS 下发预览已生成。,Injection APS Execution
+Rows,行数,Injection APS Execution
+New,新增,Injection APS Execution
+Update,更新,Injection APS Execution
+Cancel,取消,Injection APS Execution
+Qty,数量,Injection APS Execution
+WOS Date,WOS 日期,Injection APS Execution
+Existing WOS,已有 WOS,Injection APS Execution
+Generate WOS proposal batch for {0} {1}?,为 {0} {1} 生成 WOS 建议批次？,Injection APS Execution
+Generating WOS proposal batch...,正在生成 WOS 建议批次...,Injection APS Execution
+WOS proposal batch generated.,WOS 建议批次已生成。,Injection APS Execution
+No WOS proposal rows are available for this date/shift.,该日期/班次没有可下发的 WOS 建议行。,Injection APS Execution
+Select a release date first.,请先选择下发日期。,Injection APS Execution
+There are existing un-applied proposal batches for this date/shift.,该日期/班次已有未应用的建议批次。,Injection APS Execution

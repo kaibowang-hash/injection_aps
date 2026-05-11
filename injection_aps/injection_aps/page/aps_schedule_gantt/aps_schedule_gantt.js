@@ -21,6 +21,10 @@ class InjectionAPSScheduleGantt {
 		this.focusWindow = null;
 		this.timelineMeta = null;
 		this.dragState = null;
+		this.splitState = null;
+		this.splitHoverHandle = null;
+		this.splitHoverBar = null;
+		this.splitHoverHideTimer = null;
 		this.isChartFullscreen = false;
 		this.zoomFactor = 1;
 		this.segmentSearchTerm = "";
@@ -91,6 +95,18 @@ class InjectionAPSScheduleGantt {
 		return injection_aps.ui.can_run_action("apply_manual_schedule_adjustment");
 	}
 
+	canPreviewSegmentSplit() {
+		return injection_aps.ui.can_run_action("preview_segment_split") || injection_aps.ui.can_run_action("apply_segment_split");
+	}
+
+	canApplySegmentSplit() {
+		return injection_aps.ui.can_run_action("apply_segment_split");
+	}
+
+	canEditScheduleFlex() {
+		return this.canPreviewSegmentSplit() || injection_aps.ui.can_run_action("create_or_update_downtime_window");
+	}
+
 	exportRows(title, fileName, columns, rows, subtitle) {
 		injection_aps.ui.export_rows_to_excel({
 			title,
@@ -128,6 +144,485 @@ class InjectionAPSScheduleGantt {
 			message,
 			wide: true,
 		});
+	}
+
+	renderImpactHtml(preview) {
+		const updates = (preview && preview.proposed_updates) || [];
+		const blockers = (preview && preview.blockers) || [];
+		const risks = (preview && preview.delivery_risks) || [];
+		const rows = updates
+			.slice(0, 12)
+			.map(
+				(row) => `
+					<tr>
+						<td>${injection_aps.ui.escape(row.segment_name || "")}</td>
+						<td>${injection_aps.ui.escape(row.item_code || "")}</td>
+						<td>${injection_aps.ui.escape(row.workstation || "")}</td>
+						<td>${injection_aps.ui.escape(injection_aps.ui.format_datetime(row.old_start_time))}</td>
+						<td>${injection_aps.ui.escape(injection_aps.ui.format_datetime(row.new_start_time))}</td>
+						<td>${injection_aps.ui.escape(row.wos_action || "")}</td>
+						<td>${row.delivery_risk ? injection_aps.ui.pill(row.delivery_risk, "orange") : ""}</td>
+					</tr>
+				`
+			)
+			.join("");
+		const blockerRows = blockers
+			.map((row) => `<li>${injection_aps.ui.escape(row.segment_name || "")}: ${injection_aps.ui.escape(row.reason || "")}</li>`)
+			.join("");
+		return `
+			<div class="ia-confirm-summary">
+				<div class="ia-confirm-row"><strong>${__("Affected Segments")}: ${injection_aps.ui.format_number(updates.length)}</strong></div>
+				<div class="ia-confirm-row">${__("Delivery Risks")}: ${injection_aps.ui.format_number(risks.length)}</div>
+				${blockerRows ? `<div class="ia-confirm-row"><strong>${__("Blocked")}</strong><ul>${blockerRows}</ul></div>` : ""}
+				${
+					rows
+						? `<div class="ia-table-shell"><table class="ia-table"><thead><tr><th>${__("Segment")}</th><th>${__("Item")}</th><th>${__("Workstation")}</th><th>${__("Old Start")}</th><th>${__("New Start")}</th><th>${__("WOS")}</th><th>${__("Risk")}</th></tr></thead><tbody>${rows}</tbody></table></div>`
+						: `<div class="ia-muted">${__("No downstream segment needs to move.")}</div>`
+				}
+			</div>
+		`;
+	}
+
+	async showImpactPreview(options) {
+		const settings = Object.assign({}, options || {});
+		const runName = this.runField.get_value() || injection_aps.ui.get_value(this.data, "run.name", "");
+		const preview =
+			settings.preview ||
+			(await injection_aps.ui.xcall(
+				{
+					message: __("Previewing schedule impact..."),
+					busy_key: `impact-preview:${runName || settings.segmentName || ""}`,
+					feedback_target: this.feedback,
+					success_feedback: __("Impact preview is ready."),
+				},
+				"injection_aps.api.app.preview_schedule_impact",
+				{
+					run_name: runName,
+					downtime_window: settings.downtimeWindow || undefined,
+					segment_name: settings.segmentName || undefined,
+				}
+			));
+		if (!preview) {
+			return;
+		}
+		const canApply = preview.allowed && injection_aps.ui.can_run_action("apply_schedule_impact");
+		const dialog = new frappe.ui.Dialog({
+			title: __("Schedule Impact Preview"),
+			fields: [{ fieldtype: "HTML", fieldname: "impact_html" }],
+			primary_action_label: canApply ? __("Apply Impact") : __("Close"),
+			primary_action: async () => {
+				if (!canApply) {
+					dialog.hide();
+					return;
+				}
+				const response = await injection_aps.ui.xcall(
+					{
+						message: __("Applying schedule impact..."),
+						success_message: __("Schedule impact applied."),
+						busy_key: `impact-apply:${runName}`,
+						feedback_target: this.feedback,
+						success_feedback: __("Impact applied. Refreshing Gantt..."),
+					},
+					"injection_aps.api.app.apply_schedule_impact",
+					{
+						run_name: runName,
+						downtime_window: settings.downtimeWindow || preview.downtime_window || undefined,
+					}
+				);
+				dialog.hide();
+				if (response) {
+					await this.refresh();
+				}
+			},
+		});
+		dialog.get_field("impact_html").$wrapper.html(this.renderImpactHtml(preview));
+		dialog.show();
+	}
+
+	openSegmentSplitDialog(segmentName) {
+		if (!segmentName) {
+			return;
+		}
+		const dialog = new frappe.ui.Dialog({
+			title: __("Split Segment"),
+			fields: [
+				{ fieldtype: "Select", fieldname: "split_mode", label: __("Split Mode"), options: ["Time", "Qty", "Downtime Window"].join("\n"), default: "Time", reqd: 1 },
+				{ fieldtype: "Datetime", fieldname: "split_time", label: __("Split Time"), depends_on: "eval:doc.split_mode=='Time'" },
+				{ fieldtype: "Float", fieldname: "split_qty", label: __("First Segment Qty"), depends_on: "eval:doc.split_mode=='Qty'" },
+				{ fieldtype: "Link", fieldname: "downtime_window", label: __("Downtime Window"), options: "APS Downtime Window", depends_on: "eval:doc.split_mode=='Downtime Window'" },
+				{ fieldtype: "Data", fieldname: "split_reason", label: __("Reason") },
+				{ fieldtype: "HTML", fieldname: "preview_html" },
+			],
+			primary_action_label: __("Preview"),
+			primary_action: async () => {
+				const values = dialog.get_values();
+				if (!values) {
+					return;
+				}
+				const args = {
+					segment_name: segmentName,
+					split_reason: values.split_reason || undefined,
+				};
+				if (values.split_mode === "Time") {
+					args.split_time = values.split_time;
+				} else if (values.split_mode === "Qty") {
+					args.split_qty = values.split_qty;
+				} else {
+					args.downtime_window = values.downtime_window;
+				}
+				const preview = await injection_aps.ui.xcall(
+					{
+						message: __("Previewing segment split..."),
+						busy_key: `split-preview:${segmentName}`,
+						feedback_target: this.feedback,
+						success_feedback: __("Split preview is ready."),
+					},
+					"injection_aps.api.app.preview_segment_split",
+					args
+				);
+				if (!preview || !preview.allowed) {
+					this.showManualAdjustmentBlocked(preview, __("Split Blocked"));
+					return;
+				}
+				const rows = (preview.proposed_segments || [])
+					.map(
+						(row) => `<div class="ia-confirm-row">${__("Split Part")} ${row.split_index}: ${injection_aps.ui.escape(injection_aps.ui.format_datetime(row.start_time))} - ${injection_aps.ui.escape(injection_aps.ui.format_datetime(row.end_time))} / ${injection_aps.ui.escape(injection_aps.ui.format_number(row.planned_qty || 0))}</div>`
+					)
+					.join("");
+				dialog.get_field("preview_html").$wrapper.html(`<div class="ia-confirm-summary">${rows}</div>`);
+				if (!this.canApplySegmentSplit()) {
+					injection_aps.ui.set_feedback(this.feedback, __("Split preview is ready, but this user cannot apply the split."), "warning");
+					return;
+				}
+				frappe.confirm(__("Apply this segment split?"), async () => {
+					const response = await injection_aps.ui.xcall(
+						{
+							message: __("Applying segment split..."),
+							success_message: __("Segment split applied."),
+							busy_key: `split-apply:${segmentName}`,
+							feedback_target: this.feedback,
+							success_feedback: __("Segment split applied. Refreshing Gantt..."),
+						},
+						"injection_aps.api.app.apply_segment_split",
+						args
+					);
+					dialog.hide();
+					if (response) {
+						await this.refresh();
+					}
+				});
+			},
+		});
+		dialog.show();
+	}
+
+	canVisualSplitSegment(barNode) {
+		return !this.getVisualSplitBlockReason(barNode);
+	}
+
+	canShowSplitHoverHandle(barNode) {
+		if (!barNode || !this.canPreviewSegmentSplit()) {
+			return false;
+		}
+		if (!barNode.dataset.segmentName) {
+			return false;
+		}
+		if ((this.viewField.get_value() || "Machine") !== "Machine") {
+			return false;
+		}
+		const startMs = Number(barNode.dataset.startMs || 0);
+		const endMs = Number(barNode.dataset.endMs || 0);
+		return Boolean(startMs && endMs && endMs > startMs);
+	}
+
+	getVisualSplitBlockReason(barNode) {
+		if (!barNode) {
+			return __("No segment is selected.");
+		}
+		if (!this.canPreviewSegmentSplit()) {
+			return __("You do not have permission to split segments.");
+		}
+		if (!barNode.dataset.segmentName) {
+			return __("No segment is linked to this bar.");
+		}
+		if ((this.viewField.get_value() || "Machine") !== "Machine") {
+			return __("Switch to Machine view to split segments.");
+		}
+		const startMs = Number(barNode.dataset.startMs || 0);
+		const endMs = Number(barNode.dataset.endMs || 0);
+		if (!startMs || !endMs || endMs <= startMs) {
+			return __("This segment has no valid time range.");
+		}
+		if (barNode.dataset.segmentKind === "Family Co-Product") {
+			return __("Family co-product segments follow the primary segment and cannot be split directly.");
+		}
+		if (Number(barNode.dataset.isLocked || 0) === 1) {
+			return __("Locked segments cannot be split.");
+		}
+		if (["Applied", "Completed"].includes(barNode.dataset.segmentStatus || "")) {
+			return __("Released or completed segments cannot be split from Gantt.");
+		}
+		return "";
+	}
+
+	beginVisualSplit(barNode) {
+		const blockReason = this.getVisualSplitBlockReason(barNode);
+		if (blockReason) {
+			injection_aps.ui.set_feedback(this.feedback, blockReason, "warning");
+			return;
+		}
+		this.hideSplitHoverHandle();
+		this.cleanupInteraction();
+		this.cleanupVisualSplit();
+		const startMs = Number(barNode.dataset.startMs || 0);
+		const endMs = Number(barNode.dataset.endMs || 0);
+		const cutNode = document.createElement("span");
+		const tooltipNode = document.createElement("span");
+		cutNode.className = "ia-gantt-cut-line";
+		tooltipNode.className = "ia-gantt-cut-tooltip";
+		barNode.appendChild(cutNode);
+		barNode.appendChild(tooltipNode);
+		this.splitState = {
+			barNode,
+			cutNode,
+			tooltipNode,
+			segmentName: barNode.dataset.segmentName || "",
+			startMs,
+			endMs,
+			plannedQty: Number(barNode.dataset.plannedQty || 0),
+			cutMs: null,
+		};
+		this.ganttFrame.classList.add("ia-gantt-split-mode");
+		barNode.classList.add("split-target");
+		const onMove = (event) => this.updateVisualSplit(event);
+		const onClick = (event) => this.confirmVisualSplit(event);
+		const onKeyDown = (event) => {
+			if (event.key === "Escape") {
+				event.preventDefault();
+				this.cleanupVisualSplit();
+				injection_aps.ui.set_feedback(this.feedback, __("Visual split cancelled."));
+			}
+		};
+		barNode.addEventListener("pointermove", onMove);
+		barNode.addEventListener("mousemove", onMove);
+		barNode.addEventListener("click", onClick, true);
+		document.addEventListener("keydown", onKeyDown);
+		this.visualSplitCleanup = () => {
+			barNode.removeEventListener("pointermove", onMove);
+			barNode.removeEventListener("mousemove", onMove);
+			barNode.removeEventListener("click", onClick, true);
+			document.removeEventListener("keydown", onKeyDown);
+			this.visualSplitCleanup = null;
+		};
+		this.updateVisualSplitAtClientX((barNode.getBoundingClientRect().left + barNode.getBoundingClientRect().right) / 2);
+		this.scrollBarIntoView(barNode);
+		injection_aps.ui.set_feedback(this.feedback, __("Visual cut mode: move over the segment and click where to cut. Press Esc to cancel."));
+	}
+
+	cleanupVisualSplit() {
+		if (this.visualSplitCleanup) {
+			this.visualSplitCleanup();
+		}
+		const state = this.splitState;
+		if (state && state.barNode) {
+			state.barNode.classList.remove("split-target");
+		}
+		if (state && state.cutNode && state.cutNode.parentNode) {
+			state.cutNode.parentNode.removeChild(state.cutNode);
+		}
+		if (state && state.tooltipNode && state.tooltipNode.parentNode) {
+			state.tooltipNode.parentNode.removeChild(state.tooltipNode);
+		}
+		if (this.ganttFrame) {
+			this.ganttFrame.classList.remove("ia-gantt-split-mode");
+		}
+		this.splitState = null;
+	}
+
+	getVisualSplitSnapMs(durationMs) {
+		if (durationMs <= 0) {
+			return 60 * 60 * 1000;
+		}
+		const coarseSnap = this.getSnapMs();
+		const visualSnap = Math.max(5 * 60 * 1000, Math.floor(durationMs / 12));
+		return Math.min(coarseSnap, visualSnap);
+	}
+
+	snapVisualSplitMs(value, startMs, endMs) {
+		const durationMs = Math.max(endMs - startMs, 1);
+		const snapMs = this.getVisualSplitSnapMs(durationMs);
+		const minGapMs = Math.max(5 * 60 * 1000, Math.min(snapMs, Math.floor(durationMs / 4)));
+		const minimumValue = startMs + minGapMs;
+		const maximumValue = endMs - minGapMs;
+		if (maximumValue <= minimumValue) {
+			return startMs + durationMs / 2;
+		}
+		const rounded = Math.round(value / snapMs) * snapMs;
+		return Math.min(Math.max(rounded, minimumValue), maximumValue);
+	}
+
+	updateVisualSplit(event) {
+		if (!this.splitState) {
+			return;
+		}
+		event.preventDefault();
+		event.stopPropagation();
+		this.updateVisualSplitAtClientX(event.clientX);
+	}
+
+	updateVisualSplitAtClientX(clientX) {
+		const state = this.splitState;
+		if (!state || !state.barNode) {
+			return;
+		}
+		const rect = state.barNode.getBoundingClientRect();
+		const ratio = Math.min(Math.max((clientX - rect.left) / Math.max(rect.width, 1), 0), 1);
+		const rawCutMs = state.startMs + (state.endMs - state.startMs) * ratio;
+		const cutMs = this.snapVisualSplitMs(rawCutMs, state.startMs, state.endMs);
+		const cutRatio = Math.min(Math.max((cutMs - state.startMs) / Math.max(state.endMs - state.startMs, 1), 0), 1);
+		const firstQty = state.plannedQty ? state.plannedQty * cutRatio : 0;
+		const secondQty = Math.max((state.plannedQty || 0) - firstQty, 0);
+		state.cutMs = cutMs;
+		state.cutNode.style.left = `${cutRatio * 100}%`;
+		state.tooltipNode.style.left = `${cutRatio * 100}%`;
+		const cutLabel = frappe.datetime.str_to_user(this.formatServerDatetime(new Date(cutMs)));
+		const qtyLabel = state.plannedQty
+			? `${injection_aps.ui.format_number(firstQty)} / ${injection_aps.ui.format_number(secondQty)}`
+			: __("Click to cut");
+		state.tooltipNode.innerHTML = `
+			<span>${injection_aps.ui.escape(cutLabel)}</span>
+			<span>${injection_aps.ui.escape(qtyLabel)}</span>
+		`;
+	}
+
+	renderSegmentSplitPreview(preview) {
+		const rows = (preview && preview.proposed_segments ? preview.proposed_segments : [])
+			.map(
+				(row) => `
+					<div class="ia-confirm-row">
+						${__("Split Part")} ${row.split_index}:
+						${injection_aps.ui.escape(injection_aps.ui.format_datetime(row.start_time))}
+						-
+						${injection_aps.ui.escape(injection_aps.ui.format_datetime(row.end_time))}
+						/
+						${injection_aps.ui.escape(injection_aps.ui.format_number(row.planned_qty || 0))}
+					</div>
+				`
+			)
+			.join("");
+		return `<div class="ia-confirm-summary">${rows || `<div class="ia-muted">${__("No split preview was generated.")}</div>`}</div>`;
+	}
+
+	async confirmVisualSplit(event) {
+		if (!this.splitState || !this.splitState.cutMs) {
+			return;
+		}
+		event.preventDefault();
+		event.stopPropagation();
+		this.__suppressBarClickUntil = Date.now() + 500;
+		const state = this.splitState;
+		const cutTime = this.formatServerDatetime(new Date(state.cutMs));
+		const cutLabel = frappe.datetime.str_to_user(cutTime);
+		const args = {
+			segment_name: state.segmentName,
+			split_time: cutTime,
+			split_reason: "Visual Cut",
+		};
+		this.cleanupVisualSplit();
+		const preview = await injection_aps.ui.xcall(
+			{
+				message: __("Previewing visual segment split..."),
+				busy_key: `visual-split-preview:${state.segmentName}`,
+				feedback_target: this.feedback,
+				success_feedback: __("Visual split preview is ready."),
+			},
+			"injection_aps.api.app.preview_segment_split",
+			args
+		);
+		if (!preview || !preview.allowed) {
+			this.showManualAdjustmentBlocked(preview, __("Split Blocked"));
+			return;
+		}
+		if (!this.canApplySegmentSplit()) {
+			frappe.msgprint({
+				title: __("Split Preview"),
+				message: this.renderSegmentSplitPreview(preview),
+				wide: true,
+			});
+			injection_aps.ui.set_feedback(this.feedback, __("Split preview is ready, but this user cannot apply the split."), "warning");
+			return;
+		}
+		frappe.confirm(
+			`${__("Cut segment at {0}?").replace("{0}", injection_aps.ui.escape(cutLabel))}${this.renderSegmentSplitPreview(preview)}`,
+			async () => {
+				const response = await injection_aps.ui.xcall(
+					{
+						message: __("Applying visual segment split..."),
+						success_message: __("Visual segment split applied."),
+						busy_key: `visual-split-apply:${state.segmentName}`,
+						feedback_target: this.feedback,
+						success_feedback: __("Visual segment split applied. Refreshing Gantt..."),
+					},
+					"injection_aps.api.app.apply_segment_split",
+					args
+				);
+				if (response) {
+					await this.refresh();
+				}
+			}
+		);
+	}
+
+	openDowntimeDialog(defaultWorkstation) {
+		const runName = this.runField.get_value();
+		const lane = ((this.data && this.data.lanes) || []).find((row) => row.workstation === defaultWorkstation) || {};
+		const defaultPlantFloor = lane.plant_floor || ((this.data && this.data.selected_plant_floors && this.data.selected_plant_floors[0]) || "");
+		const dialog = new frappe.ui.Dialog({
+			title: __("Add Downtime Window"),
+			fields: [
+				{ fieldtype: "Select", fieldname: "scope", label: __("Scope"), options: ["Plant Floor", "Workstation", "Company"].join("\n"), default: defaultWorkstation ? "Workstation" : "Plant Floor", reqd: 1 },
+				{ fieldtype: "Link", fieldname: "plant_floor", label: __("Plant Floor"), options: "Plant Floor", default: defaultPlantFloor },
+				{ fieldtype: "Link", fieldname: "workstation", label: __("Workstation"), options: "Workstation", default: defaultWorkstation || "" },
+				{ fieldtype: "Datetime", fieldname: "start_time", label: __("Start Time"), reqd: 1 },
+				{ fieldtype: "Datetime", fieldname: "end_time", label: __("End Time"), reqd: 1 },
+				{ fieldtype: "Data", fieldname: "reason", label: __("Reason") },
+			],
+			primary_action_label: __("Create and Preview"),
+			primary_action: async () => {
+				const values = dialog.get_values();
+				if (!values) {
+					return;
+				}
+				const response = await injection_aps.ui.xcall(
+					{
+						message: __("Creating downtime window..."),
+						success_message: __("Downtime window created."),
+						busy_key: "downtime-create",
+						feedback_target: this.feedback,
+						success_feedback: __("Downtime window saved."),
+					},
+					"injection_aps.api.app.create_or_update_downtime_window",
+					{
+						scope: values.scope,
+						plant_floor: values.plant_floor,
+						workstation: values.workstation,
+						start_time: values.start_time,
+						end_time: values.end_time,
+						reason: values.reason,
+						planning_run: runName,
+					}
+				);
+				dialog.hide();
+				if (response && response.impact_preview) {
+					await this.showImpactPreview({
+						downtimeWindow: response.downtime_window,
+						preview: response.impact_preview,
+					});
+				}
+				await this.refresh();
+			},
+		});
+		dialog.show();
 	}
 
 	async refresh() {
@@ -262,6 +757,7 @@ class InjectionAPSScheduleGantt {
 	}
 
 	renderGantt(tasks) {
+		this.cleanupVisualSplit();
 		const filtered = this.getFilteredTasks(tasks);
 		const parsedTasks = filtered
 			.map((task) => {
@@ -331,6 +827,7 @@ class InjectionAPSScheduleGantt {
 					parts.push(`<div class="ia-gantt-group">${injection_aps.ui.escape(lane.plant_floor || __("Unknown Plant Floor"))}</div>`);
 				}
 				const dividers = this.buildDividers(timelineStart, timelineEnd, span);
+				const downtimeBlocks = this.buildDowntimeBlocks(lane, timelineStart, timelineEnd, span);
 				const stacks = this.buildSubrows(lane.tasks || []);
 				const trackHeight = Math.max(50, 8 + stacks.length * 46);
 				const bars = [];
@@ -357,6 +854,13 @@ class InjectionAPSScheduleGantt {
 							details.segment_kind === "Family Co-Product" ||
 							Number(details.is_locked || 0) === 1 ||
 							["Applied", "Completed"].includes(details.segment_status);
+						const isSplitLocked =
+							!this.canPreviewSegmentSplit() ||
+							(this.viewField.get_value() || "Machine") !== "Machine" ||
+							!details.segment_name ||
+							details.segment_kind === "Family Co-Product" ||
+							Number(details.is_locked || 0) === 1 ||
+							["Applied", "Completed"].includes(details.segment_status);
 						const title = details.item_name || details.item_code || "";
 						const segmentLabel = details.segment_name || "";
 						const metaParts = [
@@ -374,7 +878,12 @@ class InjectionAPSScheduleGantt {
 								data-workstation="${injection_aps.ui.escape(details.workstation || "")}"
 								data-start-ms="${task.startDate.getTime()}"
 								data-end-ms="${task.endDate.getTime()}"
+								data-planned-qty="${Number(details.planned_qty || 0)}"
+								data-segment-kind="${injection_aps.ui.escape(details.segment_kind || "")}"
+								data-segment-status="${injection_aps.ui.escape(details.segment_status || "")}"
+								data-is-locked="${Number(details.is_locked || 0)}"
 								data-draggable="${isDragLocked ? "0" : "1"}"
+								data-can-split="${isSplitLocked ? "0" : "1"}"
 								draggable="false"
 							>
 								<div class="ia-gantt-title">
@@ -403,6 +912,7 @@ class InjectionAPSScheduleGantt {
 						</div>
 						<div class="ia-gantt-track" style="min-height:${trackHeight}px; min-width:${timelineWidth}px;" data-lane="${injection_aps.ui.escape(lane.key)}" data-workstation="${this.viewField.get_value() === "Mold" ? "" : injection_aps.ui.escape(lane.key)}">
 							${dividers}
+							${downtimeBlocks}
 							${bars.join("")}
 						</div>
 					</div>
@@ -460,6 +970,44 @@ class InjectionAPSScheduleGantt {
 			cursor += 86400000;
 		}
 		return dividers.join("");
+	}
+
+	buildDowntimeBlocks(lane, timelineStart, timelineEnd, span) {
+		if ((this.viewField.get_value() || "Machine") !== "Machine") {
+			return "";
+		}
+		return ((this.data && this.data.downtime_windows) || [])
+			.filter((row) => this.downtimeAppliesToLane(row, lane))
+			.map((row) => {
+				const startDate = frappe.datetime.str_to_obj(row.start_time);
+				const endDate = frappe.datetime.str_to_obj(row.end_time);
+				if (!(startDate instanceof Date) || !(endDate instanceof Date)) {
+					return "";
+				}
+				const startMs = Math.max(startDate.getTime(), timelineStart);
+				const endMs = Math.min(endDate.getTime(), timelineEnd);
+				if (endMs <= startMs) {
+					return "";
+				}
+				const left = ((startMs - timelineStart) / span) * 100;
+				const width = ((endMs - startMs) / span) * 100;
+				const title = [row.reason || __("Downtime"), injection_aps.ui.format_datetime(row.start_time), injection_aps.ui.format_datetime(row.end_time)]
+					.filter(Boolean)
+					.join(" | ");
+				return `<div class="ia-gantt-downtime" style="left:${left}%; width:${width}%;" title="${injection_aps.ui.escape(title)}"></div>`;
+			})
+			.join("");
+	}
+
+	downtimeAppliesToLane(row, lane) {
+		const scope = row.scope || "Plant Floor";
+		if (scope === "Company") {
+			return true;
+		}
+		if (scope === "Workstation") {
+			return row.workstation === lane.key;
+		}
+		return !row.plant_floor || row.plant_floor === lane.plant_floor;
 	}
 
 	buildLaneRows(tasks) {
@@ -569,6 +1117,8 @@ class InjectionAPSScheduleGantt {
 				<button class="btn btn-xs btn-default" data-zoom-out="1">-</button>
 				<span class="ia-chip blue">${zoomPercent}%</span>
 				<button class="btn btn-xs btn-default" data-zoom-in="1">+</button>
+				${injection_aps.ui.can_run_action("create_or_update_downtime_window") ? injection_aps.ui.icon_button("calendar", __("Add Downtime Window"), { "data-add-downtime": "1" }) : ""}
+				${injection_aps.ui.can_run_action("preview_schedule_impact") ? injection_aps.ui.icon_button("search", __("Preview Downtime Impact"), { "data-preview-impact": "1" }) : ""}
 				${injection_aps.ui.icon_button(this.isChartFullscreen ? "collapse" : "expand", this.isChartFullscreen ? __("Exit Chart Fullscreen") : __("Chart Fullscreen"), { "data-toggle-gantt-fullscreen": "1" })}
 				<button class="ia-icon-btn" type="button" title="${injection_aps.ui.escape(__("Refresh Board"))}" aria-label="${injection_aps.ui.escape(__("Refresh Board"))}" data-refresh-gantt="1">↻</button>
 				${this.focusWindow ? `<button class="btn btn-xs btn-default" data-reset-gantt-focus="1">${__("Reset Date Focus")}</button>` : ""}
@@ -596,6 +1146,14 @@ class InjectionAPSScheduleGantt {
 		const refreshButton = this.tools.querySelector("[data-refresh-gantt='1']");
 		if (refreshButton) {
 			refreshButton.addEventListener("click", () => this.refresh());
+		}
+		const addDowntimeButton = this.tools.querySelector("[data-add-downtime='1']");
+		if (addDowntimeButton) {
+			addDowntimeButton.addEventListener("click", () => this.openDowntimeDialog(""));
+		}
+		const previewImpactButton = this.tools.querySelector("[data-preview-impact='1']");
+		if (previewImpactButton) {
+			previewImpactButton.addEventListener("click", () => this.showImpactPreview({}));
 		}
 		const zoomOutButton = this.tools.querySelector("[data-zoom-out='1']");
 		if (zoomOutButton) {
@@ -757,12 +1315,122 @@ class InjectionAPSScheduleGantt {
 		});
 	}
 
+	getSplitHoverHandle() {
+		if (this.splitHoverHandle) {
+			return this.splitHoverHandle;
+		}
+		const handle = document.createElement("button");
+		handle.type = "button";
+		handle.className = "ia-gantt-split-handle";
+		handle.setAttribute("aria-label", __("Cut Segment"));
+		handle.setAttribute("title", __("Cut Segment"));
+		handle.dataset.splitSegment = "";
+		handle.innerHTML = injection_aps.ui.icon("scissors", "xs");
+		["pointerdown", "mousedown"].forEach((eventName) => {
+			handle.addEventListener(eventName, (event) => {
+				event.preventDefault();
+				event.stopPropagation();
+			});
+		});
+		handle.addEventListener("mouseenter", () => {
+			if (this.splitHoverHideTimer) {
+				clearTimeout(this.splitHoverHideTimer);
+				this.splitHoverHideTimer = null;
+			}
+		});
+		handle.addEventListener("mouseleave", () => this.scheduleHideSplitHoverHandle());
+		handle.addEventListener("click", (event) => {
+			event.preventDefault();
+			event.stopPropagation();
+			this.beginVisualSplit(this.splitHoverBar);
+		});
+		handle.addEventListener("keydown", (event) => {
+			if (!["Enter", " "].includes(event.key)) {
+				return;
+			}
+			event.preventDefault();
+			event.stopPropagation();
+			this.beginVisualSplit(this.splitHoverBar);
+		});
+		this.splitHoverHandle = handle;
+		return handle;
+	}
+
+	showSplitHoverHandle(barNode) {
+		if (!this.canShowSplitHoverHandle(barNode)) {
+			this.hideSplitHoverHandle();
+			return;
+		}
+		if (this.splitHoverHideTimer) {
+			clearTimeout(this.splitHoverHideTimer);
+			this.splitHoverHideTimer = null;
+		}
+		const trackNode = barNode.closest(".ia-gantt-track");
+		if (!trackNode) {
+			this.hideSplitHoverHandle();
+			return;
+		}
+		const handle = this.getSplitHoverHandle();
+		this.splitHoverBar = barNode;
+		handle.dataset.splitSegment = barNode.dataset.segmentName || "";
+		const blockReason = this.getVisualSplitBlockReason(barNode);
+		const canSplit = !blockReason;
+		handle.classList.toggle("disabled", !canSplit);
+		handle.setAttribute("aria-disabled", canSplit ? "false" : "true");
+		handle.setAttribute("title", canSplit ? __("Cut Segment") : blockReason);
+		handle.setAttribute("aria-label", canSplit ? __("Cut Segment") : blockReason);
+		if (handle.parentNode !== trackNode) {
+			trackNode.appendChild(handle);
+		}
+		const left = Math.max(4, Math.min(barNode.offsetLeft + 5, barNode.offsetLeft + Math.max(barNode.offsetWidth - 22, 4)));
+		handle.style.left = `${left}px`;
+		handle.style.top = `${barNode.offsetTop + 5}px`;
+		handle.classList.add("visible");
+		handle.hidden = false;
+	}
+
+	scheduleHideSplitHoverHandle(delay = 90) {
+		if (this.splitHoverHideTimer) {
+			clearTimeout(this.splitHoverHideTimer);
+		}
+		this.splitHoverHideTimer = setTimeout(() => this.hideSplitHoverHandle(), delay);
+	}
+
+	hideSplitHoverHandle() {
+		if (this.splitHoverHideTimer) {
+			clearTimeout(this.splitHoverHideTimer);
+			this.splitHoverHideTimer = null;
+		}
+		if (this.splitHoverHandle) {
+			this.splitHoverHandle.classList.remove("visible");
+			this.splitHoverHandle.classList.remove("disabled");
+			this.splitHoverHandle.setAttribute("aria-disabled", "false");
+			this.splitHoverHandle.hidden = true;
+			this.splitHoverHandle.dataset.splitSegment = "";
+		}
+		this.splitHoverBar = null;
+	}
+
 	bindGanttInteractions() {
 		$(this.grid)
 			.find(".ia-gantt-bar")
 			.each((_, node) => {
+				node.addEventListener("mouseenter", () => this.showSplitHoverHandle(node));
+				node.addEventListener("mouseleave", (event) => {
+					if (this.splitHoverHandle && this.splitHoverHandle.contains(event.relatedTarget)) {
+						return;
+					}
+					this.scheduleHideSplitHoverHandle();
+				});
+				node.addEventListener("focusin", () => this.showSplitHoverHandle(node));
+				node.addEventListener("focusout", (event) => {
+					if (this.splitHoverHandle && this.splitHoverHandle.contains(event.relatedTarget)) {
+						return;
+					}
+					this.scheduleHideSplitHoverHandle();
+				});
 				node.addEventListener("click", () => {
-					if (this.__suppressBarClickUntil && Date.now() < this.__suppressBarClickUntil) {
+					if (this.splitState || (this.__suppressBarClickUntil && Date.now() < this.__suppressBarClickUntil)) {
 						return;
 					}
 					this.openResultDrawer(node.dataset.resultName, node.dataset.segmentName);
@@ -771,6 +1439,12 @@ class InjectionAPSScheduleGantt {
 				if (node.dataset.draggable === "1") {
 					let lastPointerDownAt = 0;
 					node.addEventListener("pointerdown", (event) => {
+						if (this.splitState) {
+							return;
+						}
+						if (event.target.closest("[data-split-segment]")) {
+							return;
+						}
 						lastPointerDownAt = Date.now();
 						if (event.target.closest("[data-resize-segment]")) {
 							return;
@@ -778,6 +1452,12 @@ class InjectionAPSScheduleGantt {
 						this.beginPointerDrag(event, node);
 					});
 					node.addEventListener("mousedown", (event) => {
+						if (this.splitState) {
+							return;
+						}
+						if (event.target.closest("[data-split-segment]")) {
+							return;
+						}
 						if (Date.now() - lastPointerDownAt < 80) {
 							return;
 						}
@@ -841,6 +1521,29 @@ class InjectionAPSScheduleGantt {
 					label: __("View Detail"),
 					icon: "file",
 					handler: async () => this.openResultDrawer(resultName, segmentName),
+				},
+				{
+					label: __("Split Segment"),
+					icon: "scissors",
+					disabled: !this.canVisualSplitSegment(barNode),
+					handler: async () => this.beginVisualSplit(barNode),
+				},
+				{
+					label: __("Split by Time / Qty"),
+					icon: "edit",
+					disabled: !this.canPreviewSegmentSplit(),
+					handler: async () => this.openSegmentSplitDialog(segmentName),
+				},
+				{
+					label: __("Preview Impact"),
+					icon: "search",
+					handler: async () => this.showImpactPreview({ segmentName }),
+				},
+				{
+					label: __("Add Downtime Window"),
+					icon: "calendar",
+					disabled: !injection_aps.ui.can_run_action("create_or_update_downtime_window"),
+					handler: async () => this.openDowntimeDialog(barNode.dataset.workstation || ""),
 				},
 				{
 					label: __("Result", null, "Injection APS"),
