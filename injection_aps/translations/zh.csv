@@ -1108,7 +1108,7 @@ Schedule impact applied.,影响重排已应用。
 Impact applied. Refreshing Gantt...,影响已应用，正在刷新甘特图...
 Previewing segment split...,正在预览排程段切分...
 Split preview is ready.,排程段切分预览已生成。
-Split preview is ready, but this user cannot apply the split.,排程段切分预览已生成，但当前用户不能应用切分。
+"Split preview is ready, but this user cannot apply the split.",排程段切分预览已生成，但当前用户不能应用切分。
 Split Preview,切分预览
 Split Blocked,切分被阻止
 Apply this segment split?,确认应用此排程段切分？
@@ -1166,11 +1166,11 @@ Preview is truncated. Open the generated proposal batch to review all rows.,预�
 No WOS proposal rows are needed for this date and shift.,该日期和班次没有需要生成的 WOS 建议行。
 All Shifts,全部班次
 Generated from APS work order proposal batch {0} for {1} to {2} ({3}). Review against existing day/night shift scheduling before formal reconciliation.,由 APS 工单建议批次 {0} 生成，范围 {1} 至 {2}（{3}）。正式同步前请对照已有白/夜班 WOS 排产。
-WOS proposals for Work Order {0} would schedule {1}, exceeding Work Order qty {2}.,工单 {0} 的 WOS 建议排产数量将达到 {1}，超过工单数量 {2}。
+"WOS proposals for Work Order {0} would schedule {1}, exceeding Work Order qty {2}.",工单 {0} 的 WOS 建议排产数量将达到 {1}，超过工单数量 {2}。
 Downtime window does not apply to this segment lane.,停产窗口不适用于该排程段所在机台。
 Downtime window does not overlap this segment.,停产窗口未与该排程段重叠。
 Segment has no usable capacity rate for splitting.,该排程段没有可用于切分的产能速率。
-Provide split_time, split_qty, or downtime_window.,请提供切分时间、切分数量或停产窗口。
+"Provide split_time, split_qty, or downtime_window.",请提供切分时间、切分数量或停产窗口。
 Split point must be inside the segment time window.,切分点必须位于排程段时间范围内。
 Split quantity must be between 0 and the segment planned quantity.,切分数量必须大于 0 且小于排程段计划数量。
 Split would create an empty segment.,切分会产生空排程段。
