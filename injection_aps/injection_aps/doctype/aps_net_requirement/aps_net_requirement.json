@@ -12,6 +12,7 @@
   "demand_qty",
   "available_stock_qty",
   "open_work_order_qty",
+  "existing_work_order_policy",
   "safety_stock_gap_qty",
   "max_stock_qty",
   "overstock_qty",
@@ -75,6 +76,13 @@
    "fieldname": "open_work_order_qty",
    "fieldtype": "Float",
    "label": "Open Work Order Qty",
+   "read_only": 1
+  },
+  {
+   "fieldname": "existing_work_order_policy",
+   "fieldtype": "Select",
+   "label": "Existing Work Order Policy",
+   "options": "\nInclude\nExclude",
    "read_only": 1
   },
   {

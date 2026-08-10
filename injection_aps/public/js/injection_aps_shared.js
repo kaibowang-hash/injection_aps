@@ -7,6 +7,7 @@ frappe.provide("injection_aps.ui");
 
 	injection_aps.ui.__initialized = true;
 	injection_aps.ui.translation_context = "Injection APS";
+	injection_aps.ui.local_icon_sprite = "/assets/injection_aps/icons/aps-icons.svg?v=20260811-scissors";
 	injection_aps.ui.__busy_keys = new Set();
 	injection_aps.ui.__freeze_depth = 0;
 	injection_aps.ui.__action_role_map = {
@@ -63,6 +64,7 @@ frappe.provide("injection_aps.ui");
 		"external-link",
 		"filter",
 		"search",
+		"scissors",
 		"trash-2",
 		"x",
 	]);
@@ -71,7 +73,7 @@ frappe.provide("injection_aps.ui");
 		const name = iconName || "download";
 		const sizeClass = size ? ` ia-aps-icon-${injection_aps.ui.escape(size)}` : "";
 		if (injection_aps.ui.__local_icons.has(name)) {
-			return `<svg class="ia-aps-icon${sizeClass}" aria-hidden="true"><use href="/assets/injection_aps/icons/aps-icons.svg#${injection_aps.ui.escape(name)}"></use></svg>`;
+			return `<svg class="ia-aps-icon${sizeClass}" aria-hidden="true"><use href="${injection_aps.ui.local_icon_sprite}#${injection_aps.ui.escape(name)}"></use></svg>`;
 		}
 		if (frappe.utils && frappe.utils.icon) {
 			try {
@@ -83,7 +85,7 @@ frappe.provide("injection_aps.ui");
 				// Fall through to a stable local icon if the ERPNext build does not ship this symbol.
 			}
 		}
-		return `<svg class="ia-aps-icon${sizeClass}" aria-hidden="true"><use href="/assets/injection_aps/icons/aps-icons.svg#filter"></use></svg>`;
+		return `<svg class="ia-aps-icon${sizeClass}" aria-hidden="true"><use href="${injection_aps.ui.local_icon_sprite}#filter"></use></svg>`;
 	};
 
 	injection_aps.ui.translate = function (value, context) {
@@ -303,6 +305,92 @@ frappe.provide("injection_aps.ui");
 				${lines.map((row) => `<div class="ia-confirm-row">${injection_aps.ui.escape(injection_aps.ui.translate(row))}</div>`).join("")}
 			</div>
 		`;
+	};
+
+	injection_aps.ui.get_existing_work_order_policy_label = function (policy) {
+		return policy === "Include"
+			? __("Consider existing work orders")
+			: policy === "Exclude"
+				? __("Do not consider existing work orders")
+				: __("Not selected");
+	};
+
+	injection_aps.ui.get_existing_work_order_policy_field = function () {
+		return {
+			fieldtype: "Select",
+			fieldname: "existing_work_order_policy",
+			label: __("Existing Work Order Policy"),
+			reqd: 1,
+			options: [
+				{ label: "", value: "" },
+				{ label: __("Do not consider existing work orders"), value: "Exclude" },
+				{ label: __("Consider existing work orders"), value: "Include" },
+			],
+			description: __("You must make a fresh selection for every net requirement calculation."),
+		};
+	};
+
+	injection_aps.ui.confirm_net_requirement_calculation = function (action, options) {
+		const settings = Object.assign({}, options || {});
+		return new Promise((resolve) => {
+			let settled = false;
+			let dialog;
+			const finish = (value) => {
+				if (settled) {
+					return;
+				}
+				settled = true;
+				resolve(value);
+			};
+			const renderPolicySummary = () => {
+				if (!dialog) {
+					return;
+				}
+				const policy = dialog.get_value("existing_work_order_policy") || "";
+				const label = injection_aps.ui.get_existing_work_order_policy_label(policy);
+				dialog.get_field("policy_summary_html").$wrapper.html(`
+					<div class="ia-confirm-summary">
+						<div class="ia-confirm-row"><strong>${injection_aps.ui.escape(__("Existing work orders"))}: ${injection_aps.ui.escape(label)}</strong></div>
+					</div>
+				`);
+			};
+			dialog = new frappe.ui.Dialog({
+				title: injection_aps.ui.translate(settings.title || (action && action.confirm_title) || __("Confirm Net Requirement Calculation")),
+				fields: [
+					{
+						fieldtype: "HTML",
+						fieldname: "summary_html",
+					},
+					Object.assign(injection_aps.ui.get_existing_work_order_policy_field(), { change: renderPolicySummary }),
+					{
+						fieldtype: "HTML",
+						fieldname: "policy_summary_html",
+					},
+				],
+				primary_action_label: injection_aps.ui.translate(settings.primary_action_label || (action && action.confirm_label) || __("Confirm")),
+				primary_action() {
+					const policy = dialog.get_value("existing_work_order_policy") || "";
+					if (!["Include", "Exclude"].includes(policy)) {
+						frappe.show_alert({
+							message: __("Please explicitly select whether to consider existing work orders."),
+							indicator: "orange",
+						});
+						return;
+					}
+					dialog.hide();
+					finish(policy);
+				},
+				secondary_action_label: __("Cancel"),
+				secondary_action() {
+					dialog.hide();
+					finish(null);
+				},
+			});
+			dialog.get_field("summary_html").$wrapper.html(injection_aps.ui.build_confirm_summary(action, settings));
+			dialog.$wrapper.on("hidden.bs.modal", () => finish(null));
+			dialog.show();
+			renderPolicySummary();
+		});
 	};
 
 	injection_aps.ui.confirm_action = function (action, options) {
@@ -883,9 +971,21 @@ frappe.provide("injection_aps.ui");
 		if (!action.method) {
 			return null;
 		}
-		const confirmed = await injection_aps.ui.confirm_action(action, options);
-		if (!confirmed) {
-			return null;
+		let existingWorkOrderPolicy = null;
+		if (Number(action.requires_existing_work_order_policy || 0) === 1) {
+			existingWorkOrderPolicy = await injection_aps.ui.confirm_net_requirement_calculation(action, options);
+			if (!existingWorkOrderPolicy) {
+				return null;
+			}
+		} else {
+			const confirmed = await injection_aps.ui.confirm_action(action, options);
+			if (!confirmed) {
+				return null;
+			}
+		}
+		const kwargs = Object.assign({}, action.kwargs || {});
+		if (existingWorkOrderPolicy) {
+			kwargs.existing_work_order_policy = existingWorkOrderPolicy;
 		}
 		const response = await injection_aps.ui.xcall(
 			{
@@ -895,7 +995,7 @@ frappe.provide("injection_aps.ui");
 				duplicate_message: __("This APS action is already running."),
 			},
 			action.method,
-			action.kwargs || {}
+			kwargs
 		);
 		if (response == null) {
 			return null;

@@ -1050,6 +1050,22 @@
 	z-index: 6;
 }
 
+.ia-gantt-bar.segment-route-focus {
+	animation: ia-gantt-segment-focus 0.9s ease-in-out 2;
+}
+
+@keyframes ia-gantt-segment-focus {
+	50% {
+		box-shadow: 0 0 0 3px #1d4ed8, 0 0 0 10px rgba(29, 78, 216, 0.28);
+	}
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.ia-gantt-bar.segment-route-focus {
+		animation: none;
+	}
+}
+
 .ia-gantt-meta {
 	font-size: 9px;
 	font-weight: 500;

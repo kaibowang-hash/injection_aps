@@ -85,6 +85,7 @@ class InjectionAPSRunConsole {
 			{ label: __("Planning Date"), fieldname: "planning_date" },
 			{ label: __("Status"), fieldname: "status" },
 			{ label: __("Approval"), fieldname: "approval_state" },
+			{ label: __("Existing WO Policy"), fieldname: "existing_work_order_policy" },
 			{ label: __("Plan Qty"), fieldname: "total_net_requirement_qty" },
 			{ label: __("Scheduled"), fieldname: "total_scheduled_qty" },
 			{ label: __("Unscheduled"), fieldname: "total_unscheduled_qty" },
@@ -112,6 +113,9 @@ class InjectionAPSRunConsole {
 				}
 				if (column.fieldname === "approval_state") {
 					return injection_aps.ui.pill(injection_aps.ui.translate(value), value === "Approved" ? "green" : "orange");
+				}
+				if (column.fieldname === "existing_work_order_policy") {
+					return injection_aps.ui.escape(injection_aps.ui.get_existing_work_order_policy_label(value));
 				}
 				if (column.fieldname === "planning_date") {
 					return injection_aps.ui.format_date(value);
@@ -218,6 +222,7 @@ class InjectionAPSRunConsole {
 					],
 				},
 				{ fieldname: "horizon_days", fieldtype: "Int", label: __("Horizon Days"), default: 14, reqd: 1 },
+				injection_aps.ui.get_existing_work_order_policy_field(),
 			],
 			primary_action_label: __("Recalculate"),
 			primary_action: async (values) => {
@@ -234,6 +239,10 @@ class InjectionAPSRunConsole {
 							__("Company: {0}").replace("{0}", values.company || "-"),
 							__("Plant Floors: {0}").replace("{0}", plantFloors.join(", ") || "-"),
 							__("Horizon: {0} days").replace("{0}", String(values.horizon_days || 14)),
+							__("Existing work orders: {0}").replace(
+								"{0}",
+								injection_aps.ui.get_existing_work_order_policy_label(values.existing_work_order_policy)
+							),
 						],
 					}
 				);
@@ -254,6 +263,7 @@ class InjectionAPSRunConsole {
 						plant_floor: plantFloors[0],
 						plant_floors: plantFloors,
 						horizon_days: values.horizon_days,
+						existing_work_order_policy: values.existing_work_order_policy,
 					}
 				);
 				if (!result) {

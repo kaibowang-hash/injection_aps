@@ -28,6 +28,8 @@ class InjectionAPSScheduleGantt {
 		this.isChartFullscreen = false;
 		this.zoomFactor = 1;
 		this.segmentSearchTerm = "";
+		this.routeRunName = "";
+		this.routeSegmentName = "";
 		this.page = frappe.ui.make_app_page({
 			parent: wrapper,
 			title: __("Board"),
@@ -93,6 +95,10 @@ class InjectionAPSScheduleGantt {
 
 	canEditManualSchedule() {
 		return injection_aps.ui.can_run_action("apply_manual_schedule_adjustment");
+	}
+
+	canPreviewManualSchedule() {
+		return injection_aps.ui.can_run_action("preview_manual_schedule_adjustment") || this.canEditManualSchedule();
 	}
 
 	canPreviewSegmentSplit() {
@@ -314,6 +320,191 @@ class InjectionAPSScheduleGantt {
 			},
 		});
 		dialog.show();
+	}
+
+	getQuantityAdjustmentBlockReason(barNode) {
+		if (!barNode) {
+			return __("No segment is selected.");
+		}
+		if (!this.canPreviewManualSchedule()) {
+			return __("You do not have permission to adjust segment quantity.");
+		}
+		if (!barNode.dataset.segmentName) {
+			return __("No segment is linked to this bar.");
+		}
+		if ((this.viewField.get_value() || "Machine") !== "Machine") {
+			return __("Switch to Machine view to adjust segment quantity.");
+		}
+		if (barNode.dataset.segmentKind === "Family Co-Product") {
+			return __("Family co-product segments follow the primary segment and cannot be adjusted directly.");
+		}
+		if (Number(barNode.dataset.isLocked || 0) === 1) {
+			return __("Locked segments cannot be adjusted.");
+		}
+		if (["Applied", "Completed"].includes(barNode.dataset.segmentStatus || "")) {
+			return __("Released or completed segments cannot be adjusted from Gantt.");
+		}
+		return "";
+	}
+
+	canAdjustSegmentQuantity(barNode) {
+		return !this.getQuantityAdjustmentBlockReason(barNode);
+	}
+
+	renderQuantityAdjustmentPreview(preview) {
+		const number = (value) => injection_aps.ui.escape(injection_aps.ui.format_number(value || 0));
+		const datetime = (value) => injection_aps.ui.escape(injection_aps.ui.format_datetime(value));
+		const maxQty = preview.max_conflict_free_qty;
+		const overproduction = Number(preview.overproduction_qty || 0);
+		const unscheduled = Number(preview.unscheduled_qty || 0);
+		const warning = overproduction > 0
+			? `<div class="alert alert-warning">${__("This change exceeds the result planned quantity by {0}. Applying it requires a second confirmation and a reason.").replace("{0}", number(overproduction))}</div>`
+			: "";
+		const conflictLimit = maxQty === null || maxQty === undefined
+			? ""
+			: `<div class="ia-confirm-row"><span class="ia-muted">${__("Max Conflict-Free Qty")}</span> ${number(maxQty)}</div>`;
+		return `
+			<div class="ia-confirm-summary">
+				${warning}
+				<div class="ia-confirm-row"><span class="ia-muted">${__("Current Qty")}</span> ${number(preview.current_qty)}</div>
+				<div class="ia-confirm-row"><span class="ia-muted">${__("Target Qty")}</span> <strong>${number(preview.target_qty)}</strong></div>
+				<div class="ia-confirm-row"><span class="ia-muted">${__("Start / New End")}</span> ${datetime(preview.start_time)} - ${datetime(preview.end_time)}</div>
+				<div class="ia-confirm-row"><span class="ia-muted">${__("Duration Hours")}</span> ${number(preview.duration_hours)}</div>
+				<div class="ia-confirm-row"><span class="ia-muted">${__("Workstation / Mold")}</span> ${injection_aps.ui.escape(preview.target_workstation || "-")} / ${injection_aps.ui.escape(preview.target_mould_reference || "-")}</div>
+				<div class="ia-confirm-row"><span class="ia-muted">${__("Hourly Capacity")}</span> ${number(preview.hourly_capacity_qty)}</div>
+				<div class="ia-confirm-row"><span class="ia-muted">${__("Result Planned / Projected Scheduled")}</span> ${number(preview.result_planned_qty)} / <strong>${number(preview.projected_result_qty)}</strong></div>
+				<div class="ia-confirm-row"><span class="ia-muted">${__("Unscheduled / Overproduction")}</span> ${number(unscheduled)} / ${number(overproduction)}</div>
+				${conflictLimit}
+			</div>
+		`;
+	}
+
+	openSegmentQuantityDialog(barNode) {
+		const blockReason = this.getQuantityAdjustmentBlockReason(barNode);
+		if (blockReason) {
+			injection_aps.ui.set_feedback(this.feedback, blockReason, "warning");
+			return;
+		}
+		const segmentName = barNode.dataset.segmentName;
+		const currentQty = Number(barNode.dataset.plannedQty || 0);
+		const currentStart = new Date(Number(barNode.dataset.startMs || 0));
+		const currentEnd = new Date(Number(barNode.dataset.endMs || 0));
+		let dialog;
+		let latestPreview = null;
+		let latestTargetQty = null;
+
+		const applyPreview = async () => {
+			const values = dialog.get_values();
+			if (!values) {
+				return;
+			}
+			const targetQty = Number(values.target_qty || 0);
+			if (!latestPreview || Math.abs(targetQty - Number(latestTargetQty || 0)) > 1e-9) {
+				await previewAdjustment();
+				return;
+			}
+			if (!latestPreview.allowed) {
+				this.showManualAdjustmentBlocked(latestPreview, __("Quantity Adjustment Blocked"));
+				return;
+			}
+			const overproduction = Number(latestPreview.overproduction_qty || 0);
+			const manualNote = String(values.manual_note || "").trim();
+			if (overproduction > 0 && !manualNote) {
+				frappe.msgprint(__("A reason is required when confirming manual overproduction."));
+				return;
+			}
+			const confirmation = overproduction > 0
+				? __("Confirm scheduling {0}, which exceeds the result planned quantity by {1}? The APS run will require reapproval.")
+					.replace("{0}", injection_aps.ui.format_number(latestPreview.target_qty || 0))
+					.replace("{1}", injection_aps.ui.format_number(overproduction))
+				: __("Apply target quantity {0} and resize this segment?").replace("{0}", injection_aps.ui.format_number(latestPreview.target_qty || 0));
+			frappe.confirm(confirmation, async () => {
+				const response = await injection_aps.ui.xcall(
+					{
+						message: __("Applying quantity adjustment..."),
+						success_message: __("Segment quantity adjusted."),
+						busy_key: `quantity-adjustment-apply:${segmentName}`,
+						feedback_target: this.feedback,
+						success_feedback: __("Segment quantity adjusted. Refreshing Gantt..."),
+					},
+					"injection_aps.api.app.apply_manual_schedule_adjustment",
+					{
+						segment_name: segmentName,
+						target_qty: latestPreview.target_qty,
+						manual_note: manualNote || undefined,
+						allow_overproduction: overproduction > 0 ? 1 : 0,
+					}
+				);
+				if (!response) {
+					return;
+				}
+				dialog.hide();
+				await this.refresh();
+			});
+		};
+
+		const previewAdjustment = async () => {
+			const values = dialog.get_values();
+			if (!values) {
+				return;
+			}
+			const preview = await injection_aps.ui.xcall(
+				{
+					message: __("Previewing quantity adjustment..."),
+					busy_key: `quantity-adjustment-preview:${segmentName}`,
+					feedback_target: this.feedback,
+					success_feedback: __("Quantity adjustment preview is ready."),
+				},
+				"injection_aps.api.app.preview_manual_schedule_adjustment",
+				{
+					segment_name: segmentName,
+					target_qty: values.target_qty,
+				}
+			);
+			if (!preview) {
+				return;
+			}
+			latestPreview = preview;
+			latestTargetQty = Number(values.target_qty || 0);
+			dialog.set_df_property("manual_note", "reqd", Number(preview.overproduction_qty || 0) > 0 ? 1 : 0);
+			dialog.get_field("preview_html").$wrapper.html(this.renderQuantityAdjustmentPreview(preview));
+			if (!preview.allowed) {
+				this.showManualAdjustmentBlocked(preview, __("Quantity Adjustment Blocked"));
+				return;
+			}
+			if (!this.canEditManualSchedule()) {
+				injection_aps.ui.set_feedback(this.feedback, __("Quantity preview is ready, but this user cannot apply the adjustment."), "warning");
+				return;
+			}
+			dialog.set_primary_action(__("Apply"), applyPreview);
+		};
+
+		dialog = new frappe.ui.Dialog({
+			title: __("Adjust Segment Quantity"),
+			fields: [
+				{
+					fieldtype: "HTML",
+					fieldname: "current_html",
+					options: `<div class="ia-confirm-summary">
+						<div class="ia-confirm-row"><span class="ia-muted">${__("Current Qty")}</span> ${injection_aps.ui.escape(injection_aps.ui.format_number(currentQty))}</div>
+						<div class="ia-confirm-row"><span class="ia-muted">${__("Current Start / End")}</span> ${injection_aps.ui.escape(injection_aps.ui.format_datetime(this.formatServerDatetime(currentStart)))} - ${injection_aps.ui.escape(injection_aps.ui.format_datetime(this.formatServerDatetime(currentEnd)))}</div>
+						<div class="ia-confirm-row"><span class="ia-muted">${__("Workstation / Mold")}</span> ${injection_aps.ui.escape(barNode.dataset.workstation || "-")} / ${injection_aps.ui.escape(barNode.dataset.mouldReference || "-")}</div>
+					</div>`,
+				},
+				{ fieldtype: "Float", fieldname: "target_qty", label: __("Target Qty"), default: currentQty, reqd: 1 },
+				{ fieldtype: "Small Text", fieldname: "manual_note", label: __("Reason") },
+				{ fieldtype: "HTML", fieldname: "preview_html" },
+			],
+			primary_action_label: __("Preview"),
+			primary_action: previewAdjustment,
+		});
+		dialog.show();
+		dialog.get_field("target_qty").$input.on("input", () => {
+			latestPreview = null;
+			dialog.set_df_property("manual_note", "reqd", 0);
+			dialog.get_field("preview_html").$wrapper.empty();
+			dialog.set_primary_action(__("Preview"), previewAdjustment);
+		});
 	}
 
 	canVisualSplitSegment(barNode) {
@@ -627,6 +818,7 @@ class InjectionAPSScheduleGantt {
 
 	async refresh() {
 		injection_aps.ui.ensure_styles();
+		this.syncRouteContext();
 		const runName = this.runField.get_value();
 		if (!runName) {
 			const emptyData = await frappe.xcall("injection_aps.api.app.get_release_center_data", {});
@@ -652,11 +844,33 @@ class InjectionAPSScheduleGantt {
 			this.renderBlockedResults(this.data.blocked_results || []);
 			this.renderGantt(this.data.tasks || []);
 			this.bindShellZoom();
-			injection_aps.ui.set_feedback(this.feedback, __("Board refreshed."));
+			if (!this.segmentSearchTerm) {
+				injection_aps.ui.set_feedback(this.feedback, __("Board refreshed."));
+			}
 		} catch (error) {
 			console.error(error);
 			injection_aps.ui.set_feedback(this.feedback, __("Failed to load board."), "error");
 		}
+	}
+
+	syncRouteContext() {
+		const routeRunName = injection_aps.ui.get_query_param("run_name") || "";
+		const routeSegmentName = injection_aps.ui.get_query_param("segment_name") || "";
+		const contextChanged = routeRunName !== this.routeRunName || routeSegmentName !== this.routeSegmentName;
+		if (routeRunName && routeRunName !== this.runField.get_value()) {
+			this.runField.set_input(routeRunName);
+		}
+		if (contextChanged && routeSegmentName) {
+			this.segmentSearchTerm = routeSegmentName;
+			this.focusWindow = null;
+			if ((this.viewField.get_value() || "Machine") !== "Machine") {
+				this.viewField.set_input("Machine");
+			}
+		} else if (contextChanged && this.routeSegmentName && this.segmentSearchTerm === this.routeSegmentName) {
+			this.segmentSearchTerm = "";
+		}
+		this.routeRunName = routeRunName;
+		this.routeSegmentName = routeSegmentName;
 	}
 
 	renderBlockedResults(rows) {
@@ -876,6 +1090,7 @@ class InjectionAPSScheduleGantt {
 								data-segment-name="${injection_aps.ui.escape(details.segment_name || "")}"
 								data-result-name="${injection_aps.ui.escape(details.result_name || "")}"
 								data-workstation="${injection_aps.ui.escape(details.workstation || "")}"
+								data-mould-reference="${injection_aps.ui.escape(details.mould_reference || "")}"
 								data-start-ms="${task.startDate.getTime()}"
 								data-end-ms="${task.endDate.getTime()}"
 								data-planned-qty="${Number(details.planned_qty || 0)}"
@@ -1229,8 +1444,10 @@ class InjectionAPSScheduleGantt {
 		let firstMatch = null;
 		bars.forEach((node) => {
 			const segmentName = String(node.dataset.segmentName || "").toLowerCase();
-			const matched = !!term && segmentName.includes(term);
+			const routeFocused = !!this.routeSegmentName && segmentName === this.routeSegmentName.toLowerCase();
+			const matched = routeFocused || (!!term && segmentName.includes(term));
 			node.classList.toggle("segment-match", matched);
+			node.classList.toggle("segment-route-focus", routeFocused);
 			if (matched && !firstMatch) {
 				firstMatch = node;
 			}
@@ -1533,6 +1750,12 @@ class InjectionAPSScheduleGantt {
 					icon: "edit",
 					disabled: !this.canPreviewSegmentSplit(),
 					handler: async () => this.openSegmentSplitDialog(segmentName),
+				},
+				{
+					label: __("Adjust Segment Quantity"),
+					icon: "edit",
+					disabled: !this.canAdjustSegmentQuantity(barNode),
+					handler: async () => this.openSegmentQuantityDialog(barNode),
 				},
 				{
 					label: __("Preview Impact"),

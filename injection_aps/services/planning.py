@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 from collections import defaultdict
 from datetime import date as date_cls
 from datetime import datetime, timedelta
@@ -68,6 +69,7 @@ SCHEDULE_PROGRESS_RUN_STATUS_PRIORITY = {
 }
 SCHEDULE_PROGRESS_RISK_ACTUAL_STATUSES = ("Delayed", "Slow Progress", "No Recent Update", "Overproduced")
 SCHEDULE_PROGRESS_RISK_RESULT_STATUSES = ("Attention", "Critical", "Blocked")
+EXISTING_WORK_ORDER_POLICIES = ("Include", "Exclude")
 
 ACTION_REQUIRED_ROLES = {
 	"promote_import": APS_PLAN_ROLES,
@@ -83,6 +85,16 @@ ACTION_REQUIRED_ROLES = {
 
 class APSItemReferenceError(frappe.ValidationError):
 	pass
+
+
+def _normalize_existing_work_order_policy(value: str | None) -> str:
+	policy = (value or "").strip() if isinstance(value, str) else ""
+	if policy not in EXISTING_WORK_ORDER_POLICIES:
+		frappe.throw(
+			_("Please explicitly select whether to include or exclude existing work orders before calculating net requirements."),
+			frappe.ValidationError,
+		)
+	return policy
 
 
 def _normalize_item_code(value: str | None) -> str:
@@ -460,6 +472,7 @@ def _build_planning_run_context(doc) -> dict[str, Any]:
 		"status_label": _label_run_status(doc.status),
 		"approval_state": doc.approval_state,
 		"approval_state_label": _label_approval_state(doc.approval_state),
+		"existing_work_order_policy": doc.get("existing_work_order_policy"),
 		"exception_count": cint(doc.exception_count or 0),
 		"planning_date": doc.planning_date,
 		"modified": doc.modified,
@@ -1007,7 +1020,11 @@ def rebuild_demand_pool(company: str | None = None) -> dict[str, Any]:
 	}
 
 
-def rebuild_net_requirements(company: str | None = None) -> dict[str, Any]:
+def rebuild_net_requirements(
+	company: str | None = None,
+	existing_work_order_policy: str | None = None,
+) -> dict[str, Any]:
+	existing_work_order_policy = _normalize_existing_work_order_policy(existing_work_order_policy)
 	reference_repair = repair_item_references(company=company, include_standard=0, include_aps=1)
 	_delete_system_generated_rows("APS Net Requirement", company=company)
 
@@ -1065,7 +1082,7 @@ def rebuild_net_requirements(company: str | None = None) -> dict[str, Any]:
 		if (row.get("demand_source") or "") == "Safety Stock"
 	}
 	stock_map = _get_available_stock_map(company, demand_rows=demand_rows)
-	open_work_order_map = _get_open_work_order_map(company)
+	open_work_order_map = _get_open_work_order_map(company) if existing_work_order_policy == "Include" else {}
 	remaining_stock_map = defaultdict(float, {item: flt(qty) for item, qty in stock_map.items()})
 	remaining_work_order_map = defaultdict(float, {item: flt(qty) for item, qty in open_work_order_map.items()})
 	safety_gap_remaining_map: dict[str, float] = {}
@@ -1100,6 +1117,7 @@ def rebuild_net_requirements(company: str | None = None) -> dict[str, Any]:
 			demand_qty=demand_qty,
 			available_stock_qty=available_stock_qty,
 			open_work_order_qty=open_work_order_qty,
+			existing_work_order_policy=existing_work_order_policy,
 			safety_gap=safety_gap,
 			overstock_qty=overstock_qty,
 			minimum_batch_qty=minimum_batch_qty,
@@ -1116,6 +1134,7 @@ def rebuild_net_requirements(company: str | None = None) -> dict[str, Any]:
 				"demand_qty": demand_qty,
 				"available_stock_qty": available_stock_qty,
 				"open_work_order_qty": open_work_order_qty,
+				"existing_work_order_policy": existing_work_order_policy,
 				"safety_stock_gap_qty": safety_gap,
 				"max_stock_qty": max_stock_qty,
 				"overstock_qty": overstock_qty,
@@ -1129,6 +1148,7 @@ def rebuild_net_requirements(company: str | None = None) -> dict[str, Any]:
 		created_names.append(doc.name)
 
 	return {
+		"existing_work_order_policy": existing_work_order_policy,
 		"created_rows": len(created_names),
 		"rows": created_names,
 		"warning_count": len(warnings),
@@ -1147,7 +1167,9 @@ def run_planning_run(
 	item_code: str | None = None,
 	customer: str | None = None,
 	run_type: str | None = None,
+	existing_work_order_policy: str | None = None,
 ) -> dict[str, Any]:
+	existing_work_order_policy = _normalize_existing_work_order_policy(existing_work_order_policy)
 	settings = get_settings_dict()
 	company = company or settings["default_company"]
 	horizon_days = cint(horizon_days or settings["planning_horizon_days"] or 14)
@@ -1173,6 +1195,7 @@ def run_planning_run(
 	run_doc.horizon_start = horizon_start
 	run_doc.horizon_end = horizon_end
 	run_doc.run_type = run_type or run_doc.run_type or "Trial"
+	run_doc.existing_work_order_policy = existing_work_order_policy
 	run_doc.status = "Draft"
 	run_doc.approval_state = "Pending"
 	_apply_selected_plant_floors_to_run(run_doc, selected_plant_floors)
@@ -1182,7 +1205,10 @@ def run_planning_run(
 		run_doc.save(ignore_permissions=True)
 
 	demand_rebuild = rebuild_demand_pool(company=run_doc.company)
-	net_rebuild = rebuild_net_requirements(company=run_doc.company)
+	net_rebuild = rebuild_net_requirements(
+		company=run_doc.company,
+		existing_work_order_policy=existing_work_order_policy,
+	)
 
 	for name in frappe.get_all("APS Schedule Result", filters={"planning_run": run_doc.name}, pluck="name"):
 		frappe.delete_doc("APS Schedule Result", name, force=1, ignore_permissions=True)
@@ -1410,6 +1436,7 @@ def run_planning_run(
 			"horizon_start": horizon_start,
 			"horizon_end": horizon_end,
 			"run_type": run_type or run_doc.run_type or "Trial",
+			"existing_work_order_policy": existing_work_order_policy,
 			"status": "Planned",
 			"approval_state": "Pending",
 			"total_net_requirement_qty": sum(flt(row.planning_qty or row.net_requirement_qty) for row in net_rows),
@@ -1431,6 +1458,7 @@ def run_planning_run(
 
 	return {
 		"run": run_doc.name,
+		"existing_work_order_policy": existing_work_order_policy,
 		"results": result_names,
 		"exceptions": exception_names + overlap_summary["exception_names"] + mold_overlap_summary["exception_names"],
 		"selected_plant_floors": selected_plant_floors,
@@ -3396,6 +3424,7 @@ def get_next_actions_for_context(doctype: str, docname: str) -> dict[str, Any]:
 					"action_key": "promote_import",
 					"method": "injection_aps.api.app.promote_schedule_import_to_net_requirement",
 					"kwargs": {"import_batch": doc.name},
+					"requires_existing_work_order_policy": 1,
 					"enabled": 1 if doc.status == "Imported" else 0,
 				},
 				{
@@ -3461,6 +3490,7 @@ def get_next_actions_for_context(doctype: str, docname: str) -> dict[str, Any]:
 					"action_key": "run_trial",
 					"method": "injection_aps.api.app.run_planning_run",
 					"kwargs": {"run_name": doc.name},
+					"requires_existing_work_order_policy": 1,
 					"enabled": 1,
 					"confirm_required": 1,
 					"confirm_title": "Confirm Recalculate",
@@ -3639,7 +3669,9 @@ def promote_schedule_import_to_net_requirement(
 	import_batch: str | None = None,
 	schedule: str | None = None,
 	company: str | None = None,
+	existing_work_order_policy: str | None = None,
 ) -> dict[str, Any]:
+	existing_work_order_policy = _normalize_existing_work_order_policy(existing_work_order_policy)
 	if import_batch:
 		doc = frappe.get_doc("APS Schedule Import Batch", import_batch)
 		company = company or doc.company
@@ -3647,9 +3679,13 @@ def promote_schedule_import_to_net_requirement(
 		doc = frappe.get_doc("Customer Delivery Schedule", schedule)
 		company = company or doc.company
 	demand = rebuild_demand_pool(company=company)
-	net = rebuild_net_requirements(company=company)
+	net = rebuild_net_requirements(
+		company=company,
+		existing_work_order_policy=existing_work_order_policy,
+	)
 	return {
 		"company": company,
+		"existing_work_order_policy": existing_work_order_policy,
 		"demand_pool": demand,
 		"net_requirement": net,
 		"next_route": "aps-net-requirement-workbench",
@@ -3663,7 +3699,9 @@ def create_trial_run_from_net_requirement_context(
 	item_code: str | None = None,
 	customer: str | None = None,
 	horizon_days: int | None = None,
+	existing_work_order_policy: str | None = None,
 ) -> dict[str, Any]:
+	existing_work_order_policy = _normalize_existing_work_order_policy(existing_work_order_policy)
 	return run_planning_run(
 		company=company,
 		plant_floor=plant_floor,
@@ -3672,7 +3710,80 @@ def create_trial_run_from_net_requirement_context(
 		item_code=item_code,
 		customer=customer,
 		run_type="Trial",
+		existing_work_order_policy=existing_work_order_policy,
 	)
+
+
+def _item_quantity_requires_integer(item_code: str | None) -> bool:
+	stock_uom = frappe.db.get_value("Item", item_code, "stock_uom") if item_code else None
+	return bool(stock_uom and cint(frappe.db.get_value("UOM", stock_uom, "must_be_whole_number")))
+
+
+def _normalize_manual_target_qty(item_code: str | None, target_qty) -> float:
+	precision = frappe.get_precision("APS Schedule Segment", "planned_qty") or 6
+	qty = flt(target_qty, precision)
+	if qty <= 0:
+		frappe.throw(_("Target quantity must be greater than zero."), frappe.ValidationError)
+	requires_integer = _item_quantity_requires_integer(item_code)
+	if requires_integer and abs(qty - round(qty)) > 1e-9:
+		frappe.throw(
+			_("Target quantity must be a whole number because the stock UOM does not allow fractions."),
+			frappe.ValidationError,
+		)
+	return float(round(qty)) if requires_integer else qty
+
+
+def _build_manual_quantity_totals(
+	result_planned_qty: float,
+	current_result_scheduled_qty: float,
+	current_segment_qty: float,
+	target_qty: float,
+) -> dict[str, float]:
+	projected_result_qty = max(
+		flt(current_result_scheduled_qty) - flt(current_segment_qty) + flt(target_qty),
+		0,
+	)
+	return {
+		"projected_result_qty": projected_result_qty,
+		"unscheduled_qty": max(flt(result_planned_qty) - projected_result_qty, 0),
+		"overproduction_qty": max(projected_result_qty - flt(result_planned_qty), 0),
+	}
+
+
+def _validate_manual_overproduction_confirmation(
+	preview: dict[str, Any],
+	allow_overproduction: int = 0,
+	manual_note: str | None = None,
+) -> None:
+	if not cint(preview.get("quantity_mode")) or flt(preview.get("overproduction_qty")) <= 0:
+		return
+	if not cint(allow_overproduction):
+		frappe.throw(
+			_("This adjustment exceeds the result planned quantity. Confirm manual overproduction before applying."),
+			frappe.ValidationError,
+		)
+	if not (manual_note or "").strip():
+		frappe.throw(_("A reason is required when confirming manual overproduction."), frappe.ValidationError)
+
+
+def _max_conflict_free_qty(
+	start_time,
+	hourly_capacity: float,
+	conflict_start_times: list[Any],
+	item_code: str | None,
+) -> float | None:
+	starts = [get_datetime(value) for value in conflict_start_times if value and get_datetime(value) >= get_datetime(start_time)]
+	if not starts:
+		return None
+	available_hours = max((min(starts) - get_datetime(start_time)).total_seconds() / 3600, 0)
+	if available_hours < 0.25:
+		return 0
+	precision = frappe.get_precision("APS Schedule Segment", "planned_qty") or 6
+	raw_qty = max(available_hours * max(flt(hourly_capacity), 0), 0)
+	if _item_quantity_requires_integer(item_code):
+		return float(math.floor(raw_qty + 1e-9))
+	factor = 10**precision
+	return math.floor(raw_qty * factor + 1e-9) / factor
 
 
 def preview_manual_schedule_adjustment(
@@ -3681,9 +3792,14 @@ def preview_manual_schedule_adjustment(
 	before_segment_name: str | None = None,
 	target_start_time=None,
 	target_end_time=None,
+	target_qty: float | None = None,
 	allow_locked: int = 0,
 	allow_risk_override: int = 0,
+	allow_overproduction: int = 0,
 ) -> dict[str, Any]:
+	quantity_mode = target_qty not in (None, "")
+	if quantity_mode and target_end_time not in (None, ""):
+		frappe.throw(_("Target quantity and target end time cannot be supplied together."), frappe.ValidationError)
 	segment_rows = frappe.get_all(
 		"APS Schedule Segment",
 		filters={"name": segment_name},
@@ -3704,6 +3820,13 @@ def preview_manual_schedule_adjustment(
 			"lane_key",
 			"parallel_group",
 			"family_group",
+			"linked_work_order",
+			"linked_work_order_scheduling",
+			"linked_scheduling_item",
+			"actual_status",
+			"actual_completed_qty",
+			"actual_start_time",
+			"actual_end_time",
 		],
 		limit=1,
 	)
@@ -3712,6 +3835,19 @@ def preview_manual_schedule_adjustment(
 	segment = segment_rows[0]
 	if segment.segment_kind == "Family Co-Product":
 		frappe.throw(_("Family Co-Product segment cannot be adjusted directly. Move the primary segment instead."))
+	if (
+		segment.get("linked_work_order")
+		or segment.get("linked_work_order_scheduling")
+		or segment.get("linked_scheduling_item")
+		or segment.get("actual_start_time")
+		or segment.get("actual_end_time")
+		or flt(segment.get("actual_completed_qty")) > 0
+		or segment.get("actual_status") in ("Running", "Completed", "Delayed", "Slow Progress", "Overproduced")
+	):
+		return {
+			"allowed": 0,
+			"blocking_reasons": [_("Segment {0} is released or already has execution feedback.").format(segment_name)],
+		}
 	if (
 		cint(segment.is_locked)
 		or segment.segment_status in MANUAL_ADJUSTMENT_BLOCKED_SEGMENT_STATUSES
@@ -3722,6 +3858,8 @@ def preview_manual_schedule_adjustment(
 		}
 
 	result = frappe.get_doc("APS Schedule Result", segment.parent)
+	if quantity_mode:
+		target_qty = _normalize_manual_target_qty(result.item_code, target_qty)
 	run_doc = frappe.get_doc("APS Planning Run", result.planning_run)
 	selected_plant_floors = _get_run_selected_plant_floors(run_doc)
 	settings = get_settings_dict()
@@ -3770,9 +3908,12 @@ def preview_manual_schedule_adjustment(
 			limit=1,
 		)
 		before_segment = before_rows[0] if before_rows else None
-	requested_start_time = get_datetime(target_start_time) if target_start_time else None
+	effective_target_start_time = target_start_time
+	if quantity_mode and not effective_target_start_time:
+		effective_target_start_time = segment.start_time
+	requested_start_time = get_datetime(effective_target_start_time) if effective_target_start_time else None
 
-	base_floor_time = get_datetime("2000-01-01 00:00:00") if target_start_time else get_datetime(now_datetime())
+	base_floor_time = get_datetime("2000-01-01 00:00:00") if effective_target_start_time else get_datetime(now_datetime())
 	state = {
 		"next_available": base_floor_time,
 		"last_color_code": "",
@@ -3828,10 +3969,13 @@ def preview_manual_schedule_adjustment(
 
 	earliest_start_time = max(state["next_available"], mold_next_available) + timedelta(minutes=setup_minutes)
 	start_time = earliest_start_time
-	if target_start_time:
-		start_time = get_datetime(target_start_time)
+	if effective_target_start_time:
+		start_time = get_datetime(effective_target_start_time)
 	hourly_capacity = _estimate_hourly_capacity(candidate=candidate, settings=settings)["hourly_capacity_qty"]
-	if target_end_time:
+	if quantity_mode:
+		planned_qty = flt(target_qty)
+		end_time = start_time + timedelta(hours=_estimate_run_hours(planned_qty, candidate, settings))
+	elif target_end_time:
 		end_time = get_datetime(target_end_time)
 		if end_time <= start_time:
 			blocked = True
@@ -3855,7 +3999,7 @@ def preview_manual_schedule_adjustment(
 	mold_overlap_rows = []
 	override_available = 0
 	override_reason = ""
-	if target_start_time and start_time < earliest_start_time:
+	if effective_target_start_time and start_time < earliest_start_time:
 		blocked = True
 		blocking_reasons.append(
 			_("Target start time {0} is earlier than the earliest feasible start {1}.").format(
@@ -3979,24 +4123,117 @@ def preview_manual_schedule_adjustment(
 			"If you only want to change sequence, place the current segment before the target segment in an available slot.",
 		]
 
+	primary_segments = _get_primary_segments_for_result(result.name)
+	current_result_scheduled_qty = sum(flt(row.get("planned_qty")) for row in primary_segments)
+	quantity_totals = _build_manual_quantity_totals(
+		result_planned_qty=flt(result.planned_qty),
+		current_result_scheduled_qty=current_result_scheduled_qty,
+		current_segment_qty=flt(segment.planned_qty),
+		target_qty=planned_qty,
+	)
+	overproduction_qty = flt(quantity_totals.get("overproduction_qty"))
+	requires_overproduction_confirmation = bool(
+		quantity_mode and overproduction_qty > 0 and not cint(allow_overproduction)
+	)
+	if quantity_mode and overproduction_qty > 0 and cint(allow_overproduction):
+		setup_exceptions.append(
+			{
+				"severity": "Warning",
+				"exception_type": "Manual Overproduction",
+				"message": _("Manual overproduction of {0} is being confirmed.").format(
+					frappe.format(overproduction_qty, {"fieldtype": "Float"})
+				),
+				"workstation": target_workstation,
+				"is_blocking": 0,
+			}
+		)
+
+	conflict_start_times = []
+	if before_segment:
+		before_start = get_datetime(before_segment.get("start_time"))
+		conflict_start_times.append(start_time if before_start < start_time else before_start)
+	for row in [*previous_rows, *mold_rows]:
+		row_start = get_datetime(row.get("start_time"))
+		row_end = get_datetime(row.get("end_time"))
+		if row_end > start_time:
+			conflict_start_times.append(start_time if row_start < start_time else row_start)
+	max_conflict_free_qty = _max_conflict_free_qty(
+		start_time=start_time,
+		hourly_capacity=hourly_capacity,
+		conflict_start_times=conflict_start_times,
+		item_code=result.item_code,
+	)
+	conflict_segments = [
+		{
+			"segment_name": row.get("name"),
+			"resource_type": "Workstation",
+			"workstation": row.get("workstation") or target_workstation,
+			"start_time": row.get("start_time"),
+			"end_time": row.get("end_time"),
+		}
+		for row in workstation_overlap_rows
+	]
+	conflict_segments.extend(
+		[
+			{
+				"segment_name": row.get("name"),
+				"resource_type": "Mold",
+				"workstation": row.get("workstation"),
+				"mould_reference": candidate.get("mould_reference"),
+				"start_time": row.get("start_time"),
+				"end_time": row.get("end_time"),
+			}
+			for row in mold_overlap_rows
+		]
+	)
+	if quantity_mode:
+		schedule_explanation = _(
+			"Manual quantity adjustment to {0} on {1} with mold {2}."
+		).format(
+			frappe.format(planned_qty, {"fieldtype": "Float"}),
+			target_workstation,
+			candidate.get("mould_reference"),
+		)
+	else:
+		schedule_explanation = _("Manual move to {0} with mold {1}.").format(
+			target_workstation,
+			candidate.get("mould_reference"),
+		)
+
 	return {
 		"allowed": 0 if blocked else 1,
+		"quantity_mode": 1 if quantity_mode else 0,
 		"segment_name": segment_name,
 		"result_name": result.name,
 		"planning_run": run_doc.name,
+		"current_workstation": segment.workstation,
+		"current_mould_reference": segment.mould_reference,
+		"current_start_time": segment.start_time,
+		"current_end_time": segment.end_time,
 		"target_workstation": target_workstation,
 		"target_mould_reference": candidate.get("mould_reference"),
 		"target_plant_floor": candidate.get("plant_floor"),
 		"lane_key": candidate.get("lane_key"),
-		"requested_start_time": get_datetime(target_start_time) if target_start_time else None,
+		"requested_start_time": requested_start_time,
 		"earliest_start_time": earliest_start_time,
 		"start_time": start_time,
 		"end_time": end_time,
+		"duration_hours": max((get_datetime(end_time) - get_datetime(start_time)).total_seconds() / 3600, 0),
 		"setup_minutes": setup_minutes,
 		"planned_qty": planned_qty,
+		"current_qty": flt(segment.planned_qty),
+		"target_qty": planned_qty,
+		"current_result_scheduled_qty": current_result_scheduled_qty,
+		"result_planned_qty": flt(result.planned_qty),
+		"projected_result_qty": quantity_totals.get("projected_result_qty"),
+		"unscheduled_qty": quantity_totals.get("unscheduled_qty"),
+		"overproduction_qty": overproduction_qty,
+		"requires_overproduction_confirmation": 1 if requires_overproduction_confirmation else 0,
+		"max_conflict_free_qty": max_conflict_free_qty,
+		"conflict_segments": conflict_segments,
 		"hourly_capacity_qty": hourly_capacity,
 		"blocking_reasons": list(dict.fromkeys(blocking_reasons)),
-		"blocking_title": "Manual Move Blocked",
+		"blocking_title": "Quantity Adjustment Blocked" if quantity_mode else "Manual Move Blocked",
 		"blocking_summary": blocking_summary,
 		"blocking_context_rows": blocking_context_rows,
 		"resolution_suggestions": resolution_suggestions,
@@ -4004,10 +4241,7 @@ def preview_manual_schedule_adjustment(
 		"preview_exceptions": setup_exceptions,
 		"override_available": override_available,
 		"override_reason": override_reason,
-		"schedule_explanation": _("Manual move to {0} with mold {1}.").format(
-			target_workstation,
-			candidate.get("mould_reference"),
-		),
+		"schedule_explanation": schedule_explanation,
 	}
 
 
@@ -4126,6 +4360,8 @@ def _is_segment_execution_protected(segment: dict[str, Any]) -> bool:
 	if cint(segment.get("is_locked")):
 		return True
 	if segment.get("segment_status") in MANUAL_ADJUSTMENT_BLOCKED_SEGMENT_STATUSES:
+		return True
+	if segment.get("linked_work_order") or segment.get("linked_work_order_scheduling") or segment.get("linked_scheduling_item"):
 		return True
 	if segment.get("actual_start_time") or segment.get("actual_end_time") or flt(segment.get("actual_completed_qty")) > 0:
 		return True
@@ -5011,9 +5247,11 @@ def apply_manual_schedule_adjustment(
 	before_segment_name: str | None = None,
 	target_start_time=None,
 	target_end_time=None,
+	target_qty: float | None = None,
 	manual_note: str | None = None,
 	allow_locked: int = 0,
 	allow_risk_override: int = 0,
+	allow_overproduction: int = 0,
 ) -> dict[str, Any]:
 	preview = preview_manual_schedule_adjustment(
 		segment_name=segment_name,
@@ -5021,11 +5259,19 @@ def apply_manual_schedule_adjustment(
 		before_segment_name=before_segment_name,
 		target_start_time=target_start_time,
 		target_end_time=target_end_time,
+		target_qty=target_qty,
 		allow_locked=allow_locked,
 		allow_risk_override=allow_risk_override,
+		allow_overproduction=allow_overproduction,
 	)
 	if not preview.get("allowed"):
 		frappe.throw("\n".join(preview.get("blocking_reasons") or [_("Manual adjustment is blocked.")]))
+	_validate_manual_overproduction_confirmation(
+		preview,
+		allow_overproduction=allow_overproduction,
+		manual_note=manual_note,
+	)
+	is_overproduction = bool(cint(preview.get("quantity_mode")) and flt(preview.get("overproduction_qty")) > 0)
 
 	rows = frappe.get_all(
 		"APS Schedule Segment",
@@ -5044,7 +5290,7 @@ def apply_manual_schedule_adjustment(
 	child_segments = frappe.get_all(
 		"APS Schedule Segment",
 		filters=filters,
-		fields=["name", "segment_kind", "planned_qty"],
+		fields=["name", "segment_kind", "planned_qty", "risk_flags"],
 	)
 	result_doc = frappe.get_doc("APS Schedule Result", segment.parent)
 	run_doc = frappe.get_doc("APS Planning Run", result_doc.planning_run)
@@ -5054,9 +5300,11 @@ def apply_manual_schedule_adjustment(
 			primary_base_qty = flt(row.planned_qty)
 			break
 	for row in child_segments:
-		risk_flags = []
+		risk_flags = [value for value in (row.get("risk_flags") or "").splitlines() if value]
 		if cint(allow_risk_override):
 			risk_flags.append("FDA Override")
+		if is_overproduction:
+			risk_flags.append("Manual Overproduction")
 		planned_qty = preview.get("planned_qty")
 		if row.segment_kind == "Family Co-Product":
 			ratio = 0
@@ -5076,7 +5324,7 @@ def apply_manual_schedule_adjustment(
 			"execution_anchor_source": "Manual Adjustment",
 			"is_manual": 1,
 			"manual_change_note": manual_note or preview.get("schedule_explanation"),
-			"risk_flags": "\n".join(risk_flags),
+			"risk_flags": "\n".join(dict.fromkeys(risk_flags)),
 		}
 		if row.segment_kind != "Family Co-Product":
 			values["segment_kind"] = "Manual"
@@ -5086,17 +5334,25 @@ def apply_manual_schedule_adjustment(
 		{
 			"is_manual": 1,
 			"plant_floor": preview.get("target_plant_floor"),
-			"risk_status": "Attention" if cint(allow_risk_override) else result_doc.risk_status,
+			"status": "Risk" if is_overproduction else result_doc.status,
+			"risk_status": "Attention" if cint(allow_risk_override) or is_overproduction else result_doc.risk_status,
 			"flow_step": "Manual Adjustment Pending Confirmation",
 			"next_step_hint": "Confirm Run",
-			"blocking_reason": _("Manual FDA override was applied.") if cint(allow_risk_override) else "",
+			"blocking_reason": (
+				_("Manual overproduction of {0} was confirmed. Reason: {1}").format(
+					frappe.format(preview.get("overproduction_qty"), {"fieldtype": "Float"}),
+					(manual_note or "").strip(),
+				)
+				if is_overproduction
+				else _("Manual FDA override was applied.") if cint(allow_risk_override) else ""
+			),
 			"primary_mould_reference": preview["target_mould_reference"],
 			"selected_moulds": preview["target_mould_reference"],
 			"schedule_explanation": preview.get("schedule_explanation"),
 		}
 	)
 	_refresh_result_after_manual_adjustment(result_doc.name)
-	if run_doc.status in ("Approved", "Work Order Proposed", "Shift Proposed", "Applied"):
+	if is_overproduction or run_doc.status in ("Approved", "Work Order Proposed", "Shift Proposed", "Applied"):
 		run_doc.db_set({"status": "Planned", "approval_state": "Pending"})
 	if cint(allow_risk_override):
 		_create_exception(
@@ -5112,9 +5368,39 @@ def apply_manual_schedule_adjustment(
 			resolution_hint=_("Review override approval before syncing or releasing."),
 			is_blocking=0,
 		)
+	if is_overproduction:
+		_create_exception(
+			planning_run=run_doc.name,
+			severity="Warning",
+			exception_type="Manual Overproduction",
+			message=_(
+				"Manual quantity adjustment for {0} schedules {1} against planned quantity {2}, exceeding it by {3}."
+			).format(
+				result_doc.item_code,
+				frappe.format(preview.get("projected_result_qty"), {"fieldtype": "Float"}),
+				frappe.format(preview.get("result_planned_qty"), {"fieldtype": "Float"}),
+				frappe.format(preview.get("overproduction_qty"), {"fieldtype": "Float"}),
+			),
+			item_code=result_doc.item_code,
+			customer=result_doc.customer,
+			workstation=preview["target_workstation"],
+			source_doctype="APS Schedule Segment",
+			source_name=segment_name,
+			resolution_hint=_("Reason: {0}. Reapprove the APS run before releasing work order proposals.").format(
+				(manual_note or "").strip()
+			),
+			is_blocking=0,
+		)
 	updated_segment, _updated_result, _updated_run = _get_segment_with_result(segment_name)
+	adjustment_payload = dict(preview)
+	adjustment_payload.update(
+		{
+			"allow_overproduction": 1 if cint(allow_overproduction) else 0,
+			"manual_note": (manual_note or "").strip(),
+		}
+	)
 	_record_segment_adjustment(
-		"Resize" if target_end_time else "Move",
+		"Resize" if target_end_time or target_qty not in (None, "") else "Move",
 		run_doc,
 		result_doc,
 		updated_segment,
@@ -5124,13 +5410,20 @@ def apply_manual_schedule_adjustment(
 		target_workstation=preview.get("target_workstation"),
 		target_mould_reference=preview.get("target_mould_reference"),
 		impact_summary=manual_note or preview.get("schedule_explanation"),
-		payload=preview,
+		payload=adjustment_payload,
 	)
 
 	return {
 		"segment_name": segment_name,
 		"result_name": result_doc.name,
 		"planning_run": run_doc.name,
+		"current_qty": preview.get("current_qty"),
+		"target_qty": preview.get("target_qty"),
+		"projected_result_qty": preview.get("projected_result_qty"),
+		"unscheduled_qty": preview.get("unscheduled_qty"),
+		"overproduction_qty": preview.get("overproduction_qty"),
+		"requires_overproduction_confirmation": 0,
+		"max_conflict_free_qty": preview.get("max_conflict_free_qty"),
 		"next_actions": get_next_actions_for_context("APS Planning Run", run_doc.name),
 	}
 
@@ -5145,6 +5438,8 @@ def _refresh_result_after_manual_adjustment(result_name: str):
 	)
 	result_doc = frappe.get_doc("APS Schedule Result", result_name)
 	unscheduled_qty = max(flt(result_doc.planned_qty) - total_scheduled_qty, 0)
+	overproduction_qty = max(total_scheduled_qty - flt(result_doc.planned_qty), 0)
+	has_quantity_variance = unscheduled_qty > 0 or overproduction_qty > 0
 	frappe.db.set_value(
 		"APS Schedule Result",
 		result_name,
@@ -5154,8 +5449,8 @@ def _refresh_result_after_manual_adjustment(result_name: str):
 			"primary_mould_reference": selected_moulds[0] if selected_moulds else "",
 			"selected_moulds": "\n".join(selected_moulds),
 			"plant_floor": _get_primary_result_plant_floor(primary_segments, result_doc.plant_floor),
-			"status": "Risk" if unscheduled_qty > 0 else result_doc.status,
-			"risk_status": "Attention" if unscheduled_qty > 0 else result_doc.risk_status,
+			"status": "Risk" if has_quantity_variance else result_doc.status,
+			"risk_status": "Attention" if has_quantity_variance else result_doc.risk_status,
 		},
 	)
 
@@ -6559,17 +6854,29 @@ def _build_net_requirement_reason(
 	demand_qty: float,
 	available_stock_qty: float,
 	open_work_order_qty: float,
+	existing_work_order_policy: str,
 	safety_gap: float,
 	overstock_qty: float,
 	minimum_batch_qty: float,
 	planning_qty: float,
 ) -> str:
+	if existing_work_order_policy == "Include":
+		return _(
+			"Demand {0} - APS-usable stock {1} - included existing open work orders {2} + one-time safety gap {3}; remaining overstock {4}; minimum batch {5}; planning qty {6}."
+		).format(
+			demand_qty,
+			available_stock_qty,
+			open_work_order_qty,
+			safety_gap,
+			overstock_qty,
+			minimum_batch_qty,
+			planning_qty,
+		)
 	return _(
-		"Demand {0} - APS-usable stock {1} - allocated open work orders {2} + one-time safety gap {3}; remaining overstock {4}; minimum batch {5}; planning qty {6}."
+		"Demand {0} - APS-usable stock {1}; existing open work orders were explicitly excluded + one-time safety gap {2}; remaining overstock {3}; minimum batch {4}; planning qty {5}."
 	).format(
 		demand_qty,
 		available_stock_qty,
-		open_work_order_qty,
 		safety_gap,
 		overstock_qty,
 		minimum_batch_qty,

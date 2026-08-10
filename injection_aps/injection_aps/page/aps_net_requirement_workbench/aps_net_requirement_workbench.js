@@ -120,6 +120,7 @@ class InjectionAPSNetRequirementWorkbench {
 					{ label: __("Demand", null, "Injection APS"), fieldname: "demand_qty" },
 					{ label: __("Stock"), fieldname: "available_stock_qty" },
 					{ label: __("Open WO"), fieldname: "open_work_order_qty" },
+					{ label: __("Existing WO Policy"), fieldname: "existing_work_order_policy" },
 					{ label: __("Safety Gap"), fieldname: "safety_stock_gap_qty" },
 					{ label: __("Min Batch"), fieldname: "minimum_batch_qty" },
 					{ label: __("Planning Qty"), fieldname: "planning_qty" },
@@ -143,6 +144,9 @@ class InjectionAPSNetRequirementWorkbench {
 					if (column.fieldname === "reason_text") {
 						const translatedValue = injection_aps.ui.translate(value || "");
 						return `<span title="${injection_aps.ui.escape(translatedValue)}">${injection_aps.ui.escape(translatedValue)}</span>`;
+					}
+					if (column.fieldname === "existing_work_order_policy") {
+						return injection_aps.ui.escape(injection_aps.ui.get_existing_work_order_policy_label(value));
 					}
 					return injection_aps.ui.escape(value);
 				},
@@ -322,7 +326,7 @@ class InjectionAPSNetRequirementWorkbench {
 
 	async rebuildDemandPool() {
 		const filters = this.getFilters();
-		const confirmed = await injection_aps.ui.confirm_action(
+		const existingWorkOrderPolicy = await injection_aps.ui.confirm_net_requirement_calculation(
 			{ action_key: "rebuild_demand_pool", confirm_required: 1 },
 			{
 				title: __("Confirm Demand Rebuild"),
@@ -334,7 +338,7 @@ class InjectionAPSNetRequirementWorkbench {
 				],
 			}
 		);
-		if (!confirmed) {
+		if (!existingWorkOrderPolicy) {
 			return;
 		}
 		const result = await injection_aps.ui.xcall(
@@ -348,6 +352,7 @@ class InjectionAPSNetRequirementWorkbench {
 			"injection_aps.api.app.promote_schedule_import_to_net_requirement",
 			{
 				company: filters.company,
+				existing_work_order_policy: existingWorkOrderPolicy,
 			}
 		);
 		if (!result) {
@@ -381,6 +386,7 @@ class InjectionAPSNetRequirementWorkbench {
 					],
 				},
 				{ fieldname: "horizon_days", fieldtype: "Int", label: __("Horizon Days"), default: 14, reqd: 1 },
+				injection_aps.ui.get_existing_work_order_policy_field(),
 			],
 			primary_action_label: __("Recalculate"),
 			primary_action: async (values) => {
@@ -405,6 +411,10 @@ class InjectionAPSNetRequirementWorkbench {
 							__("Customer: {0}").replace("{0}", this.customerField.get_value() || __("All")),
 							__("Item: {0}").replace("{0}", this.itemField.get_value() || __("All")),
 							__("Horizon: {0} days").replace("{0}", String(values.horizon_days || 14)),
+							__("Existing work orders: {0}").replace(
+								"{0}",
+								injection_aps.ui.get_existing_work_order_policy_label(values.existing_work_order_policy)
+							),
 						],
 					}
 				);
@@ -427,6 +437,7 @@ class InjectionAPSNetRequirementWorkbench {
 						item_code: this.itemField.get_value() || undefined,
 						customer: this.customerField.get_value() || undefined,
 						horizon_days: values.horizon_days || undefined,
+						existing_work_order_policy: values.existing_work_order_policy,
 					}
 				);
 				if (!response) {

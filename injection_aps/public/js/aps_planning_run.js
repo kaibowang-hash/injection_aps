@@ -39,17 +39,29 @@ function add_actions(frm) {
 	};
 
 	const confirmAndCall = async (action, options, method, args) => {
-		const confirmed = await injection_aps.ui.confirm_action(action, options);
-		if (!confirmed) {
-			return null;
+		let existingWorkOrderPolicy = null;
+		if (Number(action.requires_existing_work_order_policy || 0) === 1) {
+			existingWorkOrderPolicy = await injection_aps.ui.confirm_net_requirement_calculation(action, options);
+			if (!existingWorkOrderPolicy) {
+				return null;
+			}
+		} else {
+			const confirmed = await injection_aps.ui.confirm_action(action, options);
+			if (!confirmed) {
+				return null;
+			}
 		}
-		return injection_aps.ui.xcall(options || {}, method, args || {});
+		const callArgs = Object.assign({}, args || {});
+		if (existingWorkOrderPolicy) {
+			callArgs.existing_work_order_policy = existingWorkOrderPolicy;
+		}
+		return injection_aps.ui.xcall(options || {}, method, callArgs);
 	};
 
 	if (["Draft", "Planned", "Risk"].includes(frm.doc.status || "Draft")) {
 		addButton("Recalculate", async () => {
 			const result = await confirmAndCall(
-				{ action_key: "run_trial", confirm_required: 1 },
+				{ action_key: "run_trial", confirm_required: 1, requires_existing_work_order_policy: 1 },
 				{
 					title: __("Confirm Recalculate"),
 					summary_lines: [

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import inspect
 from collections import defaultdict
+from urllib.parse import urlencode
 
 import frappe
 from frappe import _
@@ -168,6 +169,21 @@ def _attach_release_wos_details(release_batches):
 	return release_batches
 
 
+def _build_exception_routes(row):
+	run_name = row.get("planning_run")
+	source_doctype = row.get("source_doctype")
+	source_name = row.get("source_name")
+	gantt_params = {"run_name": run_name} if run_name else {}
+	if source_doctype == "APS Schedule Segment" and source_name:
+		gantt_params["segment_name"] = source_name
+	gantt_route = f"aps-schedule-gantt?{urlencode(gantt_params)}" if run_name else ""
+	if source_doctype == "APS Schedule Segment":
+		source_route = gantt_route
+	else:
+		source_route = f"Form/{source_doctype}/{source_name}" if source_doctype and source_name else ""
+	return {"gantt_route": gantt_route, "source_route": source_route}
+
+
 @frappe.whitelist()
 def export_table_xlsx(payload_json):
 	_require_read_access()
@@ -299,13 +315,26 @@ def rebuild_demand_pool(company=None):
 
 
 @frappe.whitelist()
-def rebuild_net_requirements(company=None):
+def rebuild_net_requirements(company=None, existing_work_order_policy=None):
 	_require_plan_access()
-	return planning.rebuild_net_requirements(company=company)
+	return planning.rebuild_net_requirements(
+		company=company,
+		existing_work_order_policy=existing_work_order_policy,
+	)
 
 
 @frappe.whitelist()
-def run_planning_run(run_name=None, company=None, plant_floor=None, plant_floors=None, horizon_days=None, item_code=None, customer=None, run_type=None):
+def run_planning_run(
+	run_name=None,
+	company=None,
+	plant_floor=None,
+	plant_floors=None,
+	horizon_days=None,
+	item_code=None,
+	customer=None,
+	run_type=None,
+	existing_work_order_policy=None,
+):
 	_require_plan_access()
 	return planning.run_planning_run(
 		run_name=run_name,
@@ -316,6 +345,7 @@ def run_planning_run(run_name=None, company=None, plant_floor=None, plant_floors
 		item_code=item_code,
 		customer=customer,
 		run_type=run_type,
+		existing_work_order_policy=existing_work_order_policy,
 	)
 
 
@@ -465,17 +495,31 @@ def get_next_actions_for_context(doctype, docname):
 
 
 @frappe.whitelist()
-def promote_schedule_import_to_net_requirement(import_batch=None, schedule=None, company=None):
+def promote_schedule_import_to_net_requirement(
+	import_batch=None,
+	schedule=None,
+	company=None,
+	existing_work_order_policy=None,
+):
 	_require_plan_access()
 	return planning.promote_schedule_import_to_net_requirement(
 		import_batch=import_batch,
 		schedule=schedule,
 		company=company,
+		existing_work_order_policy=existing_work_order_policy,
 	)
 
 
 @frappe.whitelist()
-def create_trial_run_from_net_requirement_context(company=None, plant_floor=None, plant_floors=None, item_code=None, customer=None, horizon_days=None):
+def create_trial_run_from_net_requirement_context(
+	company=None,
+	plant_floor=None,
+	plant_floors=None,
+	item_code=None,
+	customer=None,
+	horizon_days=None,
+	existing_work_order_policy=None,
+):
 	_require_plan_access()
 	return planning.create_trial_run_from_net_requirement_context(
 		company=company,
@@ -484,11 +528,22 @@ def create_trial_run_from_net_requirement_context(company=None, plant_floor=None
 		item_code=item_code,
 		customer=customer,
 		horizon_days=horizon_days,
+		existing_work_order_policy=existing_work_order_policy,
 	)
 
 
 @frappe.whitelist()
-def preview_manual_schedule_adjustment(segment_name, target_workstation=None, before_segment_name=None, target_start_time=None, target_end_time=None, allow_locked=0, allow_risk_override=0):
+def preview_manual_schedule_adjustment(
+	segment_name,
+	target_workstation=None,
+	before_segment_name=None,
+	target_start_time=None,
+	target_end_time=None,
+	target_qty=None,
+	allow_locked=0,
+	allow_risk_override=0,
+	allow_overproduction=0,
+):
 	_require_plan_access()
 	return planning.preview_manual_schedule_adjustment(
 		segment_name=segment_name,
@@ -496,13 +551,26 @@ def preview_manual_schedule_adjustment(segment_name, target_workstation=None, be
 		before_segment_name=before_segment_name,
 		target_start_time=target_start_time,
 		target_end_time=target_end_time,
+		target_qty=frappe.utils.flt(target_qty) if target_qty not in (None, "") else None,
 		allow_locked=frappe.utils.cint(allow_locked),
 		allow_risk_override=frappe.utils.cint(allow_risk_override),
+		allow_overproduction=frappe.utils.cint(allow_overproduction),
 	)
 
 
 @frappe.whitelist()
-def apply_manual_schedule_adjustment(segment_name, target_workstation=None, before_segment_name=None, target_start_time=None, target_end_time=None, manual_note=None, allow_locked=0, allow_risk_override=0):
+def apply_manual_schedule_adjustment(
+	segment_name,
+	target_workstation=None,
+	before_segment_name=None,
+	target_start_time=None,
+	target_end_time=None,
+	target_qty=None,
+	manual_note=None,
+	allow_locked=0,
+	allow_risk_override=0,
+	allow_overproduction=0,
+):
 	_require_release_access()
 	return planning.apply_manual_schedule_adjustment(
 		segment_name=segment_name,
@@ -510,9 +578,11 @@ def apply_manual_schedule_adjustment(segment_name, target_workstation=None, befo
 		before_segment_name=before_segment_name,
 		target_start_time=target_start_time,
 		target_end_time=target_end_time,
+		target_qty=frappe.utils.flt(target_qty) if target_qty not in (None, "") else None,
 		manual_note=manual_note,
 		allow_locked=frappe.utils.cint(allow_locked),
 		allow_risk_override=frappe.utils.cint(allow_risk_override),
+		allow_overproduction=frappe.utils.cint(allow_overproduction),
 	)
 
 
@@ -711,6 +781,7 @@ def get_net_requirement_page_data(
 			"demand_qty",
 			"available_stock_qty",
 			"open_work_order_qty",
+			"existing_work_order_policy",
 			"safety_stock_gap_qty",
 			"max_stock_qty",
 			"overstock_qty",
@@ -840,6 +911,7 @@ def get_run_console_data(company=None, plant_floor=None):
 			"planning_date",
 			"status",
 			"approval_state",
+			"existing_work_order_policy",
 			"total_net_requirement_qty",
 			"total_scheduled_qty",
 			"total_unscheduled_qty",
@@ -1200,9 +1272,9 @@ def get_release_center_data(run_name=None):
 		row["root_cause_text"] = diagnostic.get("root_cause_text") or row.get("resolution_hint") or row.get("message")
 		row["suggested_actions"] = diagnostic.get("suggested_actions") or []
 		row["has_resolution_context"] = 1
-		row["gantt_route"] = f"aps-schedule-gantt?run_name={run_name}" if run_name else ""
-		row["execution_route"] = f"aps-release-center?run_name={run_name}" if run_name else ""
-		row["source_route"] = f"Form/{row['source_doctype']}/{row['source_name']}" if row.get("source_doctype") and row.get("source_name") else ""
+		row.update(_build_exception_routes(row))
+		exception_run_name = row.get("planning_run") or run_name
+		row["execution_route"] = f"aps-release-center?{urlencode({'run_name': exception_run_name})}" if exception_run_name else ""
 		row["item_route"] = f"Form/Item/{row['item_code']}" if row.get("item_code") else ""
 		row["workstation_route"] = f"Form/Workstation/{row['workstation']}" if row.get("workstation") else ""
 	run_context = planning.get_next_actions_for_context("APS Planning Run", run_name) if run_name else None
