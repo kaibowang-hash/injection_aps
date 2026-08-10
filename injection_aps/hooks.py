@@ -5,7 +5,7 @@ app_description = "Injection planning and scheduling for ERPNext"
 app_email = "kaibo_wang@whjichen.cn"
 app_license = "mit"
 
-required_apps = ["erpnext", "zelin_pp", "light_mes", "mold_management"]
+required_apps = ["erpnext", "apps/zelin_pp", "apps/light_mes", "apps/mold_management"]
 
 doctype_js = {
 	"APS Planning Run": "public/js/aps_planning_run.js",

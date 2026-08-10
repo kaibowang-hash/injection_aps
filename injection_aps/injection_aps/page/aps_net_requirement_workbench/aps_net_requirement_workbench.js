@@ -193,17 +193,17 @@ class InjectionAPSNetRequirementWorkbench {
 	getTableFilterHtml() {
 		const state = this.tableFilterState || {};
 		return `
-			<form class="ia-table-search-strip" data-ia-net-search="1">
+			<form class="ia-toolbar-search ia-table-search-strip" data-ia-net-search="1">
 				<label class="ia-table-search-field">
 					<input
 						type="search"
-						class="form-control input-sm ia-table-search-input"
+						class="form-control input-xs ia-table-search-input"
 						value="${injection_aps.ui.escape(state.search_text || "")}"
 						placeholder="${injection_aps.ui.escape(__("Search Item Code"))}"
 						data-ia-net-search-input="1"
 					>
 				</label>
-				<button type="submit" class="ia-table-search-button">${__("Find")}</button>
+				<button type="submit" class="btn btn-xs btn-default ia-table-search-button">${__("Find")}</button>
 			</form>
 		`;
 	}
