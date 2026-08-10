@@ -5,7 +5,22 @@ app_description = "Injection planning and scheduling for ERPNext"
 app_email = "kaibo_wang@whjichen.cn"
 app_license = "mit"
 
-required_apps = ["erpnext", "zelin_pp", "light_mes", "mold_management"]
+import pathlib as _pathlib
+
+_apps_dir = _pathlib.Path(__file__).resolve().parents[2]
+
+
+def _local_app_or_name(app_name):
+	app_path = _apps_dir / app_name
+	return str(app_path) if app_path.exists() else app_name
+
+
+required_apps = [
+	"erpnext",
+	_local_app_or_name("zelin_pp"),
+	_local_app_or_name("light_mes"),
+	_local_app_or_name("mold_management"),
+]
 
 doctype_js = {
 	"APS Planning Run": "public/js/aps_planning_run.js",

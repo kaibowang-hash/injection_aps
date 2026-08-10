@@ -504,20 +504,29 @@ class InjectionAPSScheduleConsole {
 			frappe.show_alert({ message: __("No pending preview to import."), indicator: "orange" });
 			return;
 		}
-		const confirmed = await injection_aps.ui.confirm_action(
-			{ action_key: rebuildNextStep ? "import_and_promote" : "import_only", confirm_required: 1 },
-			{
-				title: rebuildNextStep ? __("Confirm Import and Rebuild") : __("Confirm Import"),
-				summary_lines: [
-					__("Customer: {0}").replace("{0}", this.pendingImport.payload.customer || "-"),
-					__("Company: {0}").replace("{0}", this.pendingImport.payload.company || "-"),
-					__("Schedule Scope: {0}").replace("{0}", this.pendingImport.payload.schedule_scope || "-"),
-					__("Version: {0}").replace("{0}", this.pendingImport.payload.version_no || "-"),
-					__("Import Strategy: {0}").replace("{0}", injection_aps.ui.translate(this.pendingImport.payload.import_strategy || "-")),
-					rebuildNextStep ? __("This will formally import the schedule and rebuild demand / net requirements.") : __("This will formally import the current schedule version."),
-				],
-			}
-		);
+		const confirmationAction = { action_key: rebuildNextStep ? "import_and_promote" : "import_only", confirm_required: 1 };
+		const confirmationOptions = {
+			title: rebuildNextStep ? __("Confirm Import and Rebuild") : __("Confirm Import"),
+			summary_lines: [
+				__("Customer: {0}").replace("{0}", this.pendingImport.payload.customer || "-"),
+				__("Company: {0}").replace("{0}", this.pendingImport.payload.company || "-"),
+				__("Schedule Scope: {0}").replace("{0}", this.pendingImport.payload.schedule_scope || "-"),
+				__("Version: {0}").replace("{0}", this.pendingImport.payload.version_no || "-"),
+				__("Import Strategy: {0}").replace("{0}", injection_aps.ui.translate(this.pendingImport.payload.import_strategy || "-")),
+				rebuildNextStep ? __("This will formally import the schedule and rebuild demand / net requirements.") : __("This will formally import the current schedule version."),
+			],
+		};
+		let existingWorkOrderPolicy = null;
+		let confirmed = false;
+		if (rebuildNextStep) {
+			existingWorkOrderPolicy = await injection_aps.ui.confirm_net_requirement_calculation(
+				confirmationAction,
+				confirmationOptions
+			);
+			confirmed = Boolean(existingWorkOrderPolicy);
+		} else {
+			confirmed = await injection_aps.ui.confirm_action(confirmationAction, confirmationOptions);
+		}
 		if (!confirmed) {
 			return;
 		}
@@ -542,6 +551,7 @@ class InjectionAPSScheduleConsole {
 						"injection_aps.api.app.promote_schedule_import_to_net_requirement",
 						{
 							import_batch: imported.import_batch,
+							existing_work_order_policy: existingWorkOrderPolicy,
 						}
 					);
 					injection_aps.ui.show_warnings(promotion.demand_pool, __("Demand Pool Warnings"), "warning_count");

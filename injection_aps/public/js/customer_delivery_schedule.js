@@ -33,7 +33,7 @@ function add_actions(frm) {
 
 	if (injection_aps.ui.can_run_action("rebuild_demand_pool")) {
 		frm.add_custom_button(__("Rebuild Demand"), async () => {
-			const confirmed = await injection_aps.ui.confirm_action(
+			const existingWorkOrderPolicy = await injection_aps.ui.confirm_net_requirement_calculation(
 				{ action_key: "rebuild_demand_pool", confirm_required: 1 },
 				{
 					title: __("Confirm Rebuild Demand"),
@@ -44,7 +44,7 @@ function add_actions(frm) {
 					],
 				}
 			);
-			if (!confirmed) {
+			if (!existingWorkOrderPolicy) {
 				return;
 			}
 			const result = await injection_aps.ui.xcall(
@@ -57,6 +57,7 @@ function add_actions(frm) {
 				{
 					schedule: frm.doc.name,
 					company: frm.doc.company,
+					existing_work_order_policy: existingWorkOrderPolicy,
 				}
 			);
 			if (!result) {

@@ -309,6 +309,15 @@ DEPENDENCY_READ_DOCTYPES = (
 	"User",
 )
 
+DEPENDENCY_DOCTYPE_ROLE_PERMISSIONS = {
+	"Work Order Scheduling": {
+		"System Manager": FULL_FLAGS,
+		ROLE_GMC: FULL_FLAGS,
+		"GMC (Production Material Control - Manager)": FULL_FLAGS,
+		"Manufacturing Manager": FULL_FLAGS,
+	},
+}
+
 
 def ensure_roles_and_permissions():
 	ensure_roles()
@@ -345,9 +354,16 @@ def ensure_dependency_link_permissions():
 	for doctype in DEPENDENCY_READ_DOCTYPES:
 		if not frappe.db.exists("DocType", doctype):
 			continue
-		flags = READ_SELECT_FLAGS if doctype == "User" else READ_NO_EXPORT_FLAGS
-		for role in link_roles:
-			ensure_custom_docperm(doctype=doctype, role=role, flags=flags)
+		default_flags = READ_SELECT_FLAGS if doctype == "User" else READ_NO_EXPORT_FLAGS
+		role_permissions = DEPENDENCY_DOCTYPE_ROLE_PERMISSIONS.get(doctype, {})
+		for role in link_roles | set(role_permissions):
+			ensure_custom_docperm(
+				doctype=doctype,
+				role=role,
+				flags=role_permissions.get(role, default_flags),
+				replace=False,
+				preserve_standard=True,
+			)
 
 
 def ensure_page_and_workspace_roles():
@@ -365,6 +381,8 @@ def ensure_custom_docperm(
 	role: str,
 	flags: Iterable[str],
 	permlevel: int = 0,
+	replace: bool = True,
+	preserve_standard: bool = False,
 ):
 	if not role or not frappe.db.exists("Role", role):
 		return
@@ -378,9 +396,24 @@ def ensure_custom_docperm(
 		"if_owner": 0,
 	}
 	name = frappe.db.get_value("Custom DocPerm", filters)
-	values = {flag: 1 if flag in flags else 0 for flag in PERMISSION_FLAGS}
+	target_flags = set(flags or [])
+	if preserve_standard:
+		standard_values = frappe.db.get_value(
+			"DocPerm",
+			filters,
+			fieldname=list(PERMISSION_FLAGS),
+			as_dict=True,
+		)
+		if standard_values:
+			target_flags.update(flag for flag in PERMISSION_FLAGS if standard_values.get(flag))
+
+	values = {flag: 1 if flag in target_flags else 0 for flag in PERMISSION_FLAGS}
 	if name:
 		docperm = frappe.get_doc("Custom DocPerm", name)
+		if not replace:
+			for flag in PERMISSION_FLAGS:
+				if docperm.get(flag):
+					values[flag] = 1
 		changed = False
 		for fieldname, value in values.items():
 			if docperm.get(fieldname) != value:

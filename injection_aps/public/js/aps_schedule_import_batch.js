@@ -8,25 +8,40 @@ frappe.ui.form.on("APS Schedule Import Batch", {
 			injection_aps.ui.ensure_styles();
 			frm.clear_custom_buttons();
 			if (frm.doc.status === "Imported" && injection_aps.ui.can_run_action("promote_import")) {
-			frm.add_custom_button(__("Promote"), async () => {
-				const response = await injection_aps.ui.xcall(
-					{
-						message: __("Rebuilding demand pool and net requirements..."),
-						success_message: __("Demand / net requirement rebuilt."),
-						busy_key: `import-batch-promote:${frm.doc.name}`,
-					},
-					"injection_aps.api.app.promote_schedule_import_to_net_requirement",
-					{
-						import_batch: frm.doc.name,
+				frm.add_custom_button(__("Promote"), async () => {
+					const existingWorkOrderPolicy = await injection_aps.ui.confirm_net_requirement_calculation(
+						{ action_key: "promote_import", confirm_required: 1 },
+						{
+							title: __("Confirm Import and Rebuild"),
+							summary_lines: [
+								__("Import Batch: {0}").replace("{0}", frm.doc.name),
+								__("Company: {0}").replace("{0}", frm.doc.company || "-"),
+								__("This action will rebuild the demand pool and recalculate net requirements."),
+							],
+						}
+					);
+					if (!existingWorkOrderPolicy) {
+						return;
 					}
-				);
-				if (!response) {
-					return;
-				}
-				injection_aps.ui.show_warnings(response && response.demand_pool, __("Demand Pool Warnings"), "warning_count");
-				injection_aps.ui.show_warnings(response && response.net_requirement, __("Net Requirement Warnings"), "warning_count");
-			});
-		}
+					const response = await injection_aps.ui.xcall(
+						{
+							message: __("Rebuilding demand pool and net requirements..."),
+							success_message: __("Demand / net requirement rebuilt."),
+							busy_key: `import-batch-promote:${frm.doc.name}`,
+						},
+						"injection_aps.api.app.promote_schedule_import_to_net_requirement",
+						{
+							import_batch: frm.doc.name,
+							existing_work_order_policy: existingWorkOrderPolicy,
+						}
+					);
+					if (!response) {
+						return;
+					}
+					injection_aps.ui.show_warnings(response && response.demand_pool, __("Demand Pool Warnings"), "warning_count");
+					injection_aps.ui.show_warnings(response && response.net_requirement, __("Net Requirement Warnings"), "warning_count");
+				});
+			}
 		frm.add_custom_button(__("Net Workbench"), () => injection_aps.ui.go_to("aps-net-requirement-workbench"));
 		try {
 			const context = await frappe.xcall("injection_aps.api.app.get_next_actions_for_context", {

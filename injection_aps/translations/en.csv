@@ -198,3 +198,35 @@ Family Mold 联产,Family Mold Co-Production
 晚班,Night Shift
 打开机台,Open Machine
 当前 APS运算单 {0},Current APS Run {0}
+现有工单处理方式,Existing Work Order Policy
+现有工单策略,Existing WO Policy
+现有工单,Existing work orders
+现有工单：{0},Existing work orders: {0}
+导入批次：{0},Import Batch: {0}
+考虑现有工单,Consider existing work orders
+不考虑现有工单,Do not consider existing work orders
+未选择,Not selected
+确认净需求计算,Confirm Net Requirement Calculation
+每次计算净需求时都必须重新选择。,You must make a fresh selection for every net requirement calculation.
+请明确选择是否考虑现有工单。,Please explicitly select whether to consider existing work orders.
+按数量调整,Adjust Segment Quantity
+调整原因,Reason
+当前数量,Current Qty
+目标生产数量,Target Qty
+当前开始 / 结束时间,Current Start / End
+开始 / 新结束时间,Start / New End
+时长（小时）,Duration Hours
+机台 / 模具,Workstation / Mold
+结果计划量 / 调整后排产量,Result Planned / Projected Scheduled
+未排数量 / 超产数量,Unscheduled / Overproduction
+冲突前最大可排数量,Max Conflict-Free Qty
+数量调整已阻断,Quantity Adjustment Blocked
+人工超产,Manual Overproduction
+目标生产数量必须大于零。,Target quantity must be greater than zero.
+库存计量单位不允许小数，目标生产数量必须为整数。,Target quantity must be a whole number because the stock UOM does not allow fractions.
+目标生产数量与目标结束时间不能同时传入。,Target quantity and target end time cannot be supplied together.
+确认人工超产时必须填写原因。,A reason is required when confirming manual overproduction.
+正在预览数量调整...,Previewing quantity adjustment...
+数量调整预览已生成。,Quantity adjustment preview is ready.
+正在应用数量调整...,Applying quantity adjustment...
+排程段数量已调整。,Segment quantity adjusted.

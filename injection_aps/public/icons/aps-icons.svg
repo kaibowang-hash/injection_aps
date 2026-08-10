@@ -14,6 +14,11 @@
 	<symbol id="search" viewBox="0 0 24 24">
 		<path d="m21 21-4.3-4.3M10.5 18a7.5 7.5 0 1 1 0-15 7.5 7.5 0 0 1 0 15Z" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
 	</symbol>
+	<symbol id="scissors" viewBox="0 0 24 24">
+		<circle cx="6" cy="6" r="3" fill="none" stroke="currentColor" stroke-width="2"/>
+		<circle cx="6" cy="18" r="3" fill="none" stroke="currentColor" stroke-width="2"/>
+		<path d="m8.1 8.1 11.4 11.4M8.1 15.9 19.5 4.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+	</symbol>
 	<symbol id="trash-2" viewBox="0 0 24 24">
 		<path d="M3 6h18M8 6V4h8v2m-1 5v6M9 11v6M5 6l1 15h12l1-15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
 	</symbol>

@@ -777,7 +777,7 @@ class InjectionAPSReleaseCenter {
 				if (column.fieldname === "actions_html") {
 					return `
 						<div class="ia-row-actions">
-							${injection_aps.ui.icon_button("external-link", __("Open Source"), { "data-open-source": row.source_name || "", "data-source-doctype": row.source_doctype || "" })}
+							${injection_aps.ui.icon_button("external-link", __("Open Source"), { "data-source-route": row.source_route || "", disabled: row.source_route ? null : "disabled" })}
 							${injection_aps.ui.icon_button("search", __("Resolution Guidance"), { "data-open-resolution": row.name || "" })}
 						</div>
 					`;
@@ -794,13 +794,15 @@ class InjectionAPSReleaseCenter {
 		);
 
 		$(this.exceptionTable)
-			.find("[data-open-source]")
+			.find("[data-source-route]")
 			.each((_, node) => {
 				node.addEventListener("click", () => {
-					const doctype = node.dataset.sourceDoctype;
-					const name = node.dataset.openSource;
-					if (doctype && name) {
-						frappe.set_route("Form", doctype, name);
+					const route = node.dataset.sourceRoute;
+					if (route && route.startsWith("Form/")) {
+						const [, doctype, ...nameParts] = route.split("/");
+						frappe.set_route("Form", doctype, nameParts.join("/"));
+					} else if (route) {
+						injection_aps.ui.go_to(route);
 					}
 				});
 			});

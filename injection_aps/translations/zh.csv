@@ -1108,7 +1108,7 @@ Schedule impact applied.,影响重排已应用。
 Impact applied. Refreshing Gantt...,影响已应用，正在刷新甘特图...
 Previewing segment split...,正在预览排程段切分...
 Split preview is ready.,排程段切分预览已生成。
-Split preview is ready, but this user cannot apply the split.,排程段切分预览已生成，但当前用户不能应用切分。
+"Split preview is ready, but this user cannot apply the split.",排程段切分预览已生成，但当前用户不能应用切分。
 Split Preview,切分预览
 Split Blocked,切分被阻止
 Apply this segment split?,确认应用此排程段切分？
@@ -1166,11 +1166,11 @@ Preview is truncated. Open the generated proposal batch to review all rows.,预�
 No WOS proposal rows are needed for this date and shift.,该日期和班次没有需要生成的 WOS 建议行。
 All Shifts,全部班次
 Generated from APS work order proposal batch {0} for {1} to {2} ({3}). Review against existing day/night shift scheduling before formal reconciliation.,由 APS 工单建议批次 {0} 生成，范围 {1} 至 {2}（{3}）。正式同步前请对照已有白/夜班 WOS 排产。
-WOS proposals for Work Order {0} would schedule {1}, exceeding Work Order qty {2}.,工单 {0} 的 WOS 建议排产数量将达到 {1}，超过工单数量 {2}。
+"WOS proposals for Work Order {0} would schedule {1}, exceeding Work Order qty {2}.",工单 {0} 的 WOS 建议排产数量将达到 {1}，超过工单数量 {2}。
 Downtime window does not apply to this segment lane.,停产窗口不适用于该排程段所在机台。
 Downtime window does not overlap this segment.,停产窗口未与该排程段重叠。
 Segment has no usable capacity rate for splitting.,该排程段没有可用于切分的产能速率。
-Provide split_time, split_qty, or downtime_window.,请提供切分时间、切分数量或停产窗口。
+"Provide split_time, split_qty, or downtime_window.",请提供切分时间、切分数量或停产窗口。
 Split point must be inside the segment time window.,切分点必须位于排程段时间范围内。
 Split quantity must be between 0 and the segment planned quantity.,切分数量必须大于 0 且小于排程段计划数量。
 Split would create an empty segment.,切分会产生空排程段。
@@ -1501,3 +1501,57 @@ WOS proposal batch generated.,WOS 建议批次已生成。,Injection APS Executi
 No WOS proposal rows are available for this date/shift.,该日期/班次没有可下发的 WOS 建议行。,Injection APS Execution
 Select a release date first.,请先选择下发日期。,Injection APS Execution
 There are existing un-applied proposal batches for this date/shift.,该日期/班次已有未应用的建议批次。,Injection APS Execution
+Existing Work Order Policy,现有工单处理方式
+Existing WO Policy,现有工单策略
+Existing work orders,现有工单
+Existing work orders: {0},现有工单：{0}
+Import Batch: {0},导入批次：{0}
+Consider existing work orders,考虑现有工单
+Do not consider existing work orders,不考虑现有工单
+Include,考虑
+Exclude,不考虑
+Not selected,未选择
+Confirm Net Requirement Calculation,确认净需求计算
+You must make a fresh selection for every net requirement calculation.,每次计算净需求时都必须重新选择。
+Please explicitly select whether to consider existing work orders.,请明确选择是否考虑现有工单。
+Please explicitly select whether to include or exclude existing work orders before calculating net requirements.,计算净需求前，请明确选择考虑或不考虑现有工单。
+"Demand {0} - APS-usable stock {1} - included existing open work orders {2} + one-time safety gap {3}; remaining overstock {4}; minimum batch {5}; planning qty {6}.",需求 {0} - 本次 APS 可用库存 {1} - 已考虑的现有未完工工单 {2} + 一次性安全库存缺口 {3}；剩余超库存 {4}；最小经济批量 {5}；建议排产数量 {6}。
+"Demand {0} - APS-usable stock {1}; existing open work orders were explicitly excluded + one-time safety gap {2}; remaining overstock {3}; minimum batch {4}; planning qty {5}.",需求 {0} - 本次 APS 可用库存 {1}；已明确不考虑现有未完工工单 + 一次性安全库存缺口 {2}；剩余超库存 {3}；最小经济批量 {4}；建议排产数量 {5}。
+Adjust Segment Quantity,按数量调整
+Reason,调整原因
+Current Qty,当前数量
+Target Qty,目标生产数量
+Current Start / End,当前开始 / 结束时间
+Start / New End,开始 / 新结束时间
+Duration Hours,时长（小时）
+Workstation / Mold,机台 / 模具
+Result Planned / Projected Scheduled,结果计划量 / 调整后排产量
+Unscheduled / Overproduction,未排数量 / 超产数量
+Max Conflict-Free Qty,冲突前最大可排数量
+Quantity Adjustment Blocked,数量调整已阻断
+Manual Overproduction,人工超产
+You do not have permission to adjust segment quantity.,您没有调整排程段数量的权限。
+Switch to Machine view to adjust segment quantity.,请切换到机台视图后调整排程段数量。
+Family co-product segments follow the primary segment and cannot be adjusted directly.,联产排程段跟随主排程段，不能单独调整。
+Locked segments cannot be adjusted.,已锁定排程段不能调整。
+Released or completed segments cannot be adjusted from Gantt.,已下发或已完成的排程段不能在 Gantt 中调整。
+Target quantity must be greater than zero.,目标生产数量必须大于零。
+Target quantity must be a whole number because the stock UOM does not allow fractions.,库存计量单位不允许小数，目标生产数量必须为整数。
+Target quantity and target end time cannot be supplied together.,目标生产数量与目标结束时间不能同时传入。
+This adjustment exceeds the result planned quantity. Confirm manual overproduction before applying.,本次调整超出结果计划总量，应用前必须明确确认人工超产。
+A reason is required when confirming manual overproduction.,确认人工超产时必须填写原因。
+"This change exceeds the result planned quantity by {0}. Applying it requires a second confirmation and a reason.",本次调整超出结果计划总量 {0}。应用时需要二次确认并填写原因。
+"Confirm scheduling {0}, which exceeds the result planned quantity by {1}? The APS run will require reapproval.",确认将排程段调整为 {0} 并超出结果计划总量 {1} 吗？APS 运算单将需要重新审批。
+Apply target quantity {0} and resize this segment?,应用目标生产数量 {0} 并调整排程段长度吗？
+Previewing quantity adjustment...,正在预览数量调整...
+Quantity adjustment preview is ready.,数量调整预览已生成。
+Quantity preview is ready, but this user cannot apply the adjustment.,数量调整预览已生成，但当前用户没有应用权限。
+Applying quantity adjustment...,正在应用数量调整...
+Segment quantity adjusted.,排程段数量已调整。
+Segment quantity adjusted. Refreshing Gantt...,排程段数量已调整，正在刷新 Gantt...
+Manual quantity adjustment to {0} on {1} with mold {2}.,将排程段人工调整为数量 {0}，机台 {1}，模具 {2}。
+Manual overproduction of {0} is being confirmed.,正在确认人工超产 {0}。
+Manual overproduction of {0} was confirmed. Reason: {1},已确认人工超产 {0}。原因：{1}
+"Manual quantity adjustment for {0} schedules {1} against planned quantity {2}, exceeding it by {3}.",物料 {0} 人工数量调整后排产 {1}，结果计划量为 {2}，超出 {3}。
+Reason: {0}. Reapprove the APS run before releasing work order proposals.,原因：{0}。下发工单建议前请重新审批 APS 运算单。
+Segment {0} is released or already has execution feedback.,排程段 {0} 已下发或已有执行反馈。
