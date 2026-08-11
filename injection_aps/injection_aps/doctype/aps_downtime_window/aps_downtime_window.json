@@ -11,6 +11,7 @@
   "workstation",
   "start_time",
   "end_time",
+  "available_capacity_percent",
   "reason",
   "status",
   "planning_run",
@@ -66,6 +67,13 @@
    "label": "End Time",
    "reqd": 1,
    "search_index": 1
+  },
+  {
+   "default": "0",
+   "description": "0 means full downtime; 1-99 means reduced available capacity.",
+   "fieldname": "available_capacity_percent",
+   "fieldtype": "Percent",
+   "label": "Available Capacity Percent"
   },
   {
    "fieldname": "reason",

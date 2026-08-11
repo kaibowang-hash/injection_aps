@@ -1,7 +1,8 @@
-frappe.require("/assets/injection_aps/js/injection_aps_shared.js");
+const CUSTOMER_SCHEDULE_SHARED_READY = frappe.require("/assets/injection_aps/js/injection_aps_shared.js");
 
 frappe.ui.form.on("Customer Delivery Schedule", {
 	async refresh(frm) {
+		await CUSTOMER_SCHEDULE_SHARED_READY;
 		injection_aps.ui.ensure_styles();
 		await render_flow(frm);
 		add_actions(frm);
@@ -25,8 +26,36 @@ async function render_flow(frm) {
 	}
 }
 
+function protect_active_schedule(frm) {
+	if (frm.is_new() || frm.doc.status !== "Active") {
+		return;
+	}
+	frm.disable_save();
+	(frm.meta.fields || []).forEach((field) => {
+		if (field.fieldname) {
+			frm.set_df_property(field.fieldname, "read_only", 1);
+		}
+	});
+	frm.dashboard.set_headline(
+		__(
+			"Active customer delivery schedules are read-only. Use Schedule Import & Diff or Change Impact Center.",
+			null,
+			"Injection APS"
+		)
+	);
+}
+
 function add_actions(frm) {
 	frm.clear_custom_buttons();
+	protect_active_schedule(frm);
+	frm.add_custom_button(
+		__("Open Schedule Import & Diff", null, "Injection APS"),
+		() => frappe.set_route("aps-schedule-console")
+	);
+	frm.add_custom_button(
+		__("Open Change Impact Center", null, "Injection APS"),
+		() => frappe.set_route("aps-change-impact-center")
+	);
 	if (!frm.doc.customer || !frm.doc.company) {
 		return;
 	}
@@ -90,6 +119,9 @@ async function show_version_diff(frm) {
 			customer: frm.doc.customer,
 			company: frm.doc.company,
 			version_no: frm.doc.version_no || frm.doc.name,
+			schedule_scope: frm.doc.schedule_scope || frm.doc.version_no || frm.doc.name,
+			import_strategy: frm.doc.import_strategy || "Replace Scope",
+			duplicate_policy: "Block",
 			rows_json: JSON.stringify(
 				(frm.doc.items || []).map((row) => ({
 					sales_order: row.sales_order,

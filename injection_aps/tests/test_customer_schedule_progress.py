@@ -162,7 +162,7 @@ class TestCustomerScheduleProgress(FrappeTestCase):
 		assert row["production_covered_qty"] == 100
 		assert get_datetime(row["projected_completion_time"]) == get_datetime(actual_time)
 
-	def test_family_co_product_segment_covers_co_product_schedule(self):
+	def test_family_co_product_segment_does_not_cover_without_explicit_allocation(self):
 		self._create_schedule(
 			customer=self.customer_a,
 			item_code=self.co_product_item,
@@ -187,21 +187,64 @@ class TestCustomerScheduleProgress(FrappeTestCase):
 				run_name=run.name,
 			)["rows"][0]
 
-		assert row["production_covered_qty"] == 50
-		assert row["status"] == "On Track"
+		assert row["production_covered_qty"] == 0
+		assert row["uncovered_qty"] == 50
+		assert row["result_names"] == []
+		assert row["status"] == "Uncovered"
+
+	def test_fulfillment_metrics_do_not_duplicate_a_later_demand_used_as_fifo_supply(self):
+		row = {
+			"customer": self.customer_a,
+			"item_code": self.item,
+			"schedule_date": add_days(today(), 2),
+			"required_qty": 100,
+			"delivered_qty": 20,
+			"result_names": ["RESULT-EARLY", "RESULT-LATER"],
+		}
+		projections = [
+			{
+				"result": "RESULT-EARLY",
+				"customer": self.customer_a,
+				"item_code": self.item,
+				"requested_date": add_days(today(), 2),
+				"prebuild_qty": 30,
+				"jit_qty": 70,
+				"actual_good_qty": 45,
+				"current_deliverable_qty": 25,
+			},
+			{
+				"result": "RESULT-LATER",
+				"customer": self.customer_a,
+				"item_code": self.item,
+				"requested_date": add_days(today(), 3),
+				"prebuild_qty": 30,
+				"jit_qty": 0,
+				"actual_good_qty": 30,
+				"current_deliverable_qty": 0,
+			},
+		]
+
+		planning._attach_customer_schedule_fulfillment(row, projections)
+
+		assert row["prebuild_qty"] == 30
+		assert row["jit_qty"] == 70
+		assert row["actual_good_qty"] == 45
+		assert row["current_deliverable_qty"] == 25
 
 	def test_api_requires_read_access_only(self):
 		from injection_aps.api import app
 
 		with (
 			patch("injection_aps.api.app.require_any_role") as require_any_role,
+			patch("injection_aps.api.app._require_scope_access") as require_scope,
 			patch("injection_aps.api.app.planning.get_customer_schedule_progress_data", return_value={"rows": []}) as service,
 		):
 			data = app.get_customer_schedule_progress_data(company=self.company, item_code=self.item, limit=1)
 
-		assert data == {"rows": []}
+		assert data["rows"] == []
 		assert require_any_role.call_count == 1
 		assert require_any_role.call_args.args[0] == app.APS_READ_ROLES
+		require_scope.assert_called_once_with(company=self.company, customer=None, planning_run=None)
 		service.assert_called_once_with(
 			company=self.company,
 			customer=None,
@@ -235,6 +278,7 @@ class TestCustomerScheduleProgress(FrappeTestCase):
 				],
 			}
 		)
+		doc.flags.aps_schedule_import_transition = True
 		self._insert_doc(doc)
 		return doc
 

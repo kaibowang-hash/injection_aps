@@ -1,6 +1,6 @@
 {
  "actions": [],
- "allow_rename": 1,
+ "allow_rename": 0,
  "autoname": "APS-IMP-.#####",
  "doctype": "DocType",
  "engine": "InnoDB",
@@ -10,6 +10,9 @@
   "schedule_scope",
   "version_no",
   "import_strategy",
+  "duplicate_policy",
+  "import_fingerprint",
+  "schedule_reference",
   "source_type",
   "uploaded_file",
   "parser_mode",
@@ -17,7 +20,10 @@
   "status",
   "imported_rows",
   "effective_rows",
+  "previous_total_qty",
+  "post_import_total_qty",
   "change_summary",
+  "duplicate_summary",
   "mapping_json"
  ],
  "fields": [
@@ -27,6 +33,7 @@
    "in_list_view": 1,
    "label": "Customer",
    "options": "Customer",
+   "read_only": 1,
    "reqd": 1
   },
   {
@@ -35,6 +42,7 @@
    "in_list_view": 1,
    "label": "Company",
    "options": "Company",
+   "read_only": 1,
    "reqd": 1
   },
   {
@@ -48,6 +56,7 @@
    "fieldtype": "Data",
    "in_list_view": 1,
    "label": "Version No",
+   "read_only": 1,
    "reqd": 1
   },
   {
@@ -55,7 +64,30 @@
    "fieldname": "import_strategy",
    "fieldtype": "Select",
    "label": "Import Strategy",
-   "options": "\nReplace Scope\nPartial Item Update\nAppend",
+   "options": "\nReplace Scope\nPartial Update\nAppend",
+   "read_only": 1
+  },
+  {
+   "default": "Block",
+   "fieldname": "duplicate_policy",
+   "fieldtype": "Select",
+   "label": "Duplicate Policy",
+   "options": "\nBlock\nSum",
+   "read_only": 1
+  },
+  {
+   "fieldname": "import_fingerprint",
+   "fieldtype": "Data",
+   "label": "Import Fingerprint",
+   "read_only": 1,
+   "search_index": 1,
+   "unique": 1
+  },
+  {
+   "fieldname": "schedule_reference",
+   "fieldtype": "Link",
+   "label": "Schedule Reference",
+   "options": "Customer Delivery Schedule",
    "read_only": 1
   },
   {
@@ -63,12 +95,14 @@
    "fieldname": "source_type",
    "fieldtype": "Select",
    "label": "Source Type",
-   "options": "\nCustomer Delivery Schedule\nForecast\nUrgent Order"
+   "options": "\nCustomer Delivery Schedule\nForecast\nUrgent Order",
+   "read_only": 1
   },
   {
    "fieldname": "uploaded_file",
    "fieldtype": "Attach",
-   "label": "Uploaded File"
+   "label": "Uploaded File",
+   "read_only": 1
   },
   {
    "fieldname": "parser_mode",
@@ -105,9 +139,27 @@
    "read_only": 1
   },
   {
+   "fieldname": "previous_total_qty",
+   "fieldtype": "Float",
+   "label": "Previous Total Qty",
+   "read_only": 1
+  },
+  {
+   "fieldname": "post_import_total_qty",
+   "fieldtype": "Float",
+   "label": "Post Import Total Qty",
+   "read_only": 1
+  },
+  {
    "fieldname": "change_summary",
    "fieldtype": "Small Text",
    "label": "Change Summary",
+   "read_only": 1
+  },
+  {
+   "fieldname": "duplicate_summary",
+   "fieldtype": "Long Text",
+   "label": "Duplicate Summary",
    "read_only": 1
   },
   {
@@ -122,39 +174,31 @@
  "name": "APS Schedule Import Batch",
  "permissions": [
   {
-   "create": 1,
-   "delete": 1,
    "email": 1,
    "export": 1,
    "print": 1,
    "read": 1,
    "report": 1,
    "role": "System Manager",
-   "share": 1,
-   "write": 1
+   "share": 1
   },
   {
-   "create": 1,
-   "delete": 1,
    "email": 1,
    "export": 1,
    "print": 1,
    "read": 1,
    "report": 1,
    "role": "Manufacturing Manager",
-   "share": 1,
-   "write": 1
+   "share": 1
   },
   {
-   "create": 1,
    "email": 1,
    "export": 1,
    "print": 1,
    "read": 1,
    "report": 1,
    "role": "Sales User",
-   "share": 1,
-   "write": 1
+   "share": 1
   }
  ],
  "sort_field": "modified",

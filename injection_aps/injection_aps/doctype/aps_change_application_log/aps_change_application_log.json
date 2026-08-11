@@ -1,0 +1,216 @@
+{
+ "actions": [],
+ "allow_rename": 0,
+ "autoname": "APS-CAL-.#####",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "change_request",
+  "planning_run",
+  "change_type",
+  "application_fingerprint",
+  "analysis_fingerprint",
+  "analyzed_by",
+  "analyzed_on",
+  "pmc_confirmed_by",
+  "pmc_confirmed_on",
+  "approved_by",
+  "approved_on",
+  "applied_by",
+  "applied_on",
+  "before_snapshot_hash",
+  "after_snapshot_hash",
+  "proposal_json",
+  "before_snapshot_json",
+  "after_snapshot_json",
+  "application_result_json"
+ ],
+ "fields": [
+  {
+   "fieldname": "change_request",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Change Request",
+   "options": "APS Change Request",
+   "read_only": 1,
+   "reqd": 1,
+   "search_index": 1,
+   "unique": 1
+  },
+  {
+   "fieldname": "planning_run",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Planning Run",
+   "options": "APS Planning Run",
+   "read_only": 1,
+   "reqd": 1,
+   "search_index": 1
+  },
+  {
+   "fieldname": "change_type",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Change Type",
+   "read_only": 1
+  },
+  {
+   "fieldname": "application_fingerprint",
+   "fieldtype": "Data",
+   "label": "Application Fingerprint",
+   "read_only": 1,
+   "reqd": 1,
+   "search_index": 1,
+   "unique": 1
+  },
+  {
+   "fieldname": "analysis_fingerprint",
+   "fieldtype": "Data",
+   "label": "Analysis Fingerprint",
+   "read_only": 1
+  },
+  {
+   "fieldname": "analyzed_by",
+   "fieldtype": "Link",
+   "label": "Analyzed By",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "fieldname": "analyzed_on",
+   "fieldtype": "Datetime",
+   "label": "Analyzed On",
+   "read_only": 1
+  },
+  {
+   "fieldname": "pmc_confirmed_by",
+   "fieldtype": "Link",
+   "label": "PMC Confirmed By",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "fieldname": "pmc_confirmed_on",
+   "fieldtype": "Datetime",
+   "label": "PMC Confirmed On",
+   "read_only": 1
+  },
+  {
+   "fieldname": "approved_by",
+   "fieldtype": "Link",
+   "label": "Approved By",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "fieldname": "approved_on",
+   "fieldtype": "Datetime",
+   "label": "Approved On",
+   "read_only": 1
+  },
+  {
+   "fieldname": "applied_by",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Applied By",
+   "options": "User",
+   "read_only": 1,
+   "reqd": 1
+  },
+  {
+   "fieldname": "applied_on",
+   "fieldtype": "Datetime",
+   "in_list_view": 1,
+   "label": "Applied On",
+   "read_only": 1,
+   "reqd": 1
+  },
+  {
+   "fieldname": "before_snapshot_hash",
+   "fieldtype": "Data",
+   "label": "Before Snapshot Hash",
+   "read_only": 1,
+   "reqd": 1
+  },
+  {
+   "fieldname": "after_snapshot_hash",
+   "fieldtype": "Data",
+   "label": "After Snapshot Hash",
+   "read_only": 1,
+   "reqd": 1
+  },
+  {
+   "fieldname": "proposal_json",
+   "fieldtype": "Code",
+   "hidden": 1,
+   "label": "Proposal JSON",
+   "options": "JSON",
+   "permlevel": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "before_snapshot_json",
+   "fieldtype": "Code",
+   "hidden": 1,
+   "label": "Before Snapshot JSON",
+   "options": "JSON",
+   "permlevel": 1,
+   "read_only": 1,
+   "reqd": 1
+  },
+  {
+   "fieldname": "after_snapshot_json",
+   "fieldtype": "Code",
+   "hidden": 1,
+   "label": "After Snapshot JSON",
+   "options": "JSON",
+   "permlevel": 1,
+   "read_only": 1,
+   "reqd": 1
+  },
+  {
+   "fieldname": "application_result_json",
+   "fieldtype": "Code",
+   "hidden": 1,
+   "label": "Application Result JSON",
+   "options": "JSON",
+   "permlevel": 1,
+   "read_only": 1
+  }
+ ],
+ "links": [],
+ "module": "Injection APS",
+ "name": "APS Change Application Log",
+ "permissions": [
+  {
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1
+  },
+  {
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Manufacturing Manager",
+   "share": 1
+  },
+  {
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "PMC",
+   "share": 1
+  }
+ ],
+ "sort_field": "creation",
+ "sort_order": "DESC",
+ "track_changes": 0
+}

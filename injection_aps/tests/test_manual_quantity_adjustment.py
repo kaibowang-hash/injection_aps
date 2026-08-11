@@ -47,6 +47,10 @@ class TestManualQuantityAdjustment(TestCase):
 
 		with (
 			patch("injection_aps.services.planning.frappe.get_precision", return_value=3),
+			patch(
+				"injection_aps.services.planning.frappe.get_system_settings",
+				return_value="Banker's Rounding (legacy)",
+			),
 			patch("injection_aps.services.planning.frappe.db.get_value", side_effect=get_value),
 		):
 			with self.assertRaises(frappe.ValidationError):
@@ -66,6 +70,10 @@ class TestManualQuantityAdjustment(TestCase):
 
 		with (
 			patch("injection_aps.services.planning.frappe.get_precision", return_value=2),
+			patch(
+				"injection_aps.services.planning.frappe.get_system_settings",
+				return_value="Banker's Rounding (legacy)",
+			),
 			patch("injection_aps.services.planning.frappe.db.get_value", side_effect=get_value),
 		):
 			self.assertEqual(planning._normalize_manual_target_qty("ITEM-1", 1.236), 1.24)
@@ -137,6 +145,14 @@ class TestManualQuantityAdjustment(TestCase):
 		with (
 			patch("injection_aps.api.app._require_plan_access"),
 			patch("injection_aps.api.app._require_release_access"),
+			patch("injection_aps.api.app._require_scoped_document_access"),
+			patch("injection_aps.api.app._require_document_access"),
+			patch("injection_aps.api.app._lock_planning_run_scope"),
+			patch("injection_aps.api.app._require_complete_run_mutation_scope"),
+			patch(
+				"injection_aps.api.app.frappe.db.get_value",
+				side_effect=["RESULT-1", "RUN-1"],
+			),
 			patch(
 				"injection_aps.api.app.planning.preview_manual_schedule_adjustment",
 				return_value={},
@@ -154,8 +170,10 @@ class TestManualQuantityAdjustment(TestCase):
 				manual_note="Approved",
 			)
 
-		self.assertEqual(preview.call_args.kwargs["target_qty"], 12.5)
-		self.assertEqual(preview.call_args.kwargs["allow_overproduction"], 0)
+		self.assertEqual(preview.call_args_list[0].kwargs["target_qty"], 12.5)
+		self.assertEqual(preview.call_args_list[0].kwargs["allow_overproduction"], 0)
+		self.assertEqual(preview.call_args_list[1].kwargs["target_qty"], 13.5)
+		self.assertEqual(preview.call_args_list[1].kwargs["allow_overproduction"], 1)
 		self.assertEqual(apply.call_args.kwargs["target_qty"], 13.5)
 		self.assertEqual(apply.call_args.kwargs["allow_overproduction"], 1)
 		self.assertEqual(apply.call_args.kwargs["manual_note"], "Approved")

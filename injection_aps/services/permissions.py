@@ -99,30 +99,46 @@ APS_PAGE_NAMES = (
 	"aps-run-console",
 	"aps-schedule-gantt",
 	"aps-release-center",
+	"aps-change-impact-center",
 )
+APS_PAGE_ROLE_MAP = {
+	"aps-change-impact-center": {
+		"System Manager",
+		ROLE_GMC,
+		ROLE_PMC,
+		"Sales Manager",
+		"Sales User",
+		"Purchase Manager",
+		"Purchase User",
+		"Manufacturing Manager",
+		"Manufacturing User",
+		"Stock Manager",
+		"Stock User",
+	},
+}
 APS_WORKSPACE_NAMES = ("Injection APS",)
 
 APS_DOCTYPE_PERMISSIONS = {
 	"Customer Delivery Schedule": {
-		ROLE_GMC: FULL_FLAGS,
-		ROLE_PMC: WRITE_FLAGS,
-		"Sales Manager": WRITE_FLAGS,
-		"Sales User": WRITE_FLAGS,
+		ROLE_GMC: READ_FLAGS,
+		ROLE_PMC: READ_FLAGS,
+		"Sales Manager": READ_FLAGS,
+		"Sales User": READ_FLAGS,
 		"Purchase Manager": READ_FLAGS,
 		"Purchase User": READ_FLAGS,
-		"Manufacturing Manager": FULL_FLAGS,
+		"Manufacturing Manager": READ_FLAGS,
 		"Manufacturing User": READ_FLAGS,
 		"Stock Manager": READ_FLAGS,
 		"Stock User": READ_FLAGS,
 	},
 	"APS Schedule Import Batch": {
-		ROLE_GMC: FULL_FLAGS,
-		ROLE_PMC: WRITE_FLAGS,
-		"Sales Manager": WRITE_FLAGS,
-		"Sales User": WRITE_FLAGS,
+		ROLE_GMC: READ_FLAGS,
+		ROLE_PMC: READ_FLAGS,
+		"Sales Manager": READ_FLAGS,
+		"Sales User": READ_FLAGS,
 		"Purchase Manager": READ_FLAGS,
 		"Purchase User": READ_FLAGS,
-		"Manufacturing Manager": FULL_FLAGS,
+		"Manufacturing Manager": READ_FLAGS,
 		"Manufacturing User": READ_FLAGS,
 		"Stock Manager": READ_FLAGS,
 		"Stock User": READ_FLAGS,
@@ -165,13 +181,13 @@ APS_DOCTYPE_PERMISSIONS = {
 		"Stock User": READ_FLAGS,
 	},
 	"APS Schedule Result": {
-		ROLE_GMC: FULL_FLAGS,
+		ROLE_GMC: READ_FLAGS,
 		ROLE_PMC: READ_FLAGS,
 		"Purchase Manager": READ_FLAGS,
 		"Purchase User": READ_FLAGS,
 		"Sales Manager": READ_FLAGS,
 		"Sales User": READ_FLAGS,
-		"Manufacturing Manager": FULL_FLAGS,
+		"Manufacturing Manager": READ_FLAGS,
 		"Manufacturing User": READ_FLAGS,
 		"Stock Manager": READ_FLAGS,
 		"Stock User": READ_FLAGS,
@@ -213,33 +229,58 @@ APS_DOCTYPE_PERMISSIONS = {
 		"Purchase User": READ_FLAGS,
 		"Manufacturing Manager": FULL_FLAGS,
 		"Manufacturing User": READ_FLAGS,
+		"Stock Manager": READ_FLAGS,
+		"Stock User": READ_FLAGS,
+	},
+	"APS Change Application Log": {
+		ROLE_GMC: READ_FLAGS,
+		ROLE_PMC: READ_FLAGS,
+		"Manufacturing Manager": READ_FLAGS,
+		"Manufacturing User": READ_FLAGS,
+	},
+	"APS Production Allocation": {
+		ROLE_GMC: READ_FLAGS,
+		ROLE_PMC: READ_FLAGS,
+		"Manufacturing Manager": READ_FLAGS,
+		"Manufacturing User": READ_FLAGS,
+		"Stock Manager": READ_FLAGS,
+		"Stock User": READ_FLAGS,
+	},
+	"APS Delivery Allocation": {
+		ROLE_GMC: READ_FLAGS,
+		ROLE_PMC: READ_FLAGS,
+		"Sales Manager": READ_FLAGS,
+		"Sales User": READ_FLAGS,
+		"Manufacturing Manager": READ_FLAGS,
+		"Stock Manager": READ_FLAGS,
+		"Stock User": READ_FLAGS,
 	},
 	"APS Work Order Proposal Batch": {
-		ROLE_GMC: FULL_FLAGS,
-		ROLE_PMC: {"read", "select", "write", "report", "export", "print", "email", "share"},
+		ROLE_GMC: READ_FLAGS,
+		ROLE_PMC: READ_FLAGS,
 		"Purchase Manager": READ_FLAGS,
 		"Purchase User": READ_FLAGS,
-		"Manufacturing Manager": FULL_FLAGS,
+		"Manufacturing Manager": READ_FLAGS,
 		"Manufacturing User": READ_FLAGS,
 		"Stock Manager": READ_FLAGS,
 		"Stock User": READ_FLAGS,
 	},
 	"APS Shift Schedule Proposal Batch": {
-		ROLE_GMC: FULL_FLAGS,
-		ROLE_PMC: {"read", "select", "write", "report", "export", "print", "email", "share"},
+		ROLE_GMC: READ_FLAGS,
+		ROLE_PMC: READ_FLAGS,
 		"Purchase Manager": READ_FLAGS,
 		"Purchase User": READ_FLAGS,
-		"Manufacturing Manager": FULL_FLAGS,
+		"Manufacturing Manager": READ_FLAGS,
 		"Manufacturing User": READ_FLAGS,
 		"Stock Manager": READ_FLAGS,
 		"Stock User": READ_FLAGS,
 	},
 	"APS Release Batch": {
-		ROLE_GMC: FULL_FLAGS,
+		ROLE_GMC: READ_FLAGS,
 		ROLE_PMC: READ_FLAGS,
 		"Purchase Manager": READ_FLAGS,
 		"Purchase User": READ_FLAGS,
-		"Manufacturing Manager": FULL_FLAGS,
+		"Manufacturing Manager": READ_FLAGS,
 		"Manufacturing User": READ_FLAGS,
 		"Stock Manager": READ_FLAGS,
 		"Stock User": READ_FLAGS,
@@ -281,7 +322,22 @@ APS_DOCTYPE_PERMISSIONS = {
 	},
 }
 
-DEPENDENCY_READ_DOCTYPES = (
+DEPENDENCY_DOCTYPE_ROLE_PERMISSIONS = {
+	"Work Order Scheduling": {
+		"System Manager": FULL_FLAGS,
+		ROLE_GMC: FULL_FLAGS,
+		"GMC (Production Material Control - Manager)": FULL_FLAGS,
+		"Manufacturing Manager": FULL_FLAGS,
+	},
+}
+
+# Do not manufacture read access to ERPNext master or transaction records. APS
+# APIs must honor the permissions and User Permissions supplied by ERPNext for
+# Company, Customer, Item, Sales Order, Supplier, Employee, User, and similar
+# records. Only the companion scheduling DocType has an explicit cross-app role
+# contract required by the controlled release workflow.
+DEPENDENCY_READ_DOCTYPES = tuple(DEPENDENCY_DOCTYPE_ROLE_PERMISSIONS)
+LEGACY_DEPENDENCY_READ_DOCTYPES = (
 	"Company",
 	"Item",
 	"Customer",
@@ -308,15 +364,6 @@ DEPENDENCY_READ_DOCTYPES = (
 	"Employee",
 	"User",
 )
-
-DEPENDENCY_DOCTYPE_ROLE_PERMISSIONS = {
-	"Work Order Scheduling": {
-		"System Manager": FULL_FLAGS,
-		ROLE_GMC: FULL_FLAGS,
-		"GMC (Production Material Control - Manager)": FULL_FLAGS,
-		"Manufacturing Manager": FULL_FLAGS,
-	},
-}
 
 
 def ensure_roles_and_permissions():
@@ -350,26 +397,76 @@ def ensure_aps_doctype_permissions():
 
 
 def ensure_dependency_link_permissions():
-	link_roles = APS_READ_ROLES | APS_MRP_ROLES
-	for doctype in DEPENDENCY_READ_DOCTYPES:
+	_restore_legacy_dependency_link_permissions()
+	for doctype, role_permissions in DEPENDENCY_DOCTYPE_ROLE_PERMISSIONS.items():
 		if not frappe.db.exists("DocType", doctype):
 			continue
-		default_flags = READ_SELECT_FLAGS if doctype == "User" else READ_NO_EXPORT_FLAGS
-		role_permissions = DEPENDENCY_DOCTYPE_ROLE_PERMISSIONS.get(doctype, {})
-		for role in link_roles | set(role_permissions):
+		for role, flags in role_permissions.items():
 			ensure_custom_docperm(
 				doctype=doctype,
 				role=role,
-				flags=role_permissions.get(role, default_flags),
+				flags=flags,
 				replace=False,
 				preserve_standard=True,
 			)
 
 
+def _restore_legacy_dependency_link_permissions():
+	"""Remove only the broad dependency grants previously managed by this app.
+
+	When ERPNext already defines a permission row for the same role, restore that
+	standard row rather than deleting it from a DocType using Custom DocPerms.
+	"""
+	legacy_roles = APS_READ_ROLES | APS_MRP_ROLES
+	for doctype in LEGACY_DEPENDENCY_READ_DOCTYPES:
+		if not frappe.db.exists("DocType", doctype):
+			continue
+		retained_roles = set(DEPENDENCY_DOCTYPE_ROLE_PERMISSIONS.get(doctype) or {})
+		for row in frappe.get_all(
+			"Custom DocPerm",
+			filters={
+				"parent": doctype,
+				"role": ("in", sorted(legacy_roles - retained_roles)),
+				"permlevel": 0,
+				"if_owner": 0,
+			},
+			fields=["name", "role"],
+			limit_page_length=0,
+		):
+			standard_values = frappe.db.get_value(
+				"DocPerm",
+				{
+					"parent": doctype,
+					"role": row.get("role"),
+					"permlevel": 0,
+					"if_owner": 0,
+				},
+				fieldname=list(PERMISSION_FLAGS),
+				as_dict=True,
+			)
+			if not standard_values:
+				frappe.delete_doc("Custom DocPerm", row.get("name"), ignore_permissions=True)
+				continue
+			docperm = frappe.get_doc("Custom DocPerm", row.get("name"))
+			changed = False
+			for flag in PERMISSION_FLAGS:
+				value = 1 if standard_values.get(flag) else 0
+				if docperm.get(flag) != value:
+					docperm.set(flag, value)
+					changed = True
+			if changed:
+				docperm.save(ignore_permissions=True)
+
+
 def ensure_page_and_workspace_roles():
 	for page_name in APS_PAGE_NAMES:
 		if frappe.db.exists("Page", page_name):
-			_add_roles_to_child_table("Page", page_name, "roles", APS_READ_ROLES)
+			_add_roles_to_child_table(
+				"Page",
+				page_name,
+				"roles",
+				APS_PAGE_ROLE_MAP.get(page_name, APS_READ_ROLES),
+			)
 
 	for workspace_name in APS_WORKSPACE_NAMES:
 		if frappe.db.exists("Workspace", workspace_name):

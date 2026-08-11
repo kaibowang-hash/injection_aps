@@ -8,15 +8,20 @@ class APSSettings(Document):
 		self.planning_horizon_days = self.planning_horizon_days or 14
 		self.release_horizon_days = self.release_horizon_days or 1
 		self.freeze_days = self.freeze_days or 2
+		self.default_production_strategy = self.default_production_strategy or "Auto Balance"
+		self.capacity_bucket_mode = self.capacity_bucket_mode or "Shift"
+		self.default_max_prebuild_days = self.default_max_prebuild_days or 7
+		self.high_cancellation_risk_percent = self.high_cancellation_risk_percent or 60
 		self.default_setup_minutes = self.default_setup_minutes or 30
 		self.default_first_article_minutes = self.default_first_article_minutes or 45
 		self.default_hourly_capacity_qty = self.default_hourly_capacity_qty or 120
-		self.item_food_grade_field = self.item_food_grade_field or "custom_food_grade"
+		if not self.item_food_grade_field or self.item_food_grade_field == "custom_food_grade":
+			self.item_food_grade_field = "custom_aps_food_grade"
 		self.item_first_article_field = self.item_first_article_field or "custom_is_first_article"
 		self.item_color_field = self.item_color_field or "color"
 		self.item_material_field = self.item_material_field or "material"
 		self.item_safety_stock_field = self.item_safety_stock_field or "safety_stock"
-		self.item_max_stock_field = self.item_max_stock_field or "max_stock_qty"
+		self.item_max_stock_field = self.item_max_stock_field or "custom_aps_max_stock_qty"
 		self.item_min_batch_field = self.item_min_batch_field or "min_order_qty"
 		self.customer_short_name_field = self.customer_short_name_field or "custom_customer_short_name"
 		self.workstation_risk_field = self.workstation_risk_field or "custom_production_risk_category"

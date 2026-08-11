@@ -1,0 +1,238 @@
+{
+ "actions": [],
+ "autoname": "hash",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "allocation_key",
+  "company",
+  "customer",
+  "item_code",
+  "sales_order",
+  "sales_order_item",
+  "schedule_date",
+  "customer_schedule",
+  "customer_schedule_item",
+  "source_delivery_note",
+  "source_delivery_note_item",
+  "source_docstatus",
+  "source_posting_time",
+  "is_return",
+  "return_against",
+  "original_delivery_note_item",
+  "allocation_method",
+  "source_qty",
+  "allocated_qty",
+  "effective_qty",
+  "cumulative_delivered_qty",
+  "reversed_qty",
+  "is_effective",
+  "reversal_reason",
+  "source_fingerprint",
+  "last_synced_on"
+ ],
+ "fields": [
+  {
+   "fieldname": "allocation_key",
+   "fieldtype": "Data",
+   "label": "Allocation Key",
+   "read_only": 1,
+   "reqd": 1,
+   "unique": 1
+  },
+  {
+   "fieldname": "company",
+   "fieldtype": "Link",
+   "label": "Company",
+   "options": "Company",
+   "read_only": 1,
+   "reqd": 1,
+   "search_index": 1
+  },
+  {
+   "fieldname": "customer",
+   "fieldtype": "Link",
+   "label": "Customer",
+   "options": "Customer",
+   "read_only": 1,
+   "reqd": 1,
+   "search_index": 1
+  },
+  {
+   "fieldname": "item_code",
+   "fieldtype": "Link",
+   "label": "Item Code",
+   "options": "Item",
+   "read_only": 1,
+   "reqd": 1,
+   "search_index": 1
+  },
+  {
+   "fieldname": "sales_order",
+   "fieldtype": "Link",
+   "label": "Sales Order",
+   "options": "Sales Order",
+   "read_only": 1,
+   "search_index": 1
+  },
+  {
+   "fieldname": "sales_order_item",
+   "fieldtype": "Data",
+   "label": "Sales Order Item",
+   "read_only": 1
+  },
+  {
+   "fieldname": "schedule_date",
+   "fieldtype": "Date",
+   "label": "Schedule Date",
+   "read_only": 1,
+   "search_index": 1
+  },
+  {
+   "fieldname": "customer_schedule",
+   "fieldtype": "Link",
+   "label": "Customer Schedule",
+   "options": "Customer Delivery Schedule",
+   "read_only": 1
+  },
+  {
+   "fieldname": "customer_schedule_item",
+   "fieldtype": "Link",
+   "label": "Customer Schedule Item",
+   "options": "Customer Delivery Schedule Item",
+   "read_only": 1,
+   "reqd": 1,
+   "search_index": 1
+  },
+  {
+   "fieldname": "source_delivery_note",
+   "fieldtype": "Link",
+   "label": "Source Delivery Note",
+   "options": "Delivery Note",
+   "read_only": 1,
+   "reqd": 1,
+   "search_index": 1
+  },
+  {
+   "fieldname": "source_delivery_note_item",
+   "fieldtype": "Data",
+   "label": "Source Delivery Note Item",
+   "read_only": 1,
+   "reqd": 1,
+   "search_index": 1
+  },
+  {
+   "fieldname": "source_docstatus",
+   "fieldtype": "Int",
+   "label": "Source Docstatus",
+   "read_only": 1
+  },
+  {
+   "fieldname": "source_posting_time",
+   "fieldtype": "Datetime",
+   "label": "Source Posting Time",
+   "read_only": 1
+  },
+  {
+   "fieldname": "is_return",
+   "fieldtype": "Check",
+   "label": "Return",
+   "read_only": 1
+  },
+  {
+   "fieldname": "return_against",
+   "fieldtype": "Link",
+   "label": "Return Against",
+   "options": "Delivery Note",
+   "read_only": 1
+  },
+  {
+   "fieldname": "original_delivery_note_item",
+   "fieldtype": "Data",
+   "label": "Original Delivery Note Item",
+   "read_only": 1
+  },
+  {
+   "fieldname": "allocation_method",
+   "fieldtype": "Select",
+   "label": "Allocation Method",
+   "options": "Direct\nControlled FIFO\nReturn Trace",
+   "read_only": 1,
+   "reqd": 1
+  },
+  {
+   "fieldname": "source_qty",
+   "fieldtype": "Float",
+   "label": "Source Qty",
+   "read_only": 1
+  },
+  {
+   "fieldname": "allocated_qty",
+   "fieldtype": "Float",
+   "label": "Allocated Qty",
+   "read_only": 1
+  },
+  {
+   "fieldname": "effective_qty",
+   "fieldtype": "Float",
+   "label": "Effective Qty",
+   "read_only": 1
+  },
+  {
+   "fieldname": "cumulative_delivered_qty",
+   "fieldtype": "Float",
+   "label": "Cumulative Delivered Qty",
+   "read_only": 1
+  },
+  {
+   "fieldname": "reversed_qty",
+   "fieldtype": "Float",
+   "label": "Reversed Qty",
+   "read_only": 1
+  },
+  {
+   "fieldname": "is_effective",
+   "fieldtype": "Check",
+   "label": "Effective",
+   "read_only": 1,
+   "search_index": 1
+  },
+  {
+   "fieldname": "reversal_reason",
+   "fieldtype": "Small Text",
+   "label": "Reversal Reason",
+   "read_only": 1
+  },
+  {
+   "fieldname": "source_fingerprint",
+   "fieldtype": "Data",
+   "label": "Source Fingerprint",
+   "read_only": 1
+  },
+  {
+   "fieldname": "last_synced_on",
+   "fieldtype": "Datetime",
+   "label": "Last Synced On",
+   "read_only": 1
+  }
+ ],
+ "links": [],
+ "module": "Injection APS",
+ "name": "APS Delivery Allocation",
+ "permissions": [
+  {
+   "read": 1,
+   "report": 1,
+   "role": "System Manager"
+  },
+  {
+   "read": 1,
+   "report": 1,
+   "role": "Manufacturing Manager"
+  }
+ ],
+ "read_only": 1,
+ "sort_field": "source_posting_time",
+ "sort_order": "DESC",
+ "track_changes": 1
+}

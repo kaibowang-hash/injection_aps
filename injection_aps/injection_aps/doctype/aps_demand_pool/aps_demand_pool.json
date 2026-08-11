@@ -8,11 +8,17 @@
   "company",
   "customer",
   "sales_order",
+  "sales_order_item",
   "item_code",
   "customer_part_no",
   "demand_source",
   "demand_date",
   "qty",
+  "production_strategy",
+  "demand_confidence",
+  "cancellation_risk_percent",
+  "prebuild_allowed",
+  "max_prebuild_days",
   "status",
   "priority_score",
   "is_urgent",
@@ -22,6 +28,7 @@
   "is_first_article",
   "source_doctype",
   "source_name",
+  "source_detail_name",
   "remark",
   "is_system_generated"
  ],
@@ -52,6 +59,13 @@
    "read_only": 1
   },
   {
+   "fieldname": "sales_order_item",
+   "fieldtype": "Data",
+   "hidden": 1,
+   "label": "Sales Order Item",
+   "read_only": 1
+  },
+  {
    "fieldname": "item_code",
    "fieldtype": "Link",
    "in_list_view": 1,
@@ -72,7 +86,7 @@
    "fieldtype": "Select",
    "in_list_view": 1,
    "label": "Demand Source",
-   "options": "\nCustomer Delivery Schedule\nSales Order Backlog\nSafety Stock\nUrgent Order\nTrial Production\nComplaint Replenishment",
+   "options": "\nCustomer Delivery Schedule\nForecast\nSales Order Backlog\nSafety Stock\nUrgent Order\nTrial Production\nComplaint Replenishment",
    "read_only": 1
   },
   {
@@ -91,6 +105,41 @@
    "label": "Qty",
    "read_only": 1,
    "reqd": 1
+  },
+  {
+   "default": "Auto Balance",
+   "fieldname": "production_strategy",
+   "fieldtype": "Select",
+   "label": "Production Strategy",
+   "options": "Auto Balance\nForce Prebuild\nForce JIT",
+   "read_only": 1
+  },
+  {
+   "default": "Confirmed",
+   "fieldname": "demand_confidence",
+   "fieldtype": "Select",
+   "label": "Demand Confidence",
+   "options": "Confirmed\nForecast",
+   "read_only": 1
+  },
+  {
+   "fieldname": "cancellation_risk_percent",
+   "fieldtype": "Percent",
+   "label": "Cancellation Risk Percent",
+   "read_only": 1
+  },
+  {
+   "default": "1",
+   "fieldname": "prebuild_allowed",
+   "fieldtype": "Check",
+   "label": "Prebuild Allowed",
+   "read_only": 1
+  },
+  {
+   "fieldname": "max_prebuild_days",
+   "fieldtype": "Int",
+   "label": "Max Prebuild Days",
+   "read_only": 1
   },
   {
    "default": "Open",
@@ -149,6 +198,13 @@
    "fieldtype": "Dynamic Link",
    "label": "Source Name",
    "options": "source_doctype",
+   "read_only": 1
+  },
+  {
+   "fieldname": "source_detail_name",
+   "fieldtype": "Data",
+   "hidden": 1,
+   "label": "Source Detail Name",
    "read_only": 1
   },
   {

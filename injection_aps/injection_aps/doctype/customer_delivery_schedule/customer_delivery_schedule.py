@@ -13,7 +13,31 @@ class CustomerDeliverySchedule(Document):
 		self.import_strategy = self.import_strategy or "Replace Scope"
 		self.schedule_scope = (self.schedule_scope or self.version_no or "").strip()
 		self.schedule_total_qty = sum(flt(row.qty) for row in self.get("items") or [])
+		self._protect_import_managed_schedule()
 		self._validate_active_version()
+
+	def _protect_import_managed_schedule(self):
+		if self.flags.get("aps_schedule_import_transition"):
+			return
+		if self.is_new():
+			if self.status != "Draft":
+				frappe.throw(
+					_(
+						"Active customer delivery schedules can only be created through Schedule Import & Diff.",
+						context="Injection APS",
+					),
+					frappe.PermissionError,
+				)
+			return
+		before = self.get_doc_before_save()
+		if before and (before.status == "Active" or self.status == "Active"):
+			frappe.throw(
+				_(
+					"Active customer delivery schedules are read-only. Use Schedule Import & Diff or Change Impact Center.",
+					context="Injection APS",
+				),
+				frappe.PermissionError,
+			)
 
 	def _validate_active_version(self):
 		if (

@@ -1,6 +1,6 @@
 {
  "actions": [],
- "allow_rename": 1,
+ "allow_rename": 0,
  "autoname": "APS-WOP-.#####",
  "doctype": "DocType",
  "engine": "InnoDB",
@@ -9,6 +9,7 @@
   "company",
   "plant_floor",
   "proposal_date",
+  "proposal_fingerprint",
   "status",
   "approval_state",
   "approved_by",
@@ -50,6 +51,14 @@
    "label": "Proposal Date",
    "read_only": 1,
    "reqd": 1
+  },
+  {
+   "fieldname": "proposal_fingerprint",
+   "fieldtype": "Data",
+   "hidden": 1,
+   "label": "Proposal Fingerprint",
+   "read_only": 1,
+   "unique": 1
   },
   {
    "default": "Draft",
@@ -97,13 +106,15 @@
   {
    "fieldname": "notes",
    "fieldtype": "Small Text",
-   "label": "Notes"
+   "label": "Notes",
+   "read_only": 1
   },
   {
    "fieldname": "items",
    "fieldtype": "Table",
    "label": "Work Order Proposals",
-   "options": "APS Work Order Proposal Item"
+   "options": "APS Work Order Proposal Item",
+   "read_only": 1
   }
  ],
  "links": [],
@@ -111,28 +122,22 @@
  "name": "APS Work Order Proposal Batch",
  "permissions": [
   {
-   "create": 1,
-   "delete": 1,
    "email": 1,
    "export": 1,
    "print": 1,
    "read": 1,
    "report": 1,
    "role": "System Manager",
-   "share": 1,
-   "write": 1
+   "share": 1
   },
   {
-   "create": 1,
-   "delete": 1,
    "email": 1,
    "export": 1,
    "print": 1,
    "read": 1,
    "report": 1,
    "role": "Manufacturing Manager",
-   "share": 1,
-   "write": 1
+   "share": 1
   },
   {
    "export": 1,

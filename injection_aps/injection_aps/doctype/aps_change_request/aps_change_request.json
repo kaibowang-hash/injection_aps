@@ -1,30 +1,83 @@
 {
  "actions": [],
- "allow_rename": 1,
+ "allow_rename": 0,
  "autoname": "APS-CR-.#####",
  "doctype": "DocType",
  "engine": "InnoDB",
  "field_order": [
+  "scope_section",
   "planning_run",
   "company",
   "plant_floor",
+  "source_demand_delta",
+  "change_section",
   "change_type",
+  "target_result",
   "item_code",
   "customer",
+  "current_required_date",
   "required_date",
   "qty",
+  "target_planned_qty",
+  "machine_section",
+  "machine_exception_mode",
+  "workstation",
+  "exception_start_time",
+  "exception_end_time",
+  "available_capacity_percent",
+  "downtime_window",
+  "protection_section",
+  "current_planned_qty",
+  "current_machine_scheduled_qty",
+  "delivered_qty",
+  "produced_qty",
+  "started_locked_qty",
+  "frozen_qty",
+  "minimum_retained_qty",
+  "cancellable_qty",
+  "retained_excess_qty",
+  "retained_disposition",
+  "workflow_section",
   "status",
   "approval_state",
+  "analysis_revision",
+  "analyzed_by",
+  "analyzed_on",
+  "pmc_confirmed_by",
+  "pmc_confirmed_on",
+  "approved_by",
+  "approved_on",
+  "applied_by",
+  "applied_on",
   "impact_summary",
+  "impact_preview_html",
+  "audit_section",
+  "analysis_fingerprint",
+  "source_snapshot_hash",
+  "application_fingerprint",
+  "application_log",
+  "apply_count",
+  "impact_json",
+  "proposal_json",
+  "before_snapshot_json",
+  "after_snapshot_json",
+  "application_result_json",
   "notes"
  ],
  "fields": [
+  {
+   "fieldname": "scope_section",
+   "fieldtype": "Section Break",
+   "label": "Plan Scope"
+  },
   {
    "fieldname": "planning_run",
    "fieldtype": "Link",
    "in_list_view": 1,
    "label": "Planning Run",
-   "options": "APS Planning Run"
+   "options": "APS Planning Run",
+   "reqd": 1,
+   "search_index": 1
   },
   {
    "fieldname": "company",
@@ -40,20 +93,38 @@
    "options": "Plant Floor"
   },
   {
+   "fieldname": "source_demand_delta",
+   "fieldtype": "Link",
+   "label": "Source Demand Delta",
+   "options": "APS Demand Delta",
+   "search_index": 1
+  },
+  {
+   "fieldname": "change_section",
+   "fieldtype": "Section Break",
+   "label": "Requested Change"
+  },
+  {
    "fieldname": "change_type",
    "fieldtype": "Select",
    "in_list_view": 1,
    "label": "Change Type",
-   "options": "\nInsert Order\nAdvance\nDelay\nDecrease Qty\nCancel\nMachine Exception",
+   "options": "\nIncrease Qty\nDecrease Qty\nCancel\nPull In\nPush Out\nUrgent Order\nMachine Exception",
    "reqd": 1
+  },
+  {
+   "fieldname": "target_result",
+   "fieldtype": "Link",
+   "label": "Target Schedule Result",
+   "options": "APS Schedule Result",
+   "search_index": 1
   },
   {
    "fieldname": "item_code",
    "fieldtype": "Link",
    "in_list_view": 1,
    "label": "Item Code",
-   "options": "Item",
-   "reqd": 1
+   "options": "Item"
   },
   {
    "fieldname": "customer",
@@ -62,16 +133,145 @@
    "options": "Customer"
   },
   {
+   "fieldname": "current_required_date",
+   "fieldtype": "Date",
+   "label": "Current Required Date",
+   "read_only": 1
+  },
+  {
    "fieldname": "required_date",
    "fieldtype": "Date",
-   "label": "Required Date",
-   "reqd": 1
+   "label": "New Required Date"
   },
   {
    "fieldname": "qty",
    "fieldtype": "Float",
-   "label": "Qty",
-   "reqd": 1
+   "label": "Requested Change Qty"
+  },
+  {
+   "fieldname": "target_planned_qty",
+   "fieldtype": "Float",
+   "label": "Target Planned Qty"
+  },
+  {
+   "depends_on": "eval:doc.change_type=='Machine Exception'",
+   "fieldname": "machine_section",
+   "fieldtype": "Section Break",
+   "label": "Machine Capacity Exception"
+  },
+  {
+   "default": "Downtime",
+   "depends_on": "eval:doc.change_type=='Machine Exception'",
+   "fieldname": "machine_exception_mode",
+   "fieldtype": "Select",
+   "label": "Exception Mode",
+   "options": "\nDowntime\nReduced Capacity"
+  },
+  {
+   "depends_on": "eval:doc.change_type=='Machine Exception'",
+   "fieldname": "workstation",
+   "fieldtype": "Link",
+   "label": "Workstation",
+   "options": "Workstation"
+  },
+  {
+   "depends_on": "eval:doc.change_type=='Machine Exception'",
+   "fieldname": "exception_start_time",
+   "fieldtype": "Datetime",
+   "label": "Exception Start Time"
+  },
+  {
+   "depends_on": "eval:doc.change_type=='Machine Exception'",
+   "fieldname": "exception_end_time",
+   "fieldtype": "Datetime",
+   "label": "Exception End Time"
+  },
+  {
+   "default": "0",
+   "depends_on": "eval:doc.change_type=='Machine Exception'",
+   "description": "0 means complete downtime; values between 1 and 99 represent reduced capacity.",
+   "fieldname": "available_capacity_percent",
+   "fieldtype": "Percent",
+   "label": "Available Capacity Percent"
+  },
+  {
+   "depends_on": "eval:doc.change_type=='Machine Exception'",
+   "fieldname": "downtime_window",
+   "fieldtype": "Link",
+   "label": "Applied Capacity Window",
+   "options": "APS Downtime Window",
+   "read_only": 1
+  },
+  {
+   "fieldname": "protection_section",
+   "fieldtype": "Section Break",
+   "label": "Quantity Protection"
+  },
+  {
+   "fieldname": "current_planned_qty",
+   "fieldtype": "Float",
+   "label": "Current Planned Qty",
+   "read_only": 1
+  },
+  {
+   "fieldname": "current_machine_scheduled_qty",
+   "fieldtype": "Float",
+   "label": "Current Machine Scheduled Qty",
+   "read_only": 1
+  },
+  {
+   "fieldname": "delivered_qty",
+   "fieldtype": "Float",
+   "label": "Delivered Qty",
+   "read_only": 1
+  },
+  {
+   "fieldname": "produced_qty",
+   "fieldtype": "Float",
+   "label": "Produced Qty",
+   "read_only": 1
+  },
+  {
+   "fieldname": "started_locked_qty",
+   "fieldtype": "Float",
+   "label": "Started / Locked Qty",
+   "read_only": 1
+  },
+  {
+   "fieldname": "frozen_qty",
+   "fieldtype": "Float",
+   "label": "Frozen Zone Qty",
+   "read_only": 1
+  },
+  {
+   "fieldname": "minimum_retained_qty",
+   "fieldtype": "Float",
+   "label": "Minimum Retained Qty",
+   "read_only": 1
+  },
+  {
+   "fieldname": "cancellable_qty",
+   "fieldtype": "Float",
+   "label": "Cancellable Qty",
+   "read_only": 1
+  },
+  {
+   "fieldname": "retained_excess_qty",
+   "fieldtype": "Float",
+   "label": "Retained Excess Qty",
+   "read_only": 1
+  },
+  {
+   "default": "Pending Negotiation",
+   "fieldname": "retained_disposition",
+   "fieldtype": "Select",
+   "label": "Retained Qty Disposition",
+   "options": "\nInventory\nObsolete Risk\nPending Negotiation"
+  },
+  {
+   "fieldname": "workflow_section",
+   "fieldtype": "Section Break",
+   "label": "Workflow"
   },
   {
    "default": "Draft",
@@ -79,19 +279,170 @@
    "fieldtype": "Select",
    "in_list_view": 1,
    "label": "Status",
-   "options": "\nDraft\nAnalyzed\nApproved\nApplied\nRejected\nCancelled"
+   "options": "\nDraft\nAnalyzed\nPMC Confirmed\nApproved\nApplied\nRejected\nCancelled",
+   "read_only": 1
   },
   {
    "default": "Pending",
    "fieldname": "approval_state",
    "fieldtype": "Select",
    "label": "Approval State",
-   "options": "\nPending\nApproved\nRejected"
+   "options": "\nPending\nPMC Confirmed\nApproved\nRejected",
+   "read_only": 1
+  },
+  {
+   "default": "0",
+   "fieldname": "analysis_revision",
+   "fieldtype": "Int",
+   "label": "Analysis Revision",
+   "read_only": 1
+  },
+  {
+   "fieldname": "analyzed_by",
+   "fieldtype": "Link",
+   "label": "Analyzed By",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "fieldname": "analyzed_on",
+   "fieldtype": "Datetime",
+   "label": "Analyzed On",
+   "read_only": 1
+  },
+  {
+   "fieldname": "pmc_confirmed_by",
+   "fieldtype": "Link",
+   "label": "PMC Confirmed By",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "fieldname": "pmc_confirmed_on",
+   "fieldtype": "Datetime",
+   "label": "PMC Confirmed On",
+   "read_only": 1
+  },
+  {
+   "fieldname": "approved_by",
+   "fieldtype": "Link",
+   "label": "Approved By",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "fieldname": "approved_on",
+   "fieldtype": "Datetime",
+   "label": "Approved On",
+   "read_only": 1
+  },
+  {
+   "fieldname": "applied_by",
+   "fieldtype": "Link",
+   "label": "Applied By",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "fieldname": "applied_on",
+   "fieldtype": "Datetime",
+   "label": "Applied On",
+   "read_only": 1
   },
   {
    "fieldname": "impact_summary",
    "fieldtype": "Small Text",
    "label": "Impact Summary",
+   "read_only": 1
+  },
+  {
+   "fieldname": "impact_preview_html",
+   "fieldtype": "HTML",
+   "label": "Impact Preview"
+  },
+  {
+   "fieldname": "audit_section",
+   "fieldtype": "Section Break",
+   "label": "Application Audit"
+  },
+  {
+   "fieldname": "analysis_fingerprint",
+   "fieldtype": "Data",
+   "label": "Analysis Fingerprint",
+   "read_only": 1,
+   "search_index": 1
+  },
+  {
+   "fieldname": "source_snapshot_hash",
+   "fieldtype": "Data",
+   "label": "Source Snapshot Hash",
+   "read_only": 1
+  },
+  {
+   "fieldname": "application_fingerprint",
+   "fieldtype": "Data",
+   "label": "Application Fingerprint",
+   "read_only": 1,
+   "search_index": 1,
+   "unique": 1
+  },
+  {
+   "fieldname": "application_log",
+   "fieldtype": "Link",
+   "label": "Application Log",
+   "options": "APS Change Application Log",
+   "read_only": 1
+  },
+  {
+   "default": "0",
+   "fieldname": "apply_count",
+   "fieldtype": "Int",
+   "label": "Apply Count",
+   "read_only": 1
+  },
+  {
+   "fieldname": "impact_json",
+   "fieldtype": "Code",
+   "hidden": 1,
+   "label": "Impact JSON",
+   "options": "JSON",
+   "permlevel": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "proposal_json",
+   "fieldtype": "Code",
+   "hidden": 1,
+   "label": "Adjustment Proposal JSON",
+   "options": "JSON",
+   "permlevel": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "before_snapshot_json",
+   "fieldtype": "Code",
+   "hidden": 1,
+   "label": "Before Snapshot JSON",
+   "options": "JSON",
+   "permlevel": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "after_snapshot_json",
+   "fieldtype": "Code",
+   "hidden": 1,
+   "label": "After Snapshot JSON",
+   "options": "JSON",
+   "permlevel": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "application_result_json",
+   "fieldtype": "Code",
+   "hidden": 1,
+   "label": "Application Result JSON",
+   "options": "JSON",
+   "permlevel": 1,
    "read_only": 1
   },
   {
@@ -129,12 +480,26 @@
    "write": 1
   },
   {
+   "create": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "PMC",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "email": 1,
    "export": 1,
    "print": 1,
    "read": 1,
    "report": 1,
    "role": "Sales User",
-   "share": 1
+   "share": 1,
+   "write": 1
   }
  ],
  "sort_field": "modified",
