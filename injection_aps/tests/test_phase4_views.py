@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import json
 from datetime import timedelta
+from unittest.mock import patch
 
 import frappe
 from frappe.tests.utils import FrappeTestCase
@@ -10,14 +12,42 @@ from injection_aps.api import app
 from injection_aps.services import availability, consistency, planning
 
 
+class TestReleaseCenterQueries(FrappeTestCase):
+	def test_review_counts_use_structured_count_field(self):
+		rows = [frappe._dict(name="BATCH-1")]
+		captured = {}
+
+		def fake_get_all(_doctype, **kwargs):
+			captured["fields"] = kwargs.get("fields")
+			return [frappe._dict(parent="BATCH-1", review_status="Pending", count=2)]
+
+		with patch.object(app.frappe, "get_all", side_effect=fake_get_all):
+			app._attach_review_counts(rows, "APS Work Order Proposal Item")
+
+		self.assertIn({"COUNT": "name", "as": "count"}, captured["fields"])
+		self.assertEqual(rows[0].pending_count, 2)
+
+
 class TestPhase4ViewConsistency(FrappeTestCase):
 	def setUp(self):
-		self.company = frappe.db.get_value("Company", {})
 		self.customer = frappe.db.get_value("Customer", {})
-		self.workstation = frappe.db.get_value("Workstation", {})
+		self.workstation = None
+		self.plant_floor = None
+		self.company = None
+		for row in frappe.get_all(
+			"Workstation",
+			filters={"plant_floor": ["!=", ""]},
+			fields=["name", "plant_floor"],
+			limit=50,
+		):
+			company = frappe.db.get_value("Plant Floor", row.plant_floor, "company")
+			if company:
+				self.workstation = row.name
+				self.plant_floor = row.plant_floor
+				self.company = company
+				break
 		if not self.company or not self.customer or not self.workstation:
-			self.skipTest("Phase 4 view tests need Company, Customer, and Workstation records.")
-		self.plant_floor = frappe.db.get_value("Workstation", self.workstation, "plant_floor")
+			self.skipTest("Phase 4 view tests need Customer and Workstation records linked to a company Plant Floor.")
 		self.item = self._create_item()
 		self.fixture = self._create_fixture()
 
@@ -120,8 +150,31 @@ class TestPhase4ViewConsistency(FrappeTestCase):
 					},
 				],
 			}
-		).insert(ignore_permissions=True)
+		)
+		schedule.flags.aps_schedule_import_transition = True
+		schedule.insert(ignore_permissions=True)
 		schedule_item = frappe.db.get_value("Customer Delivery Schedule Item", {"parent": schedule.name}, "name")
+		baseline_json = json.dumps(
+			{
+				"version": 3,
+				"net_requirement": {
+					"demand_qty": 100.0,
+					"available_stock_qty": 0.0,
+					"open_work_order_qty": 0.0,
+					"existing_work_order_policy": "Exclude",
+				},
+				"targets": [
+					{
+						"customer_schedule_item": schedule_item,
+						"opening_required_qty": 100.0,
+						"source_open_qty": 100.0,
+						"item_code": self.item,
+						"schedule_date": str(due_date),
+					}
+				],
+			},
+			sort_keys=True,
+		)
 		run = frappe.get_doc(
 			{
 				"doctype": "APS Planning Run",
@@ -147,6 +200,9 @@ class TestPhase4ViewConsistency(FrappeTestCase):
 				"item_code": self.item,
 				"demand_date": due_date,
 				"demand_qty": 100,
+				"available_stock_qty": 0,
+				"open_work_order_qty": 0,
+				"existing_work_order_policy": "Exclude",
 				"planning_qty": 100,
 				"net_requirement_qty": 100,
 				"production_strategy": "Auto Balance",
@@ -154,6 +210,7 @@ class TestPhase4ViewConsistency(FrappeTestCase):
 				"prebuild_allowed": 1,
 				"max_prebuild_days": 7,
 				"is_system_generated": 1,
+				"fulfillment_baseline_json": baseline_json,
 			}
 		).insert(ignore_permissions=True)
 		result = frappe.get_doc(
@@ -168,6 +225,9 @@ class TestPhase4ViewConsistency(FrappeTestCase):
 				"requested_date": due_date,
 				"demand_source": "Customer Delivery Schedule",
 				"production_strategy": "Auto Balance",
+				"demand_confidence": "Confirmed",
+				"prebuild_allowed": 1,
+				"max_prebuild_days": 7,
 				"planned_qty": 100,
 				"prebuild_qty": 30,
 				"jit_qty": 70,
@@ -176,6 +236,7 @@ class TestPhase4ViewConsistency(FrappeTestCase):
 				"late_qty_after_balance": 0,
 				"status": "Planned",
 				"risk_status": "Normal",
+				"fulfillment_baseline_json": baseline_json,
 				"segments": [
 					{
 						"workstation": self.workstation,

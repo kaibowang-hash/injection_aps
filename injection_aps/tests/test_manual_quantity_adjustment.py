@@ -145,6 +145,14 @@ class TestManualQuantityAdjustment(TestCase):
 		with (
 			patch("injection_aps.api.app._require_plan_access"),
 			patch("injection_aps.api.app._require_release_access"),
+			patch("injection_aps.api.app._require_scoped_document_access"),
+			patch("injection_aps.api.app._require_document_access"),
+			patch("injection_aps.api.app._lock_planning_run_scope"),
+			patch("injection_aps.api.app._require_complete_run_mutation_scope"),
+			patch(
+				"injection_aps.api.app.frappe.db.get_value",
+				side_effect=["RESULT-1", "RUN-1"],
+			),
 			patch(
 				"injection_aps.api.app.planning.preview_manual_schedule_adjustment",
 				return_value={},

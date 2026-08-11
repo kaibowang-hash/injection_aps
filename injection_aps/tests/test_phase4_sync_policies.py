@@ -173,7 +173,10 @@ class TestProductionSyncPolicies(unittest.TestCase):
 					}
 				),
 			]
-		with patch.object(execution_sync.frappe.db, "sql", return_value=rows) as sql:
+		with (
+			patch.object(execution_sync.frappe.db, "has_column", return_value=True),
+			patch.object(execution_sync.frappe.db, "sql", return_value=rows) as sql,
+		):
 			sources = execution_sync._get_formal_manufacture_sources(
 				[{"segment": "SEG-1", "scheduling_item": "SI-1", "scheduling_items": []}]
 			)
@@ -186,9 +189,25 @@ class TestProductionSyncPolicies(unittest.TestCase):
 		self.assertIn("detail.transfer_qty", sql.call_args.args[0])
 		self.assertIn("coalesce(nullif(detail.transfer_qty, 0), detail.qty)", sql.call_args.args[0])
 
+	def test_manufacture_source_query_handles_missing_scrap_detail_flag(self):
+		with (
+			patch.object(execution_sync.frappe.db, "has_column", return_value=False),
+			patch.object(execution_sync.frappe.db, "sql", return_value=[]) as sql,
+		):
+			execution_sync._get_formal_manufacture_sources(
+				[{"segment": "SEG-1", "scheduling_item": "SI-1", "scheduling_items": []}]
+			)
+		query = sql.call_args.args[0]
+		self.assertIn("0 as is_scrap_item", query)
+		self.assertIn("detail.is_finished_item = 1", query)
+		self.assertIn("se.custom_aps_output_type in ('Good', 'Scrap')", query)
+		self.assertIn("detail.t_warehouse = wo.scrap_warehouse", query)
+		self.assertNotIn("detail.is_scrap_item = 1", query)
+
 	def test_unique_aps_work_order_source_query_does_not_hide_populated_wrong_wos(self):
 		with (
 			patch.object(execution_sync, "_get_eligible_work_order_runs", return_value=["RUN-1"]),
+			patch.object(execution_sync.frappe.db, "has_column", return_value=True),
 			patch.object(execution_sync.frappe.db, "sql", return_value=[]) as sql,
 		):
 			execution_sync._get_formal_manufacture_sources(

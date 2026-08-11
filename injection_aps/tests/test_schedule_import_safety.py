@@ -80,11 +80,20 @@ class TestScheduleImportSafety(FrappeTestCase):
 		self.assertEqual(item.status, "Cancelled")
 
 	def test_quantity_cannot_be_reduced_below_delivered_lower_bound(self):
-		self._create_active_schedule([self._row(500, produced_qty=120, delivered_qty=40)])
-		preview = self._preview(
-			[self._row(0, source_excel_row=9)],
-			import_strategy="Partial Update",
+		schedule = self._create_active_schedule([self._row(500, produced_qty=120, delivered_qty=40)])
+		schedule_item = frappe.db.get_value(
+			"Customer Delivery Schedule Item",
+			{"parent": schedule.name, "item_code": self.item},
+			"name",
 		)
+		with patch(
+			"injection_aps.services.delivery_sync.get_schedule_delivery_lower_bounds",
+			return_value={schedule_item: 40},
+		):
+			preview = self._preview(
+				[self._row(0, source_excel_row=9)],
+				import_strategy="Partial Update",
+			)
 
 		self.assertFalse(preview["can_import"])
 		lower_bound = next(check for check in preview["checks"] if check["title"] == "Delivered quantity lower bound")
@@ -281,4 +290,5 @@ class TestScheduleImportSafety(FrappeTestCase):
 				],
 			}
 		)
+		doc.flags.aps_schedule_import_transition = True
 		return doc.insert(ignore_permissions=True)

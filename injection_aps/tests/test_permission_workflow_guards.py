@@ -140,7 +140,9 @@ class TestPermissionWorkflowGuards(unittest.TestCase):
 	def test_new_plan_actions_reject_hidden_item_or_plant_floor_before_service(self):
 		with (
 			patch.object(app, "_require_plan_access"),
+			patch.object(app, "_require_explicit_company", return_value="COMPANY-1"),
 			patch.object(app, "_require_scope_access"),
+			patch.object(app, "_require_company_rebuild_scope"),
 			patch.object(
 				app,
 				"_require_planning_reference_access",
@@ -699,6 +701,7 @@ class TestPermissionWorkflowGuards(unittest.TestCase):
 				return_value=[frappe._dict(name="RESULT-1", planning_run="RUN-1")],
 			),
 			patch.object(app.frappe, "get_doc", return_value=document),
+			patch.object(app, "now_datetime", return_value="2026-08-11 08:00:00"),
 			patch.object(app.frappe, "db", database),
 			patch.object(app.capacity_balance, "invalidate_capacity_balance") as invalidate,
 		):

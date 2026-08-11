@@ -4953,11 +4953,11 @@ def _build_shift_schedule_proposal_items(
 			for segment in _get_primary_segments_for_result(row.result_reference):
 				if getdate(segment.get("end_time") or segment.get("start_time")) < release_from or getdate(segment.get("start_time")) > release_to:
 					continue
-					if frozen_qty_by_segment.get(segment.get("name"), 0) >= flt(segment.get("planned_qty")) - 0.0001:
-						continue
-					segment = dict(segment)
-					segment["item_code"] = row.item_code
-					segment["proposal_state_token"] = _segment_proposal_state_token(segment)
+				if frozen_qty_by_segment.get(segment.get("name"), 0) >= flt(segment.get("planned_qty")) - 0.0001:
+					continue
+				segment = dict(segment)
+				segment["item_code"] = row.item_code
+				segment["proposal_state_token"] = _segment_proposal_state_token(segment)
 				current_segments.extend(
 					_split_segment_into_shift_slices(
 						segment,
@@ -13423,7 +13423,6 @@ def _segment_proposal_state_token(segment: dict[str, Any] | None) -> str:
 			"linked_work_order": segment.get("linked_work_order") or "",
 			"linked_work_order_scheduling": segment.get("linked_work_order_scheduling") or "",
 			"linked_scheduling_item": segment.get("linked_scheduling_item") or "",
-			"modified": str(segment.get("modified") or ""),
 		}
 	)
 

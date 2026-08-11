@@ -2158,6 +2158,7 @@ Customer demand lineage for APS result {0} changed after planning; release is bl
 Customer schedule lineage for APS result {0} changed after planning. Recalculate before any further release.,APS 结果 {0} 的客户排期钩稽在排产后发生变化。继续下发前请重新计算。
 "Customer schedule quantity/date changed after planning; the execution ledger was preserved, but the plan commitment must be recalculated.",客户排期数量或日期在排产后发生变化；执行台账已保留，但必须重新计算计划承诺。
 Customer schedule target {0} is no longer active.,客户排期目标 {0} 已不再生效。
+Customer schedule target {0} is no longer active. Rebuild the plan before applying this change.,客户排期目标 {0} 已不再生效。请先重建计划再应用此变更。
 Customer schedule target {0} is no longer available.,客户排期目标 {0} 已不存在。
 Customer schedule target {0} no longer matches result fields: {1}.,客户排期目标 {0} 已不再匹配结果字段：{1}。
 Customer schedule target {0} quantity changed after planning.,客户排期目标 {0} 的数量在排产后发生变化。

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from datetime import timedelta
 
 import frappe
@@ -23,10 +24,14 @@ class TestProductionExecutionSync(FrappeTestCase):
 		self.work_order = frappe.db.get_value(
 			"Work Order",
 			{},
-			["name", "company", "production_item", "scrap_warehouse"],
+			["name", "company", "production_item", "scrap_warehouse", "sales_order", "sales_order_item"],
 			as_dict=True,
 		)
-		self.customer = frappe.db.get_value("Customer", {})
+		self.customer = (
+			frappe.db.get_value("Sales Order", self.work_order.sales_order, "customer")
+			if self.work_order and self.work_order.sales_order
+			else frappe.db.get_value("Customer", {})
+		)
 		self.workstation = frappe.db.get_value("Workstation", {})
 		if not self.work_order or not self.customer or not self.workstation:
 			self.skipTest("Production sync tests need a Work Order, Customer, and Workstation.")
@@ -158,15 +163,15 @@ class TestProductionExecutionSync(FrappeTestCase):
 			0,
 		)
 
-	def test_bare_work_order_report_is_rejected_when_multiple_active_runs_claim_it(self):
+	def test_bare_work_order_report_is_ignored_when_multiple_active_runs_claim_it(self):
 		competing_run = self._create_competing_run_reference()
 		stock_entry = self._create_manufacture_entry(40, use_execution_detail=False)
 
 		first = execution_sync.sync_production_for_run(self.fixture["run"])
 		second = execution_sync.sync_production_for_run(competing_run)
 
-		self.assertEqual(first["source_detail_count"], 1)
-		self.assertEqual(second["source_detail_count"], 1)
+		self.assertEqual(first["source_detail_count"], 0)
+		self.assertEqual(second["source_detail_count"], 0)
 		self.assertEqual(first["desired_allocation_count"], 0)
 		self.assertEqual(second["desired_allocation_count"], 0)
 		self.assertEqual(first["rollup"]["good_qty"], 0)
@@ -183,44 +188,15 @@ class TestProductionExecutionSync(FrappeTestCase):
 		frappe.db.set_value("Stock Entry", stock_entry, "docstatus", 2, update_modified=False)
 
 	def test_direct_overproduction_preserves_source_without_overstating_customer_demand(self):
-		result_row = frappe.db.get_value(
-			"APS Schedule Result",
-			self.fixture["result"],
-			["requested_date", "company", "customer", "item_code"],
-			as_dict=True,
-		)
-		suffix = frappe.generate_hash(length=10)
-		schedule = frappe.get_doc(
-			{
-				"doctype": "Customer Delivery Schedule",
-				"customer": result_row.customer,
-				"company": result_row.company,
-				"schedule_scope": "PHASE4-OVERPRODUCTION-{0}".format(suffix),
-				"version_no": "PHASE4-OVERPRODUCTION-{0}".format(suffix),
-				"import_strategy": "Append",
-				"source_type": "Customer Delivery Schedule",
-				"status": "Active",
-				"items": [
-					{
-						"item_code": result_row.item_code,
-						"schedule_date": result_row.requested_date,
-						"qty": 20,
-						"balance_qty": 20,
-						"status": "Open",
-					},
-				],
-			}
-		).insert(ignore_permissions=True)
-		target = frappe.db.get_value("Customer Delivery Schedule Item", {"parent": schedule.name}, "name")
 		stock_entry = self._create_manufacture_entry(
-			30,
+			130,
 			direct_scheduling_item=self.fixture["scheduling_items"][0],
 			output_type="Good",
 		)
 
 		result = execution_sync.sync_production_for_run(self.fixture["run"])
 
-		self.assertEqual(result["rollup"]["good_qty"], 30)
+		self.assertEqual(result["rollup"]["good_qty"], 130)
 		allocations = frappe.get_all(
 			"APS Production Allocation",
 			filters={"source_stock_entry": stock_entry},
@@ -228,11 +204,11 @@ class TestProductionExecutionSync(FrappeTestCase):
 		)
 		self.assertEqual(len(allocations), 2)
 		qty_by_target = {row.customer_schedule_item: row.good_qty for row in allocations}
-		self.assertEqual(qty_by_target, {target: 20, None: 10})
-		self.assertEqual(sum(row.effective_qty for row in allocations), 30)
+		self.assertEqual(qty_by_target, {self.fixture["schedule_item"]: 100, None: 30})
+		self.assertEqual(sum(row.effective_qty for row in allocations), 130)
 		self.assertEqual(
-			frappe.db.get_value("Customer Delivery Schedule Item", target, "produced_qty"),
-			20,
+			frappe.db.get_value("Customer Delivery Schedule Item", self.fixture["schedule_item"], "produced_qty"),
+			100,
 		)
 		replay = execution_sync.sync_production_for_run(self.fixture["run"])
 		self.assertEqual(replay["ledger"]["created"], 0)
@@ -244,6 +220,55 @@ class TestProductionExecutionSync(FrappeTestCase):
 	def _create_plan_fixture(self):
 		start = get_datetime(f"{getdate(add_days(today(), 1))} 08:00:00")
 		due_date = getdate(add_days(today(), 730))
+		suffix = frappe.generate_hash(length=10)
+		schedule = frappe.get_doc(
+			{
+				"doctype": "Customer Delivery Schedule",
+				"customer": self.customer,
+				"company": self.work_order.company,
+				"schedule_scope": "PHASE4-PROD-SYNC-{0}".format(suffix),
+				"version_no": "PHASE4-PROD-SYNC-{0}".format(suffix),
+				"import_strategy": "Append",
+				"source_type": "Customer Delivery Schedule",
+				"status": "Active",
+				"items": [
+					{
+						"item_code": self.work_order.production_item,
+						"sales_order": self.work_order.sales_order,
+						"schedule_date": due_date,
+						"qty": 100,
+						"balance_qty": 100,
+						"status": "Open",
+					},
+				],
+			}
+		)
+		schedule.flags.aps_schedule_import_transition = True
+		schedule.insert(ignore_permissions=True)
+		schedule_item = frappe.db.get_value(
+			"Customer Delivery Schedule Item", {"parent": schedule.name}, "name"
+		)
+		baseline_json = json.dumps(
+			{
+				"version": 3,
+				"net_requirement": {
+					"demand_qty": 100.0,
+					"available_stock_qty": 0.0,
+					"open_work_order_qty": 0.0,
+					"existing_work_order_policy": "Exclude",
+				},
+				"targets": [
+					{
+						"customer_schedule_item": schedule_item,
+						"opening_required_qty": 100.0,
+						"source_open_qty": 100.0,
+						"item_code": self.work_order.production_item,
+						"schedule_date": str(due_date),
+					}
+				],
+			},
+			sort_keys=True,
+		)
 		run = frappe.get_doc(
 			{
 				"doctype": "APS Planning Run",
@@ -265,11 +290,17 @@ class TestProductionExecutionSync(FrappeTestCase):
 				"company": self.work_order.company,
 				"customer": self.customer,
 				"item_code": self.work_order.production_item,
+				"sales_order": self.work_order.sales_order,
+				"sales_order_item": self.work_order.sales_order_item,
 				"demand_date": due_date,
 				"demand_qty": 100,
+				"available_stock_qty": 0,
+				"open_work_order_qty": 0,
+				"existing_work_order_policy": "Exclude",
 				"planning_qty": 100,
 				"net_requirement_qty": 100,
 				"is_system_generated": 1,
+				"fulfillment_baseline_json": baseline_json,
 			}
 		).insert(ignore_permissions=True)
 		result = frappe.get_doc(
@@ -281,11 +312,14 @@ class TestProductionExecutionSync(FrappeTestCase):
 				"net_requirement": net.name,
 				"customer": self.customer,
 				"item_code": self.work_order.production_item,
+				"sales_order": self.work_order.sales_order,
+				"sales_order_item": self.work_order.sales_order_item,
 				"requested_date": due_date,
 				"demand_source": "Customer Delivery Schedule",
 				"planned_qty": 100,
 				"status": "Planned",
 				"risk_status": "Normal",
+				"fulfillment_baseline_json": baseline_json,
 				"segments": [
 					{
 						"workstation": self.workstation,
@@ -374,6 +408,8 @@ class TestProductionExecutionSync(FrappeTestCase):
 			"segments": segments,
 			"wos": wos.name,
 			"scheduling_items": scheduling_items,
+			"schedule": schedule.name,
+			"schedule_item": schedule_item,
 		}
 
 	def _create_competing_run_reference(self):
@@ -386,7 +422,17 @@ class TestProductionExecutionSync(FrappeTestCase):
 		base_result = frappe.db.get_value(
 			"APS Schedule Result",
 			self.fixture["result"],
-			["company", "plant_floor", "net_requirement", "customer", "item_code", "requested_date", "demand_source"],
+			[
+				"company",
+				"plant_floor",
+				"net_requirement",
+				"customer",
+				"item_code",
+				"sales_order",
+				"sales_order_item",
+				"requested_date",
+				"demand_source",
+			],
 			as_dict=True,
 		)
 		base_segment = frappe.db.get_value(

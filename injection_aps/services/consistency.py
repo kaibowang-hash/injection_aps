@@ -322,6 +322,301 @@ def validate_plan_consistency(run_name: str, update_run: bool = True) -> dict[st
 	return {"run": run_name, "valid": valid, "errors": errors, "totals": expected_totals}
 
 
+def audit_run_quantity_consistency(run_name: str) -> dict[str, Any]:
+	"""Read-only Phase 6 quantity audit for one APS Planning Run.
+
+	The normal consistency gate may recalculate and persist canonical fields.
+	This audit deliberately avoids writes so it can be used as an independent
+	confirmation after import, scheduling, release, execution and delivery sync.
+	"""
+	run_row = frappe.db.get_value(
+		"APS Planning Run",
+		run_name,
+		[
+			"total_net_requirement_qty",
+			"total_machine_scheduled_qty",
+			"total_demand_covered_qty",
+			"total_overproduction_qty",
+			"total_scheduled_qty",
+			"total_unscheduled_qty",
+			"total_produced_qty",
+			"total_delivered_qty",
+			"result_count",
+		],
+		as_dict=True,
+	)
+	if not run_row:
+		frappe.throw(_("APS Planning Run {0} was not found.").format(run_name))
+
+	differences: list[dict[str, Any]] = []
+	result_summaries = []
+	production = _get_audit_production_totals(run_name)
+	delivery = _get_audit_delivery_totals(run_name)
+	result_rows = frappe.get_all(
+		"APS Schedule Result",
+		filters={"planning_run": run_name},
+		fields=[
+			"name",
+			"planned_qty",
+			"machine_scheduled_qty",
+			"demand_covered_qty",
+			"overproduction_qty",
+			"scheduled_qty",
+			"unscheduled_qty",
+			"produced_qty",
+			"good_produced_qty",
+			"scrap_qty",
+			"delivered_qty",
+			"risk_status",
+			"schedule_delay_minutes",
+			"requested_date",
+			"demand_source",
+			"fulfillment_baseline_json",
+		],
+		order_by="creation asc",
+	)
+
+	for result in result_rows:
+		segments = frappe.get_all(
+			"APS Schedule Segment",
+			filters={"parent": result.name, "parenttype": "APS Schedule Result"},
+			fields=[
+				"name",
+				"workstation",
+				"start_time",
+				"end_time",
+				"planned_qty",
+				"segment_kind",
+				"segment_status",
+				"risk_status",
+				"schedule_delay_minutes",
+				"actual_completed_qty",
+				"actual_good_qty",
+				"actual_scrap_qty",
+			],
+			order_by="idx asc",
+		)
+		effective_segments = [segment for segment in segments if is_effective_primary_segment(segment)]
+		machine_scheduled_qty = sum(flt(segment.planned_qty) for segment in effective_segments)
+		expected = calculate_quantity_fields(result.planned_qty, machine_scheduled_qty)
+		for fieldname in (
+			"machine_scheduled_qty",
+			"demand_covered_qty",
+			"overproduction_qty",
+			"unscheduled_qty",
+		):
+			_compare_audit_qty(
+				differences,
+				doctype="APS Schedule Result",
+				name=result.name,
+				fieldname=fieldname,
+				expected=expected[fieldname],
+				actual=result.get(fieldname),
+			)
+		_compare_audit_qty(
+			differences,
+			doctype="APS Schedule Result",
+			name=result.name,
+			fieldname="scheduled_qty",
+			expected=machine_scheduled_qty,
+			actual=result.scheduled_qty,
+			source="effective_schedule_segments",
+		)
+
+		produced = production["by_result"].get(result.name) or {}
+		_compare_audit_qty(
+			differences,
+			doctype="APS Schedule Result",
+			name=result.name,
+			fieldname="produced_qty",
+			expected=produced.get("good_qty", 0),
+			actual=result.produced_qty,
+			source="effective_production_allocations",
+		)
+		_compare_audit_qty(
+			differences,
+			doctype="APS Schedule Result",
+			name=result.name,
+			fieldname="good_produced_qty",
+			expected=produced.get("good_qty", 0),
+			actual=result.good_produced_qty,
+			source="effective_production_allocations",
+		)
+		_compare_audit_qty(
+			differences,
+			doctype="APS Schedule Result",
+			name=result.name,
+			fieldname="scrap_qty",
+			expected=produced.get("scrap_qty", 0),
+			actual=result.scrap_qty,
+			source="effective_production_allocations",
+		)
+		target_names = _get_audit_customer_schedule_targets(result)
+		expected_delivered = sum(flt(delivery["by_target"].get(target_name)) for target_name in target_names)
+		_compare_audit_qty(
+			differences,
+			doctype="APS Schedule Result",
+			name=result.name,
+			fieldname="delivered_qty",
+			expected=expected_delivered,
+			actual=result.delivered_qty,
+			source="effective_delivery_allocations",
+		)
+
+		due_datetime = _due_datetime(result.name, result.requested_date)
+		expected_delay = 0.0
+		for segment in effective_segments:
+			segment_delay = 0.0
+			if segment.end_time and get_datetime(segment.end_time) > due_datetime:
+				segment_delay = (get_datetime(segment.end_time) - due_datetime).total_seconds() / 60
+			expected_delay = max(expected_delay, segment_delay)
+			_compare_audit_qty(
+				differences,
+				doctype="APS Schedule Segment",
+				name=segment.name,
+				fieldname="schedule_delay_minutes",
+				expected=segment_delay,
+				actual=segment.schedule_delay_minutes,
+				source="segment_end_vs_due_datetime",
+			)
+			if segment_delay > QTY_TOLERANCE and segment.risk_status not in ("Critical", "Blocked"):
+				differences.append(
+					_audit_difference(
+						doctype="APS Schedule Segment",
+						name=segment.name,
+						fieldname="risk_status",
+						expected="Critical or Blocked",
+						actual=segment.risk_status or "",
+						source="segment_end_vs_due_datetime",
+					)
+				)
+		_compare_audit_qty(
+			differences,
+			doctype="APS Schedule Result",
+			name=result.name,
+			fieldname="schedule_delay_minutes",
+			expected=expected_delay,
+			actual=result.schedule_delay_minutes,
+			source="latest_effective_segment_end_vs_due_datetime",
+		)
+		if expected_delay > QTY_TOLERANCE and result.risk_status not in ("Critical", "Blocked"):
+			differences.append(
+				_audit_difference(
+					doctype="APS Schedule Result",
+					name=result.name,
+					fieldname="risk_status",
+					expected="Critical or Blocked",
+					actual=result.risk_status or "",
+					source="latest_effective_segment_end_vs_due_datetime",
+				)
+			)
+
+		for segment in segments:
+			segment_production = production["by_segment"].get(segment.name) or {}
+			_compare_audit_qty(
+				differences,
+				doctype="APS Schedule Segment",
+				name=segment.name,
+				fieldname="actual_good_qty",
+				expected=segment_production.get("good_qty", 0),
+				actual=segment.actual_good_qty,
+				source="effective_production_allocations",
+			)
+			_compare_audit_qty(
+				differences,
+				doctype="APS Schedule Segment",
+				name=segment.name,
+				fieldname="actual_scrap_qty",
+				expected=segment_production.get("scrap_qty", 0),
+				actual=segment.actual_scrap_qty,
+				source="effective_production_allocations",
+			)
+			_compare_audit_qty(
+				differences,
+				doctype="APS Schedule Segment",
+				name=segment.name,
+				fieldname="actual_completed_qty",
+				expected=flt(segment.actual_good_qty) + flt(segment.actual_scrap_qty),
+				actual=segment.actual_completed_qty,
+				source="segment_actual_good_plus_scrap",
+			)
+
+		result_summaries.append(
+			{
+				**expected,
+				"produced_qty": produced.get("good_qty", 0),
+				"delivered_qty": expected_delivered,
+			}
+		)
+
+	for row in production["invalid_sources"]:
+		differences.append(
+			_audit_difference(
+				doctype="APS Production Allocation",
+				name=row.name,
+				fieldname="source_docstatus",
+				expected=1,
+				actual=row.get("actual_docstatus"),
+				source=row.source_stock_entry,
+			)
+		)
+	for row in delivery["invalid_sources"]:
+		differences.append(
+			_audit_difference(
+				doctype="APS Delivery Allocation",
+				name=row.name,
+				fieldname="source_docstatus",
+				expected=1,
+				actual=row.get("actual_docstatus"),
+				source=row.source_delivery_note,
+			)
+		)
+
+	expected_totals = _sum_run_totals(result_summaries)
+	run_field_map = {
+		"total_net_requirement_qty": "planned_qty",
+		"total_machine_scheduled_qty": "machine_scheduled_qty",
+		"total_demand_covered_qty": "demand_covered_qty",
+		"total_overproduction_qty": "overproduction_qty",
+		"total_scheduled_qty": "machine_scheduled_qty",
+		"total_unscheduled_qty": "unscheduled_qty",
+		"total_produced_qty": "produced_qty",
+		"total_delivered_qty": "delivered_qty",
+	}
+	for run_field, total_field in run_field_map.items():
+		_compare_audit_qty(
+			differences,
+			doctype="APS Planning Run",
+			name=run_name,
+			fieldname=run_field,
+			expected=expected_totals[total_field],
+			actual=run_row.get(run_field),
+			source="schedule_result_summary",
+		)
+	if cint(run_row.result_count) != len(result_summaries):
+		differences.append(
+			_audit_difference(
+				doctype="APS Planning Run",
+				name=run_name,
+				fieldname="result_count",
+				expected=len(result_summaries),
+				actual=cint(run_row.result_count),
+				source="schedule_result_summary",
+			)
+		)
+
+	return {
+		"run": run_name,
+		"valid": not differences,
+		"difference_count": len(differences),
+		"differences": differences,
+		"totals": expected_totals,
+		"result_count": len(result_summaries),
+		"production_source_count": production["source_count"],
+		"delivery_source_count": delivery["source_count"],
+	}
+
+
 def assert_plan_consistent(run_name: str, recalculate: bool = True, reason: str | None = None) -> dict[str, Any]:
 	result = (
 		recalculate_plan_consistency(run_name, reason=reason or "pre-release consistency gate")
@@ -722,6 +1017,8 @@ def _get_customer_schedule_lineage_errors(
 	for result in result_rows or []:
 		if result.name not in baselines:
 			continue
+		if result.get("planned_qty") is not None and flt(result.get("planned_qty")) <= QTY_TOLERANCE:
+			continue
 		baseline = baselines.get(result.name)
 		baseline_targets = baseline.get("targets") if isinstance(baseline, dict) else None
 		reasons = []
@@ -1055,6 +1352,198 @@ def _resolve_managed_exceptions(run_name: str, exception_types: tuple[str, ...] 
 		pluck="name",
 	):
 		frappe.db.set_value("APS Exception Log", name, "status", "Resolved", update_modified=False)
+
+
+def _get_audit_production_totals(run_name: str) -> dict[str, Any]:
+	if not frappe.db.exists("DocType", "APS Production Allocation"):
+		return {"by_result": {}, "by_segment": {}, "invalid_sources": [], "source_count": 0}
+	rows = frappe.db.sql(
+		"""
+		select
+			pa.schedule_result,
+			pa.segment,
+			coalesce(sum(case when pa.is_effective = 1
+				and ifnull(pa.source_docstatus, 0) = 1
+				and ifnull(se.docstatus, pa.source_docstatus) = 1
+				then pa.good_qty else 0 end), 0) as good_qty,
+			coalesce(sum(case when pa.is_effective = 1
+				and ifnull(pa.source_docstatus, 0) = 1
+				and ifnull(se.docstatus, pa.source_docstatus) = 1
+				then pa.scrap_qty else 0 end), 0) as scrap_qty,
+			count(distinct pa.source_stock_entry) as source_count
+		from `tabAPS Production Allocation` pa
+		left join `tabStock Entry` se on se.name = pa.source_stock_entry
+		where pa.planning_run = %s
+		group by pa.schedule_result, pa.segment
+		""",
+		run_name,
+		as_dict=True,
+	)
+	by_result: dict[str, dict[str, float]] = defaultdict(lambda: {"good_qty": 0.0, "scrap_qty": 0.0})
+	by_segment: dict[str, dict[str, float]] = {}
+	for row in rows:
+		by_result[row.schedule_result]["good_qty"] += flt(row.good_qty)
+		by_result[row.schedule_result]["scrap_qty"] += flt(row.scrap_qty)
+		by_segment[row.segment] = {"good_qty": flt(row.good_qty), "scrap_qty": flt(row.scrap_qty)}
+	source_count = frappe.db.sql(
+		"""
+		select count(distinct source_stock_entry)
+		from `tabAPS Production Allocation`
+		where planning_run = %s
+		""",
+		run_name,
+	)[0][0]
+	invalid_sources = frappe.db.sql(
+		"""
+		select
+			pa.name,
+			pa.source_stock_entry,
+			pa.source_docstatus as recorded_docstatus,
+			ifnull(se.docstatus, pa.source_docstatus) as actual_docstatus
+		from `tabAPS Production Allocation` pa
+		left join `tabStock Entry` se on se.name = pa.source_stock_entry
+		where pa.planning_run = %s
+			and pa.is_effective = 1
+			and (
+				ifnull(pa.source_docstatus, 0) != 1
+				or ifnull(se.docstatus, pa.source_docstatus) != 1
+			)
+		order by pa.source_stock_entry asc, pa.name asc
+		""",
+		run_name,
+		as_dict=True,
+	)
+	return {
+		"by_result": dict(by_result),
+		"by_segment": by_segment,
+		"invalid_sources": invalid_sources,
+		"source_count": cint(source_count),
+	}
+
+
+def _get_audit_delivery_totals(run_name: str) -> dict[str, Any]:
+	if not frappe.db.exists("DocType", "APS Delivery Allocation"):
+		return {"by_target": {}, "invalid_sources": [], "source_count": 0}
+	result_rows = frappe.get_all(
+		"APS Schedule Result",
+		filters={"planning_run": run_name},
+		fields=["name", "fulfillment_baseline_json"],
+	)
+	target_names = sorted(
+		{
+			target_name
+			for row in result_rows
+			for target_name in _get_audit_customer_schedule_targets(row)
+			if target_name
+		}
+	)
+	if not target_names:
+		return {"by_target": {}, "invalid_sources": [], "source_count": 0}
+	rows = frappe.db.sql(
+		"""
+		select
+			da.customer_schedule_item,
+			coalesce(sum(case when da.is_effective = 1
+				and ifnull(da.source_docstatus, 0) = 1
+				and ifnull(dn.docstatus, da.source_docstatus) = 1
+				then da.effective_qty else 0 end), 0) as delivered_qty
+		from `tabAPS Delivery Allocation` da
+		left join `tabDelivery Note` dn on dn.name = da.source_delivery_note
+		where da.customer_schedule_item in %(target_names)s
+		group by da.customer_schedule_item
+		""",
+		{"target_names": tuple(target_names)},
+		as_dict=True,
+	)
+	invalid_sources = frappe.db.sql(
+		"""
+		select
+			da.name,
+			da.source_delivery_note,
+			da.source_docstatus as recorded_docstatus,
+			ifnull(dn.docstatus, da.source_docstatus) as actual_docstatus
+		from `tabAPS Delivery Allocation` da
+		left join `tabDelivery Note` dn on dn.name = da.source_delivery_note
+		where da.customer_schedule_item in %(target_names)s
+			and da.is_effective = 1
+			and (
+				ifnull(da.source_docstatus, 0) != 1
+				or ifnull(dn.docstatus, da.source_docstatus) != 1
+			)
+		order by da.source_delivery_note asc, da.name asc
+		""",
+		{"target_names": tuple(target_names)},
+		as_dict=True,
+	)
+	source_count = frappe.db.sql(
+		"""
+		select count(distinct source_delivery_note)
+		from `tabAPS Delivery Allocation`
+		where customer_schedule_item in %(target_names)s
+		""",
+		{"target_names": tuple(target_names)},
+	)[0][0]
+	return {
+		"by_target": {row.customer_schedule_item: flt(row.delivered_qty) for row in rows},
+		"invalid_sources": invalid_sources,
+		"source_count": cint(source_count),
+	}
+
+
+def _get_audit_customer_schedule_targets(result) -> list[str]:
+	baseline = _parse_fulfillment_baseline(result.get("fulfillment_baseline_json"))
+	if not isinstance(baseline, dict):
+		return []
+	return [
+		row.get("customer_schedule_item")
+		for row in baseline.get("targets") or []
+		if isinstance(row, dict) and row.get("customer_schedule_item") and not cint(row.get("retired"))
+	]
+
+
+def _compare_audit_qty(
+	differences: list[dict[str, Any]],
+	*,
+	doctype: str,
+	name: str,
+	fieldname: str,
+	expected,
+	actual,
+	source: str | None = None,
+):
+	if abs(flt(actual) - flt(expected)) <= QTY_TOLERANCE:
+		return
+	differences.append(
+		_audit_difference(
+			doctype=doctype,
+			name=name,
+			fieldname=fieldname,
+			expected=flt(expected),
+			actual=flt(actual),
+			source=source,
+		)
+	)
+
+
+def _audit_difference(
+	*,
+	doctype: str,
+	name: str,
+	fieldname: str,
+	expected,
+	actual,
+	source: str | None = None,
+) -> dict[str, Any]:
+	difference = flt(actual) - flt(expected) if isinstance(expected, (int, float)) else None
+	return {
+		"doctype": doctype,
+		"name": name,
+		"fieldname": fieldname,
+		"expected_qty": expected,
+		"actual_qty": actual,
+		"difference_qty": difference,
+		"source": source,
+	}
 
 
 def _compare_qty(errors: list[dict[str, Any]], source: str, fieldname: str, actual, expected):

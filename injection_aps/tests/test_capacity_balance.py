@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import unittest
+from contextlib import contextmanager
 from copy import deepcopy
 from datetime import datetime, timedelta
 from types import SimpleNamespace
@@ -2329,7 +2330,8 @@ class TestCapacityBalanceTransactions(FrappeTestCase):
 			"Suggestion Ready",
 		)
 
-		applied = capacity_balance.apply_capacity_balance(self.fixture["run"].name)
+		with self._capacity_test_context():
+			applied = capacity_balance.apply_capacity_balance(self.fixture["run"].name)
 		self.assertEqual(applied["status"], "Applied")
 		self.assertEqual(applied["overlap_count"], 0)
 		self.assertEqual(applied["mold_overlap_count"], 0)
@@ -2343,7 +2345,8 @@ class TestCapacityBalanceTransactions(FrappeTestCase):
 		self.assertIn("Prebuild", {row.production_mode for row in segments})
 		self.assertIn("JIT", {row.production_mode for row in segments})
 
-		replay = capacity_balance.apply_capacity_balance(self.fixture["run"].name)
+		with self._capacity_test_context():
+			replay = capacity_balance.apply_capacity_balance(self.fixture["run"].name)
 		self.assertEqual(replay["idempotent_replay"], 1)
 		self.assertEqual(
 			frappe.db.count(
@@ -2362,18 +2365,22 @@ class TestCapacityBalanceTransactions(FrappeTestCase):
 		)
 		analysis = self._analyze()
 		self.assertEqual(analysis["summary"]["requires_confirmation"], 1)
-		with self.assertRaises(frappe.ValidationError):
-			capacity_balance.apply_capacity_balance(self.fixture["run"].name)
-		confirmed = capacity_balance.confirm_capacity_balance(self.fixture["run"].name)
+		with self._capacity_test_context():
+			with self.assertRaises(frappe.ValidationError):
+				capacity_balance.apply_capacity_balance(self.fixture["run"].name)
+		with self._capacity_test_context():
+			confirmed = capacity_balance.confirm_capacity_balance(self.fixture["run"].name)
 		self.assertEqual(confirmed["confirmed_by"], frappe.session.user)
-		applied = capacity_balance.apply_capacity_balance(self.fixture["run"].name)
+		with self._capacity_test_context():
+			applied = capacity_balance.apply_capacity_balance(self.fixture["run"].name)
 		self.assertEqual(applied["status"], "Applied")
 
 	def test_stale_plan_blocks_apply(self):
 		self._analyze()
 		frappe.db.set_value("APS Schedule Segment", self.fixture["segment"], "planned_qty", 99)
-		with self.assertRaisesRegex(frappe.ValidationError, "plan changed"):
-			capacity_balance.apply_capacity_balance(self.fixture["run"].name)
+		with self._capacity_test_context():
+			with self.assertRaisesRegex(frappe.ValidationError, "plan or its shared material"):
+				capacity_balance.apply_capacity_balance(self.fixture["run"].name)
 		self.assertEqual(
 			frappe.db.get_value("APS Planning Run", self.fixture["run"].name, "capacity_balance_status"),
 			"Suggestion Ready",
@@ -2387,11 +2394,11 @@ class TestCapacityBalanceTransactions(FrappeTestCase):
 			["planned_qty", "start_time", "end_time"],
 			as_dict=True,
 		)
-		with patch.object(
-			planning,
-			"_validate_run_segment_overlaps",
-			return_value={"count": 1, "messages": ["forced overlap"], "exception_names": []},
-		):
+		with self._capacity_test_context(), patch.object(
+				planning,
+				"_validate_run_segment_overlaps",
+				return_value={"count": 1, "messages": ["forced overlap"], "exception_names": []},
+			):
 			with self.assertRaisesRegex(frappe.ValidationError, "created 1 workstation overlap"):
 				capacity_balance.apply_capacity_balance(self.fixture["run"].name)
 		after = frappe.db.get_value(
@@ -2414,6 +2421,42 @@ class TestCapacityBalanceTransactions(FrappeTestCase):
 		)
 
 	def _analyze(self):
+		with self._capacity_test_context():
+			return capacity_balance.analyze_capacity_balance(self.fixture["run"].name)
+
+	def _capacity_fixed_intervals(self):
+		due_date = self.fixture["due_date"]
+		jit_block_start = get_datetime(f"{due_date} 08:00:00")
+		return (
+			{
+				self.workstation: [
+					(jit_block_start, jit_block_start + timedelta(hours=12)),
+				]
+			},
+			{},
+		)
+
+	def _capacity_settings(self):
+		return {
+			"default_production_strategy": "Auto Balance",
+			"default_max_prebuild_days": 7,
+			"high_cancellation_risk_percent": 60,
+			"plant_floor_fg_warehouse_field": "",
+		}
+
+	def _item_prebuild_policy(self):
+		return {
+			"production_strategy": "Auto Balance",
+			"prebuild_allowed": 1,
+			"max_prebuild_days": 7,
+			"cancellation_risk_percent": 0,
+			"max_stock_qty": 1000,
+			"shelf_life_days": 30,
+			"minimum_batch_qty": 0,
+		}
+
+	@contextmanager
+	def _capacity_test_context(self):
 		settings = {
 			"default_production_strategy": "Auto Balance",
 			"default_max_prebuild_days": 7,
@@ -2421,31 +2464,73 @@ class TestCapacityBalanceTransactions(FrappeTestCase):
 			"plant_floor_fg_warehouse_field": "",
 		}
 		with (
-			patch.object(capacity_balance, "_get_fixed_execution_intervals", return_value=({}, {})),
-			patch.object(planning, "_get_active_downtime_windows", return_value=[]),
-			patch.object(planning, "get_settings_dict", return_value=settings),
 			patch.object(
 				capacity_balance,
-				"_get_item_prebuild_policy",
-				return_value={
-					"production_strategy": "Auto Balance",
-					"prebuild_allowed": 1,
-					"max_prebuild_days": 7,
-					"cancellation_risk_percent": 0,
-					"max_stock_qty": 1000,
-					"shelf_life_days": 30,
-					"minimum_batch_qty": 0,
-				},
+				"_get_fixed_execution_intervals",
+				return_value=self._capacity_fixed_intervals(),
 			),
+			patch.object(planning, "_get_active_downtime_windows", return_value=[]),
+			patch.object(capacity_balance, "_get_current_active_downtime_windows", return_value=[]),
+			patch.object(planning, "get_settings_dict", return_value=settings),
+			patch.object(capacity_balance, "_get_capacity_settings", return_value=settings),
+			patch.object(capacity_balance, "_get_item_prebuild_policy", return_value=self._item_prebuild_policy()),
 			patch.object(capacity_balance, "_get_item_inventory_room", return_value=(0, 1000)),
 			patch.object(capacity_balance, "_get_warehouse_capacity_room", return_value=(None, 1000)),
 			patch.object(capacity_balance, "_get_material_ready_qty", return_value=1000),
 		):
-			return capacity_balance.analyze_capacity_balance(self.fixture["run"].name)
+			yield
 
 	def _create_fixture(self):
 		start = get_datetime(f"{getdate(add_days(today(), 1))} 08:00:00")
 		due_date = getdate(add_days(today(), 2))
+		schedule = frappe.get_doc(
+			{
+				"doctype": "Customer Delivery Schedule",
+				"customer": self.customer,
+				"company": self.company,
+				"schedule_scope": f"CAPACITY-TXN-{frappe.generate_hash(length=8)}",
+				"version_no": f"CAPACITY-TXN-{frappe.generate_hash(length=8)}",
+				"import_strategy": "Append",
+				"source_type": "Customer Delivery Schedule",
+				"status": "Active",
+				"items": [
+					{
+						"item_code": self.item,
+						"schedule_date": due_date,
+						"qty": 100,
+						"balance_qty": 100,
+						"production_strategy": "Auto Balance",
+						"demand_confidence": "Confirmed",
+						"prebuild_allowed": 1,
+						"max_prebuild_days": 7,
+						"status": "Open",
+					}
+				],
+			}
+		)
+		schedule.flags.aps_schedule_import_transition = True
+		schedule.insert(ignore_permissions=True)
+		schedule_item = frappe.db.get_value(
+			"Customer Delivery Schedule Item", {"parent": schedule.name}, "name"
+		)
+		baseline_json = json.dumps(
+			{
+				"version": 3,
+				"net_requirement": {
+					"demand_qty": 100.0,
+					"available_stock_qty": 0.0,
+					"open_work_order_qty": 0.0,
+					"existing_work_order_policy": "Exclude",
+				},
+				"targets": [
+					{
+						"customer_schedule_item": schedule_item,
+						"opening_required_qty": 100.0,
+					}
+				],
+			},
+			sort_keys=True,
+		)
 		run = frappe.get_doc(
 			{
 				"doctype": "APS Planning Run",
@@ -2469,6 +2554,9 @@ class TestCapacityBalanceTransactions(FrappeTestCase):
 				"item_code": self.item,
 				"demand_date": due_date,
 				"demand_qty": 100,
+				"available_stock_qty": 0,
+				"open_work_order_qty": 0,
+				"existing_work_order_policy": "Exclude",
 				"planning_qty": 100,
 				"net_requirement_qty": 100,
 				"production_strategy": "Auto Balance",
@@ -2476,6 +2564,7 @@ class TestCapacityBalanceTransactions(FrappeTestCase):
 				"prebuild_allowed": 1,
 				"max_prebuild_days": 7,
 				"is_system_generated": 1,
+				"fulfillment_baseline_json": baseline_json,
 			}
 		).insert(ignore_permissions=True)
 		result = frappe.get_doc(
@@ -2494,6 +2583,7 @@ class TestCapacityBalanceTransactions(FrappeTestCase):
 				"prebuild_allowed": 1,
 				"max_prebuild_days": 7,
 				"planned_qty": 100,
+				"fulfillment_baseline_json": baseline_json,
 				"status": "Planned",
 				"risk_status": "Normal",
 				"segments": [
@@ -2513,7 +2603,15 @@ class TestCapacityBalanceTransactions(FrappeTestCase):
 		).insert(ignore_permissions=True)
 		consistency.recalculate_plan_consistency(run.name, reason="Phase 4 capacity fixture")
 		segment = frappe.db.get_value("APS Schedule Segment", {"parent": result.name}, "name")
-		return {"run": run, "net_requirement": net_requirement, "result": result, "segment": segment}
+		return {
+			"run": run,
+			"net_requirement": net_requirement,
+			"result": result,
+			"segment": segment,
+			"due_date": due_date,
+			"schedule": schedule.name,
+			"schedule_item": schedule_item,
+		}
 
 
 if __name__ == "__main__":

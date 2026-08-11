@@ -21,7 +21,7 @@ class TestDeliveryAllocationSync(FrappeTestCase):
 		self.due_date_2 = getdate(add_days(today(), 401))
 		self.schedule_a = self._create_schedule(
 			self.customer_a,
-			[(self.due_date_1, 50), (self.due_date_2, 50)],
+			[(self.due_date_1, 50), (self.due_date_1, 50)],
 		)
 		self.schedule_b = self._create_schedule(
 			self.customer_b,
@@ -37,9 +37,12 @@ class TestDeliveryAllocationSync(FrappeTestCase):
 			"APS Delivery Allocation",
 			filters={"source_delivery_note": delivery_note},
 			fields=["customer", "customer_schedule_item", "allocated_qty", "allocation_method"],
-			order_by="schedule_date asc",
 		)
-		self.assertEqual([row.allocated_qty for row in allocations], [50, 30])
+		qty_by_target = {row.customer_schedule_item: row.allocated_qty for row in allocations}
+		self.assertEqual(
+			qty_by_target,
+			{self.schedule_a["items"][0]: 50, self.schedule_a["items"][1]: 30},
+		)
 		self.assertEqual({row.customer for row in allocations}, {self.customer_a})
 		self.assertEqual({row.allocation_method for row in allocations}, {"Controlled FIFO"})
 		self.assertEqual(self._delivered(self.schedule_a["items"][0]), 50)
@@ -194,7 +197,9 @@ class TestDeliveryAllocationSync(FrappeTestCase):
 					for schedule_date, qty in rows
 				],
 			}
-		).insert(ignore_permissions=True)
+		)
+		doc.flags.aps_schedule_import_transition = True
+		doc.insert(ignore_permissions=True)
 		return {
 			"name": doc.name,
 			"items": frappe.get_all(

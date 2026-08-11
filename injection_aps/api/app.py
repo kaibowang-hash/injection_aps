@@ -1361,7 +1361,7 @@ def _attach_review_counts(rows, child_doctype):
 	count_rows = frappe.get_all(
 		child_doctype,
 		filters={"parent": ("in", names)},
-		fields=["parent", "review_status", "count(name) as count"],
+		fields=["parent", "review_status", {"COUNT": "name", "as": "count"}],
 		group_by="parent, review_status",
 	)
 	count_map = defaultdict(dict)
@@ -3200,7 +3200,7 @@ def get_schedule_gantt_data(run_name):
 		if row.item_code
 	}
 
-	segments = frappe.get_list(
+	segments = frappe.get_all(
 		"APS Schedule Segment",
 		filters={"parent": ("in", [row.name for row in results])},
 		fields=[

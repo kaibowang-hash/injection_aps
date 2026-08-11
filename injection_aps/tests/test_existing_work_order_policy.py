@@ -337,6 +337,13 @@ class TestExistingWorkOrderPolicy(TestCase):
 	def test_public_apis_forward_explicit_policy(self):
 		with (
 			patch("injection_aps.api.app._require_plan_access"),
+			patch("injection_aps.api.app._require_scoped_document_access"),
+			patch("injection_aps.api.app._require_explicit_company", side_effect=lambda company, **_: company),
+			patch("injection_aps.api.app._require_scope_access"),
+			patch("injection_aps.api.app._require_company_rebuild_scope"),
+			patch("injection_aps.api.app._require_complete_run_mutation_scope"),
+			patch("injection_aps.api.app._require_planning_reference_access"),
+			patch.object(app.frappe.db, "get_value", return_value="Test Company"),
 			patch("injection_aps.api.app.planning.rebuild_net_requirements", return_value={}) as rebuild,
 			patch("injection_aps.api.app.planning.run_planning_run", return_value={}) as run,
 			patch(

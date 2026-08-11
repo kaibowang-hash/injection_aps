@@ -678,7 +678,7 @@ def _create_schedule(
 	delivered_qty: float = 0,
 	remark: str = "",
 ):
-	return frappe.get_doc(
+	doc = frappe.get_doc(
 		{
 			"doctype": "Customer Delivery Schedule",
 			"customer": customer,
@@ -703,7 +703,9 @@ def _create_schedule(
 				}
 			],
 		}
-	).insert(ignore_permissions=True)
+	)
+	doc.flags.aps_schedule_import_transition = True
+	return doc.insert(ignore_permissions=True)
 
 
 def _create_planning_evidence(base_date) -> str:

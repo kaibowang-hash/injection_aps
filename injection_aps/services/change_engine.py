@@ -1230,6 +1230,8 @@ def _build_append_capacity_proposal(
 		run_name=doc.planning_run,
 	)
 	best = planning._choose_best_slot(
+		company=doc.company,
+		customer=customer,
 		item_code=item_code,
 		item_context=item_context,
 		qty=qty,
@@ -1999,7 +2001,128 @@ def _update_target_net_requirement(result_doc, proposal: dict[str, Any]):
 	if proposal.get("new_required_date"):
 		values["demand_date"] = getdate(proposal.get("new_required_date"))
 	frappe.db.set_value("APS Net Requirement", net_requirement, values)
+	_sync_customer_schedule_targets_for_change(result_doc, proposal, net_requirement)
 	return net_requirement
+
+
+def _sync_customer_schedule_targets_for_change(result_doc, proposal: dict[str, Any], net_requirement: str) -> list[str]:
+	"""Keep controlled Change Request mutations aligned with frozen customer demand."""
+	if (result_doc.get("demand_source") or "") != "Customer Delivery Schedule":
+		return []
+	baseline = _load_customer_schedule_baseline(result_doc.get("fulfillment_baseline_json"))
+	targets = [
+		row
+		for row in baseline.get("targets") or []
+		if isinstance(row, dict) and row.get("customer_schedule_item") and not cint(row.get("retired"))
+	]
+	if not targets:
+		return []
+	target_qty_by_name = _allocate_changed_target_qty(targets, flt(proposal.get("target_planned_qty")))
+	new_date = getdate(proposal.get("new_required_date") or result_doc.get("requested_date"))
+	rows = frappe.db.sql(
+		"""
+		select
+			i.name,
+			i.delivered_qty,
+			s.status as schedule_status
+		from `tabCustomer Delivery Schedule Item` i
+		inner join `tabCustomer Delivery Schedule` s on s.name = i.parent
+		where i.name in %(target_names)s
+		for update
+		""",
+		{"target_names": tuple(sorted(target_qty_by_name))},
+		as_dict=True,
+	)
+	row_by_name = {row.name: row for row in rows}
+	updated = []
+	for target in targets:
+		target_name = target.get("customer_schedule_item")
+		if target_name not in target_qty_by_name:
+			continue
+		current = row_by_name.get(target_name)
+		if not current or current.schedule_status != "Active":
+			frappe.throw(
+				_("Customer schedule target {0} is no longer active. Rebuild the plan before applying this change.").format(
+					target_name
+				),
+				frappe.ValidationError,
+			)
+		qty = flt(target_qty_by_name[target_name])
+		delivered_qty = flt(current.delivered_qty)
+		frappe.db.set_value(
+			"Customer Delivery Schedule Item",
+			target_name,
+			{
+				"schedule_date": new_date,
+				"qty": qty,
+				"balance_qty": max(qty - delivered_qty, 0),
+				"status": "Cancelled" if qty <= QTY_TOLERANCE else ("Covered" if delivered_qty >= qty else "Open"),
+			},
+			update_modified=False,
+		)
+		target["opening_required_qty"] = qty
+		target["source_open_qty"] = qty
+		target["schedule_date"] = str(new_date)
+		updated.append(target_name)
+	net_requirement_baseline = baseline.setdefault("net_requirement", {})
+	net_requirement_baseline["demand_qty"] = flt(proposal.get("target_planned_qty"))
+	net_requirement_baseline["available_stock_qty"] = flt(net_requirement_baseline.get("available_stock_qty"))
+	net_requirement_baseline["open_work_order_qty"] = flt(net_requirement_baseline.get("open_work_order_qty"))
+	if not net_requirement_baseline.get("existing_work_order_policy"):
+		net_requirement_baseline["existing_work_order_policy"] = frappe.db.get_value(
+			"APS Planning Run",
+			result_doc.planning_run,
+			"existing_work_order_policy",
+		)
+	baseline_json = json.dumps(baseline, ensure_ascii=False, sort_keys=True)
+	frappe.db.set_value(
+		"APS Schedule Result",
+		result_doc.name,
+		"fulfillment_baseline_json",
+		baseline_json,
+		update_modified=False,
+	)
+	frappe.db.set_value(
+		"APS Net Requirement",
+		net_requirement,
+		"fulfillment_baseline_json",
+		baseline_json,
+		update_modified=False,
+	)
+	return updated
+
+
+def _load_customer_schedule_baseline(value) -> dict[str, Any]:
+	if isinstance(value, dict):
+		return value
+	try:
+		baseline = json.loads(value or "{}")
+	except (TypeError, ValueError):
+		baseline = {}
+	return baseline if isinstance(baseline, dict) else {}
+
+
+def _allocate_changed_target_qty(targets: list[dict[str, Any]], target_qty: float) -> dict[str, float]:
+	names = [row.get("customer_schedule_item") for row in targets if row.get("customer_schedule_item")]
+	if not names:
+		return {}
+	target_qty = max(flt(target_qty), 0)
+	if len(names) == 1:
+		return {names[0]: target_qty}
+	basis = [
+		max(flt(row.get("source_open_qty") or row.get("opening_required_qty")), 0)
+		for row in targets
+		if row.get("customer_schedule_item")
+	]
+	basis_total = sum(basis)
+	remaining = target_qty
+	allocated: dict[str, float] = {}
+	for name, base_qty in zip(names[:-1], basis[:-1], strict=True):
+		qty = round(target_qty * base_qty / basis_total, 6) if basis_total > QTY_TOLERANCE else 0
+		allocated[name] = max(qty, 0)
+		remaining -= allocated[name]
+	allocated[names[-1]] = max(remaining, 0)
+	return allocated
 
 
 def _reset_run_approval(run_name: str):

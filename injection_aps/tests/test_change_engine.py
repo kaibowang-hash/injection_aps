@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from datetime import datetime, timedelta
 from types import SimpleNamespace
 from unittest import TestCase
@@ -587,6 +588,54 @@ class TestChangeEngineTransactions(FrappeTestCase):
 	def _create_cancel_fixture(self):
 		start = get_datetime(add_days(today(), 1)) + timedelta(hours=8)
 		due_date = getdate(add_days(today(), 3))
+		suffix = frappe.generate_hash(length=10)
+		schedule = frappe.get_doc(
+			{
+				"doctype": "Customer Delivery Schedule",
+				"customer": self.customer,
+				"company": self.company,
+				"schedule_scope": "CHANGE-ENGINE-{0}".format(suffix),
+				"version_no": "CHANGE-ENGINE-{0}".format(suffix),
+				"import_strategy": "Append",
+				"source_type": "Customer Delivery Schedule",
+				"status": "Active",
+				"items": [
+					{
+						"item_code": self.item,
+						"schedule_date": due_date,
+						"qty": 100,
+						"balance_qty": 100,
+						"status": "Open",
+					}
+				],
+			}
+		)
+		schedule.flags.aps_schedule_import_transition = True
+		schedule.insert(ignore_permissions=True)
+		schedule_item = frappe.db.get_value(
+			"Customer Delivery Schedule Item", {"parent": schedule.name}, "name"
+		)
+		baseline_json = json.dumps(
+			{
+				"version": 3,
+				"net_requirement": {
+					"demand_qty": 100.0,
+					"available_stock_qty": 0.0,
+					"open_work_order_qty": 0.0,
+					"existing_work_order_policy": "Exclude",
+				},
+				"targets": [
+					{
+						"customer_schedule_item": schedule_item,
+						"opening_required_qty": 100.0,
+						"source_open_qty": 100.0,
+						"item_code": self.item,
+						"schedule_date": str(due_date),
+					}
+				],
+			},
+			sort_keys=True,
+		)
 		run = frappe.get_doc(
 			{
 				"doctype": "APS Planning Run",
@@ -616,6 +665,7 @@ class TestChangeEngineTransactions(FrappeTestCase):
 				"planning_qty": 100,
 				"net_requirement_qty": 100,
 				"is_system_generated": 1,
+				"fulfillment_baseline_json": baseline_json,
 			}
 		).insert(ignore_permissions=True)
 		result = frappe.get_doc(
@@ -634,6 +684,7 @@ class TestChangeEngineTransactions(FrappeTestCase):
 				"delivered_qty": 20,
 				"status": "Planned",
 				"risk_status": "Normal",
+				"fulfillment_baseline_json": baseline_json,
 				"segments": [
 					{
 						"workstation": self.workstation,

@@ -265,11 +265,18 @@ STANDARD_CUSTOM_FIELDS = {
 	],
 	"Item": [
 		{
+			"fieldname": "custom_food_grade",
+			"label": "Food Grade",
+			"fieldtype": "Data",
+			"insert_after": "item_group",
+			"description": "Food-grade or FDA indicator used by Injection APS mold and scheduling checks.",
+		},
+		{
 			"fieldname": "custom_aps_prebuild_allowed",
 			"label": "APS Prebuild Allowed",
 			"fieldtype": "Check",
 			"default": "1",
-			"insert_after": "shelf_life_in_days",
+			"insert_after": "custom_food_grade",
 			"description": "Allows finished-goods production before the JIT window.",
 		},
 		{

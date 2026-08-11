@@ -459,7 +459,9 @@ def _create_fixture():
 				},
 			],
 		}
-	).insert(ignore_permissions=True)
+	)
+	schedule.flags.aps_schedule_import_transition = True
+	schedule.insert(ignore_permissions=True)
 	schedule_items = frappe.get_all(
 		"Customer Delivery Schedule Item",
 		filters={"parent": schedule.name},

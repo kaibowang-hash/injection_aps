@@ -162,7 +162,7 @@ class TestCustomerScheduleProgress(FrappeTestCase):
 		assert row["production_covered_qty"] == 100
 		assert get_datetime(row["projected_completion_time"]) == get_datetime(actual_time)
 
-	def test_family_co_product_segment_covers_co_product_schedule(self):
+	def test_family_co_product_segment_does_not_cover_without_explicit_allocation(self):
 		self._create_schedule(
 			customer=self.customer_a,
 			item_code=self.co_product_item,
@@ -187,8 +187,10 @@ class TestCustomerScheduleProgress(FrappeTestCase):
 				run_name=run.name,
 			)["rows"][0]
 
-		assert row["production_covered_qty"] == 50
-		assert row["status"] == "On Track"
+		assert row["production_covered_qty"] == 0
+		assert row["uncovered_qty"] == 50
+		assert row["result_names"] == []
+		assert row["status"] == "Uncovered"
 
 	def test_fulfillment_metrics_do_not_duplicate_a_later_demand_used_as_fifo_supply(self):
 		row = {
@@ -276,6 +278,7 @@ class TestCustomerScheduleProgress(FrappeTestCase):
 				],
 			}
 		)
+		doc.flags.aps_schedule_import_transition = True
 		self._insert_doc(doc)
 		return doc
 

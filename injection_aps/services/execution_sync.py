@@ -374,6 +374,7 @@ def _get_formal_manufacture_sources(contexts: list[dict[str, Any]]) -> list[dict
 	if scheduling_item_names:
 		conditions.append("se.custom_aps_scheduling_item in %(scheduling_item_names)s")
 		params["scheduling_item_names"] = scheduling_item_names
+	scrap_select, output_condition = _get_stock_entry_detail_output_sql()
 	rows = frappe.db.sql(
 		"""
 		select
@@ -394,7 +395,7 @@ def _get_formal_manufacture_sources(contexts: list[dict[str, Any]]) -> list[dict
 			detail.qty as source_document_qty,
 			detail.transfer_qty as source_stock_qty,
 			detail.is_finished_item,
-			detail.is_scrap_item,
+			{scrap_select},
 			detail.t_warehouse,
 			wo.production_item as work_order_item,
 			wo.sales_order as work_order_sales_order,
@@ -405,11 +406,15 @@ def _get_formal_manufacture_sources(contexts: list[dict[str, Any]]) -> list[dict
 		left join `tabWork Order` wo on wo.name = se.work_order
 		where se.purpose = 'Manufacture'
 			and se.docstatus = 1
-			and (detail.is_finished_item = 1 or detail.is_scrap_item = 1)
+			and {output_condition}
 			and coalesce(nullif(detail.transfer_qty, 0), detail.qty) > 0
 			and ({conditions})
 		order by se.posting_date asc, se.posting_time asc, se.creation asc, detail.idx asc, detail.name asc
-		""".format(conditions=" or ".join(conditions)),
+		""".format(
+			conditions=" or ".join(conditions),
+			output_condition=output_condition,
+			scrap_select=scrap_select,
+		),
 		params,
 		as_dict=True,
 	)
@@ -424,13 +429,49 @@ def _get_formal_manufacture_sources(contexts: list[dict[str, Any]]) -> list[dict
 	return result
 
 
+def _get_stock_entry_detail_output_sql() -> tuple[str, str]:
+	if frappe.db.has_column("Stock Entry Detail", "is_scrap_item"):
+		return (
+			"detail.is_scrap_item",
+			"""(
+				detail.is_finished_item = 1
+				or detail.is_scrap_item = 1
+				or (
+					wo.production_item is not null
+					and detail.item_code = wo.production_item
+					and se.custom_aps_output_type in ('Good', 'Scrap')
+				)
+			)""",
+		)
+	return (
+		"0 as is_scrap_item",
+		"""(
+				detail.is_finished_item = 1
+				or (
+					wo.production_item is not null
+					and detail.item_code = wo.production_item
+					and se.custom_aps_output_type in ('Good', 'Scrap')
+				)
+				or (
+					wo.production_item is not null
+					and detail.item_code = wo.production_item
+					and wo.scrap_warehouse is not null
+					and detail.t_warehouse = wo.scrap_warehouse
+				)
+			)""",
+	)
+
+
 def _is_work_order_finished_output(row: dict[str, Any]) -> bool:
 	"""Exclude BOM scrap/by-products that are not measured in finished-item units."""
 	item_code = row.get("item_code")
 	work_order_item = row.get("work_order_item")
-	return bool(item_code) and bool(
+	output_signal = (
 		cint(row.get("is_finished_item")) or cint(row.get("is_scrap_item"))
-	) and (not work_order_item or item_code == work_order_item)
+		or row.get("explicit_output_type") in ("Good", "Scrap")
+		or (row.get("scrap_warehouse") and row.get("t_warehouse") == row.get("scrap_warehouse"))
+	)
+	return bool(item_code) and bool(output_signal) and (not work_order_item or item_code == work_order_item)
 
 
 def _assert_work_order_output_item(row: dict[str, Any]) -> None:

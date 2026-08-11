@@ -171,6 +171,7 @@ class TestImportAndTransactionGuards(unittest.TestCase):
 			with (
 				patch.object(planning.frappe, "db", database),
 				patch.object(planning.frappe, "get_doc", return_value=batch),
+				patch.object(planning, "now_datetime", return_value=frappe.utils.get_datetime("2026-08-11 08:00:00")),
 			):
 				with self.subTest(reject_function=reject_function.__name__):
 					result = reject_function("BATCH-1", "customer schedule changed")
@@ -613,10 +614,57 @@ class TestImportAndTransactionGuards(unittest.TestCase):
 			before,
 			planning._segment_proposal_state_token({**segment, "segment_status": "Shift Proposed"}),
 		)
+		self.assertEqual(
+			before,
+			planning._segment_proposal_state_token({**segment, "modified": "2026-08-11 08:05:00"}),
+		)
 		self.assertNotEqual(
 			before,
 			planning._segment_proposal_state_token({**segment, "planned_qty": 101}),
 		)
+
+	def test_shift_proposal_items_include_current_segment_state_token(self):
+		segment = {
+			"name": "SEG-1",
+			"parent": "RESULT-1",
+			"workstation": "MACHINE-1",
+			"plant_floor": "FLOOR-1",
+			"start_time": "2026-08-11 08:00:00",
+			"end_time": "2026-08-11 10:00:00",
+			"planned_qty": 100,
+			"mould_reference": "MOLD-1",
+			"campaign_key": "ITEM-1|MOLD-1|MACHINE-1",
+			"linked_work_order": "WO-1",
+			"linked_work_order_scheduling": "",
+			"linked_scheduling_item": "",
+			"segment_status": "Work Order Proposed",
+		}
+		wo_batch = MagicMock()
+		wo_batch.items = [
+			frappe._dict(
+				review_status="Applied",
+				target_work_order="WO-1",
+				existing_work_order="",
+				result_reference="RESULT-1",
+				item_code="ITEM-1",
+			)
+		]
+		with (
+			patch.object(planning.frappe.db, "exists", return_value=True),
+			patch.object(planning, "_get_work_order_reconciliation_snapshot", return_value={"name": "WO-1", "scheduling_rows": []}),
+			patch.object(planning, "_work_order_proposal_state_token", return_value="WO-TOKEN"),
+			patch.object(planning, "_get_formal_scheduling_reconciliation_rows", return_value=[]),
+			patch.object(planning, "_get_primary_segments_for_result", return_value=[segment]),
+		):
+			items = planning._build_shift_schedule_proposal_items(
+				wo_batch,
+				release_from=frappe.utils.getdate("2026-08-11"),
+				release_to=frappe.utils.getdate("2026-08-12"),
+			)
+
+		self.assertEqual(len(items), 1)
+		self.assertEqual(items[0]["segment_state_token"], planning._segment_proposal_state_token(segment))
+		self.assertTrue(items[0]["segment_state_token"])
 
 	def test_create_delta_blocks_when_current_open_quantity_changed(self):
 		result_doc = frappe._dict(
