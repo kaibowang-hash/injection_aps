@@ -398,7 +398,17 @@ def _sum_frozen_source_open_qty(rows, *, result, row_kind: str) -> float | None:
 		matching.append(row)
 	if not matching or any("source_open_qty" not in row for row in matching):
 		return None
-	return sum(max(flt(row.get("source_open_qty")), 0) for row in matching)
+	return sum(_get_frozen_target_fulfillment_qty(row) for row in matching)
+
+
+def _get_frozen_target_fulfillment_qty(row) -> float:
+	"""Return the accepted fulfillment cap without erasing the original epoch."""
+	value = (
+		row.get("accepted_source_open_qty")
+		if row.get("accepted_source_open_qty") not in (None, "")
+		else row.get("source_open_qty")
+	)
+	return max(flt(value), 0)
 
 
 def _build_result_projection(
@@ -1076,7 +1086,7 @@ def _get_persisted_result_schedule_targets(result_row, baseline, claimed_target_
 		frozen = baseline_by_name[name]
 		attributed_qty = min(
 			remaining,
-			max(flt(frozen.get("source_open_qty")), 0),
+			_get_frozen_target_fulfillment_qty(frozen),
 			max(flt(source.get("qty")), 0),
 		)
 		if attributed_qty <= QTY_TOLERANCE:

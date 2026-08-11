@@ -83,7 +83,11 @@ class TestPlanConsistency(TestCase):
 			fulfillment_baseline_json={
 				"version": 2,
 				"targets": [
-					{"customer_schedule_item": "TARGET-1", "opening_required_qty": 100}
+					{
+						"customer_schedule_item": "TARGET-1",
+						"opening_required_qty": 100,
+						"schedule_date": "2026-08-12",
+					}
 				],
 			},
 		)

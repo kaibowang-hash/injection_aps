@@ -51,7 +51,8 @@ def ensure_default_settings():
 	settings.mold_change_penalty_minutes = settings.mold_change_penalty_minutes or 30
 	settings.missing_cycle_fallback_seconds = settings.missing_cycle_fallback_seconds or 60
 	settings.default_hourly_capacity_qty = settings.default_hourly_capacity_qty or 120
-	settings.item_food_grade_field = settings.item_food_grade_field or "custom_food_grade"
+	if not settings.item_food_grade_field or settings.item_food_grade_field == "custom_food_grade":
+		settings.item_food_grade_field = "custom_aps_food_grade"
 	settings.item_first_article_field = settings.item_first_article_field or "custom_is_first_article"
 	settings.item_color_field = settings.item_color_field or "color"
 	settings.item_material_field = settings.item_material_field or "material"

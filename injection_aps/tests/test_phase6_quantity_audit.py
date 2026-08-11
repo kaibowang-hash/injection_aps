@@ -104,6 +104,68 @@ class TestPhase6QuantityAudit(FrappeTestCase):
 			"Critical or Blocked",
 		)
 
+	def test_live_net_requirement_detects_result_and_run_shrunk_together(self):
+		fixture = self._create_audit_fixture(produced_qty=0, scrap_qty=0, delivered_qty=0)
+		frappe.db.set_value(
+			"APS Schedule Segment",
+			fixture["segment"],
+			"planned_qty",
+			80,
+			update_modified=False,
+		)
+		frappe.db.set_value(
+			"APS Schedule Result",
+			fixture["result"],
+			{
+				"planned_qty": 80,
+				"machine_scheduled_qty": 80,
+				"demand_covered_qty": 80,
+				"scheduled_qty": 80,
+				"unscheduled_qty": 0,
+			},
+			update_modified=False,
+		)
+		frappe.db.set_value(
+			"APS Planning Run",
+			fixture["run"],
+			{
+				"total_net_requirement_qty": 80,
+				"total_machine_scheduled_qty": 80,
+				"total_demand_covered_qty": 80,
+				"total_scheduled_qty": 80,
+				"total_unscheduled_qty": 0,
+			},
+			update_modified=False,
+		)
+
+		audit = consistency.audit_run_quantity_consistency(fixture["run"])
+
+		self.assertFalse(audit["valid"])
+		fields = {(row["doctype"], row["fieldname"]) for row in audit["differences"]}
+		self.assertIn(("APS Schedule Result", "planned_qty"), fields)
+		self.assertIn(("APS Planning Run", "total_net_requirement_qty"), fields)
+
+	def test_cancelled_live_stock_entry_is_not_credited_from_cached_ledger(self):
+		fixture = self._create_audit_fixture(produced_qty=30, scrap_qty=0, delivered_qty=0)
+		stock_entry = frappe.db.get_value(
+			"APS Production Allocation",
+			{"schedule_result": fixture["result"], "is_effective": 1},
+			"source_stock_entry",
+		)
+		frappe.db.set_value("Stock Entry", stock_entry, "docstatus", 2, update_modified=False)
+
+		audit = consistency.audit_run_quantity_consistency(fixture["run"])
+
+		self.assertFalse(audit["valid"])
+		self.assertEqual(audit["production_source_count"], 0)
+		self.assertTrue(
+			any(
+				row["doctype"] == "APS Production Allocation"
+				and row["fieldname"] == "source_docstatus"
+				for row in audit["differences"]
+			)
+		)
+
 	def _create_audit_fixture(
 		self,
 		*,
@@ -121,7 +183,7 @@ class TestPhase6QuantityAudit(FrappeTestCase):
 		requested_date = getdate(today() if late else add_days(today(), 2))
 		end = start + (timedelta(hours=18) if late else timedelta(hours=2))
 		work_order = self._create_work_order(suffix)
-		schedule = self._create_schedule(suffix, requested_date, delivered_qty)
+		schedule = self._create_schedule(suffix, requested_date)
 		schedule_item = frappe.db.get_value("Customer Delivery Schedule Item", {"parent": schedule}, "name")
 		run_values = {
 			"doctype": "APS Planning Run",
@@ -142,11 +204,54 @@ class TestPhase6QuantityAudit(FrappeTestCase):
 			"total_scheduled_qty": 100,
 			"total_unscheduled_qty": 0,
 			"total_produced_qty": produced_qty,
+			"total_scrap_qty": scrap_qty,
 			"total_delivered_qty": delivered_qty,
 			"result_count": 1,
 			**run_overrides,
 		}
 		run = frappe.get_doc(run_values).insert(ignore_permissions=True)
+		demand_source_snapshot_json = json.dumps(
+			[
+				{
+					"demand_pool": f"PHASE6-AUDIT-DEMAND-{suffix}",
+					"source_doctype": "Customer Delivery Schedule",
+					"source_name": schedule,
+					"source_detail_name": schedule_item,
+					"qty": 100,
+				}
+			]
+		)
+		fulfillment_baseline_json = json.dumps(
+			{
+				"version": 4,
+				"net_requirement": {
+					"formula_version": 1,
+					"demand_qty": 100,
+					"available_stock_qty": 0,
+					"open_work_order_qty": 0,
+					"existing_work_order_policy": "Exclude",
+					"safety_stock_gap_qty": 0,
+					"minimum_batch_qty": 0,
+					"minimum_batch_coverage_qty": 0,
+					"base_residual_qty": 100,
+					"net_requirement_qty": 100,
+					"planning_qty": 100,
+					"new_batch_surplus_qty": 0,
+					"is_safety_stock_group": 0,
+				},
+				"targets": [
+					{
+						"customer_schedule_item": schedule_item,
+						"item_code": self.item,
+						"schedule_date": str(requested_date),
+						"source_open_qty": 100,
+						"opening_required_qty": 100,
+						"opening_delivered_qty": 0,
+					}
+				],
+				"sales_order_items": [],
+			}
+		)
 		net = frappe.get_doc(
 			{
 				"doctype": "APS Net Requirement",
@@ -155,8 +260,15 @@ class TestPhase6QuantityAudit(FrappeTestCase):
 				"item_code": self.item,
 				"demand_date": requested_date,
 				"demand_qty": 100,
+				"available_stock_qty": 0,
+				"open_work_order_qty": 0,
+				"existing_work_order_policy": "Exclude",
+				"safety_stock_gap_qty": 0,
+				"minimum_batch_qty": 0,
 				"planning_qty": 100,
 				"net_requirement_qty": 100,
+					"demand_source_snapshot_json": demand_source_snapshot_json,
+					"fulfillment_baseline_json": fulfillment_baseline_json,
 				"is_system_generated": 1,
 			}
 		).insert(ignore_permissions=True)
@@ -183,17 +295,8 @@ class TestPhase6QuantityAudit(FrappeTestCase):
 			"risk_status": "Normal",
 			"schedule_delay_minutes": 0,
 			"status": "Planned",
-			"fulfillment_baseline_json": json.dumps(
-				{
-					"version": 2,
-					"targets": [
-						{
-							"customer_schedule_item": schedule_item,
-							"opening_required_qty": 100,
-						}
-					],
-				}
-			),
+				"fulfillment_baseline_json": fulfillment_baseline_json,
+				"demand_source_snapshot_json": demand_source_snapshot_json,
 			"segments": [
 				{
 					"workstation": self.workstation,
@@ -235,9 +338,15 @@ class TestPhase6QuantityAudit(FrappeTestCase):
 			)
 		if delivered_qty:
 			self._create_delivery_allocation(suffix, schedule, schedule_item, delivered_qty)
+			frappe.db.set_value(
+				"Customer Delivery Schedule Item",
+				schedule_item,
+				{"delivered_qty": delivered_qty, "balance_qty": max(100 - delivered_qty, 0)},
+				update_modified=False,
+			)
 		return {"run": run.name, "result": result.name, "segment": segment}
 
-	def _create_schedule(self, suffix, requested_date, delivered_qty):
+	def _create_schedule(self, suffix, requested_date):
 		doc = frappe.get_doc(
 			{
 				"doctype": "Customer Delivery Schedule",
@@ -253,8 +362,8 @@ class TestPhase6QuantityAudit(FrappeTestCase):
 						"item_code": self.item,
 						"schedule_date": requested_date,
 						"qty": 100,
-						"balance_qty": max(100 - delivered_qty, 0),
-						"delivered_qty": delivered_qty,
+						"balance_qty": 100,
+						"delivered_qty": 0,
 						"status": "Open",
 					}
 				],
@@ -278,13 +387,18 @@ class TestPhase6QuantityAudit(FrappeTestCase):
 		return doc.name
 
 	def _create_production_allocations(self, suffix, run, result, segment, work_order, good_qty, scrap_qty):
-		stock_entry, detail = self._create_stock_entry(suffix, work_order, good_qty + scrap_qty)
 		for output_type, qty, fieldname in (
 			("Good", good_qty, "good_qty"),
 			("Scrap", scrap_qty, "scrap_qty"),
 		):
 			if not qty:
 				continue
+			stock_entry, detail = self._create_stock_entry(
+				suffix,
+				work_order,
+				qty,
+				output_type=output_type,
+			)
 			doc = frappe.new_doc("APS Production Allocation")
 			doc.allocation_key = f"PHASE6-AUDIT-PA-{suffix}-{output_type}"
 			doc.planning_run = run
@@ -295,7 +409,7 @@ class TestPhase6QuantityAudit(FrappeTestCase):
 			doc.source_stock_entry_detail = detail
 			doc.source_docstatus = 1
 			doc.output_type = output_type
-			doc.allocation_method = "Direct"
+			doc.allocation_method = "Execution Detail FIFO"
 			doc.source_qty = qty
 			doc.allocated_qty = qty
 			setattr(doc, fieldname, qty)
@@ -303,20 +417,21 @@ class TestPhase6QuantityAudit(FrappeTestCase):
 			doc.is_effective = 1
 			doc.db_insert()
 
-	def _create_stock_entry(self, suffix, work_order, qty):
+	def _create_stock_entry(self, suffix, work_order, qty, *, output_type):
 		doc = frappe.new_doc("Stock Entry")
-		doc.name = f"PHASE6-AUDIT-SE-{suffix}"
+		doc.name = f"PHASE6-AUDIT-SE-{suffix}-{output_type}"
 		doc.docstatus = 1
 		doc.company = self.company
 		doc.purpose = "Manufacture"
 		doc.stock_entry_type = "Manufacture"
 		doc.work_order = work_order
+		doc.custom_aps_output_type = output_type
 		doc.posting_date = today()
 		doc.posting_time = nowtime()
 		doc.fg_completed_qty = qty
 		doc.db_insert()
 		detail = frappe.new_doc("Stock Entry Detail")
-		detail.name = f"PHASE6-AUDIT-SED-{suffix}"
+		detail.name = f"PHASE6-AUDIT-SED-{suffix}-{output_type}"
 		detail.parent = doc.name
 		detail.parenttype = "Stock Entry"
 		detail.parentfield = "items"

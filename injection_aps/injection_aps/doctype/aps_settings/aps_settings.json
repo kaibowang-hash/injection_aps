@@ -141,7 +141,7 @@
    "label": "Missing Cycle Fallback Seconds"
   },
   {
-   "default": "custom_food_grade",
+   "default": "custom_aps_food_grade",
    "fieldname": "item_food_grade_field",
    "fieldtype": "Data",
    "label": "Item Food Grade Field"

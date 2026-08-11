@@ -808,22 +808,72 @@ class TestPermissionWorkflowGuards(unittest.TestCase):
 				batch.flags = frappe._dict(proposal_engine_transition=True)
 				controller._protect_system_review_statuses(batch)
 
-	def test_change_apply_locks_run_results_segments_then_request(self):
+	def test_change_apply_locks_customer_run_results_segments_then_request(self):
 		database = MagicMock()
-		database.get_value.return_value = frappe._dict(
-			planning_run="RUN-1",
-			target_result="RESULT-1",
-		)
+		database.get_value.side_effect = [
+			frappe._dict(
+				planning_run="RUN-1",
+				target_result="RESULT-1",
+				customer="CUSTOMER-1",
+				source_demand_delta="DELTA-1",
+				change_type="Increase Qty",
+			),
+		]
 		database.sql.side_effect = [
-			[("RUN-1",)],
-			[("RESULT-1",), ("RESULT-2",)],
-			[("SEG-1",)],
-			[("CR-1",)],
+			[("CUSTOMER-1",)],
+			[frappe._dict(name="RUN-1", company="COMPANY-1")],
+			[],
+			[
+				frappe._dict(
+					name="RESULT-1",
+					planning_run="RUN-1",
+					net_requirement="NET-1",
+					sales_order="SO-1",
+					item_code="ITEM-1",
+					fulfillment_baseline_json='{"targets": [{"customer_schedule": "SCHEDULE-1"}]}',
+				),
+				frappe._dict(name="RESULT-2", planning_run="RUN-1"),
+			],
+			[frappe._dict(name="NET-1")],
+			[frappe._dict(name="SEG-1", parent="RESULT-1")],
+			[
+				frappe._dict(
+					name="DELTA-1",
+					schedule_reference="SCHEDULE-1",
+					sales_order="SO-1",
+					item_code="ITEM-1",
+				)
+			],
+			[frappe._dict(name="SCHEDULE-1")],
+			[frappe._dict(name="ROW-1", parent="SCHEDULE-1", idx=1)],
+			[frappe._dict(name="SOI-1", parent="SO-1", item_code="ITEM-1", idx=1)],
+			[],
+			[frappe._dict(name="DN-1")],
+			[frappe._dict(name="DNI-1", parent="DN-1", item_code="ITEM-1")],
+			[],
+			[frappe._dict(name="WO-1", custom_aps_run="RUN-1")],
+			[frappe._dict(name="STE-1", purpose="Manufacture", work_order="WO-1")],
+			[frappe._dict(name="SED-1", parent="STE-1", item_code="ITEM-1")],
+			[],
+			[
+				frappe._dict(
+					name="CR-1",
+					planning_run="RUN-1",
+					target_result="RESULT-1",
+					customer="CUSTOMER-1",
+					source_demand_delta="DELTA-1",
+					change_type="Increase Qty",
+				)
+			],
 		]
 		document = frappe._dict(
 			name="CR-1",
 			planning_run="RUN-1",
 			target_result="RESULT-1",
+			customer="CUSTOMER-1",
+			source_demand_delta="DELTA-1",
+			change_type="Increase Qty",
+			flags=frappe._dict(),
 		)
 		with (
 			patch.object(change_engine.frappe, "db", database),
@@ -836,9 +886,24 @@ class TestPermissionWorkflowGuards(unittest.TestCase):
 		self.assertEqual(
 			tables,
 			[
+				"tabCustomer",
 				"tabAPS Planning Run",
+				"tabAPS Planning Run Plant Floor",
 				"tabAPS Schedule Result",
+				"tabAPS Net Requirement",
 				"tabAPS Schedule Segment",
+				"tabAPS Demand Delta",
+				"tabCustomer Delivery Schedule",
+				"tabCustomer Delivery Schedule Item",
+				"tabSales Order Item",
+				"tabAPS Delivery Allocation",
+				"tabDelivery Note",
+				"tabDelivery Note Item",
+				"tabAPS Production Allocation",
+				"tabWork Order",
+				"tabStock Entry",
+				"tabStock Entry Detail",
+				"tabAPS Downtime Window",
 				"tabAPS Change Request",
 			],
 		)

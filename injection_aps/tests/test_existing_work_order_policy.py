@@ -55,19 +55,37 @@ class TestExistingWorkOrderPolicy(TestCase):
 				available_stock_qty=15,
 				open_work_order_qty=20,
 				existing_work_order_policy="Include",
+				safety_stock_gap_qty=0,
+				minimum_batch_qty=0,
+				minimum_batch_coverage_qty=0,
+				net_requirement_qty=25,
+				planning_qty=25,
+				new_batch_surplus_qty=0,
+				is_safety_stock_group=0,
 			)
 		self.assertEqual(json.loads(source_json)[0]["sales_order_item"], "SOI-1")
+		baseline = json.loads(baseline_json)
+		self.assertEqual(baseline["version"], 4)
 		self.assertEqual(
-			json.loads(baseline_json)["net_requirement"],
+			baseline["net_requirement"],
 			{
+				"formula_version": 1,
 				"demand_qty": 60.0,
 				"available_stock_qty": 15.0,
 				"open_work_order_qty": 20.0,
 				"existing_work_order_policy": "Include",
+				"safety_stock_gap_qty": 0.0,
+				"minimum_batch_qty": 0.0,
+				"minimum_batch_coverage_qty": 0.0,
+				"base_residual_qty": 25.0,
+				"net_requirement_qty": 25.0,
+				"planning_qty": 25.0,
+				"new_batch_surplus_qty": 0.0,
+				"is_safety_stock_group": 0,
 			},
 		)
 		self.assertEqual(
-			json.loads(baseline_json)["sales_order_items"],
+			baseline["sales_order_items"],
 			[
 				{
 					"item_code": "FG-1",
@@ -282,6 +300,21 @@ class TestExistingWorkOrderPolicy(TestCase):
 		self.assertTrue(
 			planning._net_requirement_requires_result(
 				frappe._dict(net_requirement_qty=10, available_stock_qty=0)
+			)
+		)
+		self.assertTrue(
+			planning._net_requirement_requires_result(
+				frappe._dict(
+					net_requirement_qty=0,
+					available_stock_qty=0,
+					open_work_order_qty=0,
+					fulfillment_baseline_json=json.dumps(
+						{
+							"version": 4,
+							"net_requirement": {"minimum_batch_coverage_qty": 25},
+						}
+					),
+				)
 			)
 		)
 		self.assertFalse(

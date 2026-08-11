@@ -41,6 +41,8 @@ RESULT_SNAPSHOT_FIELDS = (
 	"plant_floor",
 	"net_requirement",
 	"customer",
+	"sales_order",
+	"sales_order_item",
 	"item_code",
 	"requested_date",
 	"demand_source",
@@ -59,6 +61,8 @@ RESULT_SNAPSHOT_FIELDS = (
 	"is_urgent",
 	"is_locked",
 	"is_manual",
+	"demand_source_snapshot_json",
+	"fulfillment_baseline_json",
 )
 SEGMENT_SNAPSHOT_FIELDS = (
 	"name",
@@ -111,6 +115,26 @@ RUN_SNAPSHOT_FIELDS = (
 	"total_delivered_qty",
 	"consistency_status",
 )
+NET_REQUIREMENT_SNAPSHOT_FIELDS = (
+	"name",
+	"company",
+	"customer",
+	"sales_order",
+	"sales_order_item",
+	"item_code",
+	"demand_date",
+	"demand_qty",
+	"available_stock_qty",
+	"open_work_order_qty",
+	"existing_work_order_policy",
+	"safety_stock_gap_qty",
+	"minimum_batch_qty",
+	"planning_qty",
+	"net_requirement_qty",
+	"demand_source_snapshot_json",
+	"fulfillment_baseline_json",
+	"is_system_generated",
+)
 
 
 def analyze_change_request(change_request: str) -> dict[str, Any]:
@@ -133,6 +157,7 @@ def analyze_change_request(change_request: str) -> dict[str, Any]:
 	proposal["snapshot_scope"] = snapshot_scope
 	proposal["change_request"] = doc.name
 	proposal["change_type"] = doc.change_type
+	proposal["source_demand_delta"] = doc.source_demand_delta
 	source_snapshot_hash = _hash_payload(before_snapshot)
 	proposal["source_snapshot_hash"] = source_snapshot_hash
 	analysis_fingerprint = _hash_payload(
@@ -266,11 +291,18 @@ def apply_change_request(change_request: str) -> dict[str, Any]:
 		_assert_status(doc, "Approved", _("The change request must be PMC-confirmed and approved before Apply."))
 		if not doc.application_fingerprint or not doc.analysis_fingerprint:
 			frappe.throw(_("Analyze the request again before Apply."), frappe.ValidationError)
-		existing_log = frappe.db.get_value(
-			"APS Change Application Log",
-			{"application_fingerprint": doc.application_fingerprint},
-			"name",
+		existing_log_rows = frappe.db.sql(
+			"""
+			select name
+			from `tabAPS Change Application Log`
+			where application_fingerprint = %s
+			order by name
+			limit 1
+			for update
+			""",
+			(doc.application_fingerprint,),
 		)
+		existing_log = existing_log_rows[0][0] if existing_log_rows else None
 		if existing_log:
 			frappe.throw(_("Application fingerprint already belongs to audit log {0}.").format(existing_log))
 		proposal = _load_json_object(doc.proposal_json, _("Adjustment proposal", context="Injection APS"))
@@ -357,11 +389,18 @@ def _get_locked_change_request(change_request: str):
 
 
 def _get_application_scope_locked_change_request(change_request: str):
-	"""Serialize plan mutations with one deterministic Run -> Result -> Segment lock order."""
+	"""Return current rows locked Customer -> Run -> Result -> NR -> Segment -> source -> Request.
+
+	The first Change Request read is deliberately only a routing hint.  Under
+	MariaDB REPEATABLE READ it may establish an old consistent-read snapshot, so no
+	business value from it is trusted.  Every value used by Apply is returned by a
+	locking/current read below; the final request row must still match the hint's
+	scope or the caller retries the whole transaction.
+	"""
 	scope = frappe.db.get_value(
 		"APS Change Request",
 		change_request,
-		["planning_run", "target_result"],
+		["planning_run", "target_result", "customer", "source_demand_delta", "change_type"],
 		as_dict=True,
 	)
 	if not scope:
@@ -372,46 +411,244 @@ def _get_application_scope_locked_change_request(change_request: str):
 	run_name = scope.get("planning_run")
 	if not run_name:
 		frappe.throw(_("A valid Planning Run is required."), frappe.ValidationError)
+	# Customer schedule import, delivery allocation, and Change Request Apply all
+	# serialize on the same Customer row.  Acquire it before the Planning Run so a
+	# schedule version cannot change between the final snapshot check and mutation.
+	customer = scope.get("customer")
+	if customer:
+		locked_customer = frappe.db.sql(
+			"select name from `tabCustomer` where name = %s for update",
+			customer,
+		)
+		if not locked_customer:
+			frappe.throw(
+				_("Customer {0} was not found.", context="Injection APS").format(customer),
+				frappe.DoesNotExistError,
+			)
 	locked_run = frappe.db.sql(
-		"select name from `tabAPS Planning Run` where name = %s for update",
+		"select * from `tabAPS Planning Run` where name = %s for update",
 		(run_name,),
+		as_dict=True,
 	)
 	if not locked_run:
 		frappe.throw(_("Planning Run {0} was not found.").format(run_name), frappe.DoesNotExistError)
-	result_rows = frappe.db.sql(
+	run_row = frappe._dict(locked_run[0])
+	run_plant_floor_rows = frappe.db.sql(
 		"""
-		select name
-		from `tabAPS Schedule Result`
-		where planning_run = %s
-		order by name
+		select *
+		from `tabAPS Planning Run Plant Floor`
+		where parent = %s
+		order by idx, name
 		for update
 		""",
 		(run_name,),
+		as_dict=True,
 	)
-	result_names = [row[0] for row in result_rows]
-	if result_names:
-		frappe.db.sql(
+	result_rows = frappe.db.sql(
+		"""
+		select *
+		from `tabAPS Schedule Result`
+		where planning_run = %s
+		order by creation, name
+		for update
+		""",
+		(run_name,),
+		as_dict=True,
+	)
+	result_rows = [frappe._dict(row) for row in result_rows]
+	result_names = [row.name for row in result_rows]
+	net_names = sorted({row.net_requirement for row in result_rows if row.get("net_requirement")})
+	net_rows = []
+	if net_names:
+		net_rows = frappe.db.sql(
 			"""
-			select name
+			select *
+			from `tabAPS Net Requirement`
+			where name in %(net_names)s
+			order by name
+			for update
+			""",
+			{"net_names": tuple(net_names)},
+			as_dict=True,
+		)
+	segment_rows = []
+	if result_names:
+		segment_rows = frappe.db.sql(
+			"""
+			select *
 			from `tabAPS Schedule Segment`
 			where parenttype = 'APS Schedule Result'
 				and parent in %(result_names)s
-			order by parent, name
+			order by parent, start_time, sequence_no, name
 			for update
 			""",
 			{"result_names": tuple(result_names)},
+			as_dict=True,
+		)
+
+	# Demand Delta and customer schedule rows follow the plan locks and precede
+	# the final Request lock.  Lock every schedule item in each referenced header:
+	# appended rows may not yet occur in the Result's frozen target list.
+	delta_row = None
+	if scope.get("source_demand_delta"):
+		delta_rows = frappe.db.sql(
+			"select * from `tabAPS Demand Delta` where name = %s for update",
+			(scope.get("source_demand_delta"),),
+			as_dict=True,
+		)
+		if not delta_rows:
+			frappe.throw(
+				_("Source Demand Delta {0} was not found.").format(scope.get("source_demand_delta")),
+				frappe.DoesNotExistError,
+			)
+		delta_row = frappe._dict(delta_rows[0])
+	schedule_names = {
+		target.get("customer_schedule")
+		for result in result_rows
+		for target in (
+			_load_customer_schedule_baseline(result.get("fulfillment_baseline_json")).get("targets") or []
+		)
+		if isinstance(target, dict) and target.get("customer_schedule")
+	}
+	if delta_row and delta_row.get("schedule_reference"):
+		schedule_names.add(delta_row.schedule_reference)
+	schedule_names = sorted(schedule_names)
+	schedule_rows = []
+	schedule_item_rows = []
+	schedule_conditions = []
+	schedule_values = {}
+	if schedule_names:
+		schedule_conditions.append("name in %(schedule_names)s")
+		schedule_values["schedule_names"] = tuple(schedule_names)
+	if scope.get("source_demand_delta") and scope.get("customer") and run_row.get("company"):
+		schedule_conditions.append(
+			"(company = %(schedule_company)s and customer = %(schedule_customer)s and status = 'Active')"
+		)
+		schedule_values.update(
+			{
+				"schedule_company": run_row.get("company"),
+				"schedule_customer": scope.get("customer"),
+			}
+		)
+	if schedule_conditions:
+		schedule_rows = frappe.db.sql(
+			"""
+			select *
+			from `tabCustomer Delivery Schedule`
+			where {conditions}
+			order by name
+			for update
+			""".format(conditions=" or ".join(schedule_conditions)),
+			schedule_values,
+			as_dict=True,
+		)
+		locked_schedule_names = sorted(row.get("name") for row in schedule_rows if row.get("name"))
+		if locked_schedule_names:
+			schedule_item_rows = frappe.db.sql(
+				"""
+				select *
+				from `tabCustomer Delivery Schedule Item`
+				where parent in %(schedule_names)s
+				order by parent, idx, name
+				for update
+				""",
+				{"schedule_names": tuple(locked_schedule_names)},
+				as_dict=True,
+			)
+	sales_orders = sorted(
+		{
+			row.get("sales_order")
+			for row in [*result_rows, *([delta_row] if delta_row else [])]
+			if row.get("sales_order")
+		}
+	)
+	item_codes = sorted(
+		{
+			row.get("item_code")
+			for row in [*result_rows, *([delta_row] if delta_row else [])]
+			if row.get("item_code")
+		}
+	)
+	sales_order_item_rows = []
+	if sales_orders and item_codes:
+		sales_order_item_rows = frappe.db.sql(
+			"""
+			select name, parent, item_code, idx
+			from `tabSales Order Item`
+			where parent in %(sales_orders)s and item_code in %(item_codes)s
+			order by parent, idx, name
+			for update
+			""",
+			{"sales_orders": tuple(sales_orders), "item_codes": tuple(item_codes)},
+			as_dict=True,
+		)
+	fulfillment_state = _lock_application_fulfillment_state(
+		run_name=run_name,
+		company=run_row.get("company"),
+		customer=scope.get("customer"),
+		item_codes=item_codes,
+		result_rows=result_rows,
+		segment_rows=segment_rows,
+		schedule_item_rows=schedule_item_rows,
+		enabled=bool(scope.get("source_demand_delta")),
+	)
+	selected_plant_floors = planning._coerce_plant_floor_list(
+		plant_floors=(run_row.get("selected_plant_floor_summary") or "").split(","),
+		plant_floor=run_row.get("plant_floor"),
+	)
+	downtime_rows = []
+	if scope.get("change_type") in ("Increase Qty", "Urgent Order", "Machine Exception"):
+		downtime_conditions = [
+			"status in %(statuses)s",
+			"company = %(company)s",
+			"end_time > %(horizon_start)s",
+			"start_time < %(horizon_end)s",
+			"(ifnull(planning_run, '') = '' or planning_run = %(run_name)s)",
+		]
+		downtime_values = {
+			"statuses": tuple(planning.ACTIVE_DOWNTIME_STATUSES),
+			"company": run_row.get("company"),
+			"horizon_start": run_row.get("horizon_start"),
+			"horizon_end": run_row.get("horizon_end"),
+			"run_name": run_name,
+		}
+		if selected_plant_floors:
+			downtime_conditions.append(
+				"(ifnull(plant_floor, '') = '' or plant_floor in %(plant_floors)s)"
+			)
+			downtime_values["plant_floors"] = tuple(selected_plant_floors)
+		downtime_rows = frappe.db.sql(
+			"""
+			select
+				name, company, scope, plant_floor, workstation, start_time, end_time,
+				available_capacity_percent, reason, status, planning_run
+			from `tabAPS Downtime Window`
+			where {conditions}
+			order by start_time, end_time
+			for update
+			""".format(conditions=" and ".join(downtime_conditions)),
+			downtime_values,
+			as_dict=True,
 		)
 	locked_request = frappe.db.sql(
-		"select name from `tabAPS Change Request` where name = %s for update",
+		"select * from `tabAPS Change Request` where name = %s for update",
 		(change_request,),
+		as_dict=True,
 	)
 	if not locked_request:
 		frappe.throw(
 			_("APS Change Request {0} was not found.").format(change_request),
 			frappe.DoesNotExistError,
 		)
-	doc = frappe.get_doc("APS Change Request", change_request)
-	if doc.planning_run != run_name or doc.target_result != scope.get("target_result"):
+	request_row = frappe._dict(locked_request[0])
+	if (
+		request_row.name != change_request
+		or request_row.planning_run != run_name
+		or request_row.target_result != scope.get("target_result")
+		or (request_row.customer or "") != (scope.get("customer") or "")
+		or (request_row.source_demand_delta or "") != (scope.get("source_demand_delta") or "")
+		or request_row.change_type != scope.get("change_type")
+	):
 		frappe.throw(
 			_(
 				"Change Request scope changed while Apply was starting. Retry after refreshing the request.",
@@ -419,7 +656,206 @@ def _get_application_scope_locked_change_request(change_request: str):
 			),
 			frappe.ValidationError,
 		)
+	doc = frappe.get_doc({"doctype": "APS Change Request", **dict(request_row)})
+	locked_state = frappe._dict(
+		run=run_row,
+		run_plant_floors=[frappe._dict(row) for row in run_plant_floor_rows],
+		results=[frappe._dict(row) for row in result_rows],
+		net_requirements=[frappe._dict(row) for row in net_rows],
+		segments=[frappe._dict(row) for row in segment_rows],
+		delta=delta_row,
+		schedules=[frappe._dict(row) for row in schedule_rows],
+		schedule_items=[frappe._dict(row) for row in schedule_item_rows],
+		sales_order_items=[frappe._dict(row) for row in sales_order_item_rows],
+		**fulfillment_state,
+		capacity_windows=[frappe._dict(row) for row in downtime_rows],
+	)
+	doc.flags.aps_application_locked_state = locked_state
 	return doc
+
+
+def _lock_application_fulfillment_state(
+	*,
+	run_name: str,
+	company: str | None,
+	customer: str | None,
+	item_codes: list[str],
+	result_rows,
+	segment_rows,
+	schedule_item_rows,
+	enabled: bool,
+) -> dict[str, list]:
+	"""Lock current fulfillment ledgers and their physical source documents.
+
+	Demand Delta acceptance writes a new fulfillment epoch.  Child-row rollups and
+	ordinary RR reads are not authoritative enough for its lower bound, so this
+	locks both allocation ledgers and every discoverable live source before the
+	final Change Request lock.  The corresponding validators fail closed when an
+	eligible submitted source has not reached its ledger yet.
+	"""
+	empty = {
+		"delivery_allocations": [],
+		"delivery_notes": [],
+		"delivery_note_items": [],
+		"production_allocations": [],
+		"work_orders": [],
+		"stock_entries": [],
+		"stock_entry_details": [],
+	}
+	if not enabled:
+		return empty
+
+	delivery_allocations = []
+	delivery_notes = []
+	delivery_note_items = []
+	if company and customer and item_codes:
+		delivery_allocations = frappe.db.sql(
+			"""
+			select *
+			from `tabAPS Delivery Allocation`
+			where company = %(company)s
+				and customer = %(customer)s
+				and item_code in %(item_codes)s
+			order by source_posting_time, creation, name
+			for update
+			""",
+			{"company": company, "customer": customer, "item_codes": tuple(item_codes)},
+			as_dict=True,
+		)
+		delivery_notes = frappe.db.sql(
+			"""
+			select *
+			from `tabDelivery Note` dn
+			where dn.company = %(company)s
+				and dn.customer = %(customer)s
+				and exists (
+					select 1 from `tabDelivery Note Item` dni
+					where dni.parent = dn.name and dni.item_code in %(item_codes)s
+				)
+			order by dn.name
+			for update
+			""",
+			{"company": company, "customer": customer, "item_codes": tuple(item_codes)},
+			as_dict=True,
+		)
+		delivery_note_names = sorted(row.get("name") for row in delivery_notes if row.get("name"))
+		if delivery_note_names:
+			delivery_note_items = frappe.db.sql(
+				"""
+				select *
+				from `tabDelivery Note Item`
+				where parent in %(delivery_notes)s and item_code in %(item_codes)s
+				order by parent, idx, name
+				for update
+				""",
+				{"delivery_notes": tuple(delivery_note_names), "item_codes": tuple(item_codes)},
+				as_dict=True,
+			)
+
+	production_allocations = frappe.db.sql(
+		"""
+		select *
+		from `tabAPS Production Allocation`
+		where planning_run = %s
+		order by source_posting_time, creation, name
+		for update
+		""",
+		(run_name,),
+		as_dict=True,
+	)
+	linked_work_orders = {
+		row.get("linked_work_order")
+		for row in segment_rows
+		if row.get("linked_work_order")
+	} | {
+		row.get("work_order")
+		for row in production_allocations
+		if row.get("work_order")
+	}
+	work_order_conditions = ["custom_aps_run = %(run_name)s"]
+	work_order_values = {"run_name": run_name}
+	if linked_work_orders:
+		work_order_conditions.append("name in %(work_orders)s")
+		work_order_values["work_orders"] = tuple(sorted(linked_work_orders))
+	work_orders = frappe.db.sql(
+		"""
+		select *
+		from `tabWork Order`
+		where {conditions}
+		order by name
+		for update
+		""".format(conditions=" or ".join(work_order_conditions)),
+		work_order_values,
+		as_dict=True,
+	)
+	work_order_names = sorted(row.get("name") for row in work_orders if row.get("name"))
+	segment_names = sorted(row.get("name") for row in segment_rows if row.get("name"))
+	scheduling_items = sorted(
+		{
+			value
+			for row in [*segment_rows, *production_allocations]
+			for value in (row.get("linked_scheduling_item"), row.get("scheduling_item"))
+			if value
+		}
+	)
+	wos_names = sorted(
+		{
+			value
+			for row in [*segment_rows, *production_allocations]
+			for value in (
+				row.get("linked_work_order_scheduling"),
+				row.get("work_order_scheduling"),
+			)
+			if value
+		}
+	)
+	stock_conditions = []
+	stock_values = {}
+	for fieldname, values, parameter in (
+		("work_order", work_order_names, "work_orders"),
+		("custom_aps_segment_reference", segment_names, "segments"),
+		("custom_aps_scheduling_item", scheduling_items, "scheduling_items"),
+		("work_order_scheduling", wos_names, "wos_names"),
+	):
+		if values:
+			stock_conditions.append("{0} in %({1})s".format(fieldname, parameter))
+			stock_values[parameter] = tuple(values)
+	stock_entries = []
+	stock_entry_details = []
+	if stock_conditions:
+		stock_entries = frappe.db.sql(
+			"""
+			select *
+			from `tabStock Entry`
+			where purpose = 'Manufacture' and ({conditions})
+			order by name
+			for update
+			""".format(conditions=" or ".join(stock_conditions)),
+			stock_values,
+			as_dict=True,
+		)
+		stock_entry_names = sorted(row.get("name") for row in stock_entries if row.get("name"))
+		if stock_entry_names:
+			stock_entry_details = frappe.db.sql(
+				"""
+				select *
+				from `tabStock Entry Detail`
+				where parent in %(stock_entries)s
+				order by parent, idx, name
+				for update
+				""",
+				{"stock_entries": tuple(stock_entry_names)},
+				as_dict=True,
+			)
+	return {
+		"delivery_allocations": [frappe._dict(row) for row in delivery_allocations],
+		"delivery_notes": [frappe._dict(row) for row in delivery_notes],
+		"delivery_note_items": [frappe._dict(row) for row in delivery_note_items],
+		"production_allocations": [frappe._dict(row) for row in production_allocations],
+		"work_orders": [frappe._dict(row) for row in work_orders],
+		"stock_entries": [frappe._dict(row) for row in stock_entries],
+		"stock_entry_details": [frappe._dict(row) for row in stock_entry_details],
+	}
 
 
 def _dispatch_analysis(doc, before_snapshot: dict[str, Any]) -> dict[str, Any]:
@@ -446,6 +882,45 @@ def _dispatch_apply(doc, proposal: dict[str, Any]) -> dict[str, Any]:
 		"Machine Exception": _apply_machine_exception,
 	}
 	return dispatch[doc.change_type](doc, proposal)
+
+
+def _get_application_locked_state(doc):
+	flags = getattr(doc, "flags", None)
+	return flags.get("aps_application_locked_state") if flags else None
+
+
+def _get_apply_document(doc, doctype: str, name: str):
+	"""Hydrate an existing document from the current rows already locked by Apply."""
+	state = _get_application_locked_state(doc)
+	if not state:
+		return frappe.get_doc(doctype, name)
+	if doctype == "APS Planning Run":
+		row = state.get("run") if state.run.get("name") == name else None
+		child_field = "selected_plant_floors"
+	elif doctype == "APS Schedule Result":
+		row = next((item for item in state.results if item.get("name") == name), None)
+		child_field = "segments"
+	else:
+		row = None
+		child_field = None
+	if not row:
+		frappe.throw(
+			_("{0} {1} is outside the locked Apply scope.", context="Injection APS").format(doctype, name),
+			frappe.ValidationError,
+		)
+	payload = {"doctype": doctype, **dict(row)}
+	if child_field:
+		if doctype == "APS Planning Run":
+			payload[child_field] = [dict(row) for row in state.run_plant_floors]
+		else:
+			payload[child_field] = [
+				dict(segment)
+				for segment in state.segments
+				if segment.get("parent") == name
+			]
+	locked_doc = frappe.get_doc(payload)
+	locked_doc.flags.aps_application_locked_state = state
+	return locked_doc
 
 
 def _validate_request_inputs(doc):
@@ -475,6 +950,27 @@ def _validate_request_inputs(doc):
 		if doc.machine_exception_mode == "Reduced Capacity" and not (0 < flt(doc.available_capacity_percent) < 100):
 			frappe.throw(_("Reduced Capacity must be between 1 and 99 percent."), frappe.ValidationError)
 	_validate_source_demand_delta(doc)
+	_validate_customer_schedule_change_source(doc)
+
+
+def _validate_customer_schedule_change_source(doc) -> None:
+	"""Do not let a plan-only date edit silently rewrite customer demand lineage.
+
+	Quantity Change Requests may intentionally adjust the production response while
+	the frozen customer demand stays unchanged.  A customer delivery date, however,
+	is source data: it must first be versioned by Schedule Import & Diff, which emits
+	the immutable Demand Delta accepted by this workflow.
+	"""
+	if doc.change_type not in DATE_CHANGE_TYPES or doc.source_demand_delta or not doc.target_result:
+		return
+	demand_source = frappe.db.get_value("APS Schedule Result", doc.target_result, "demand_source")
+	if demand_source == "Customer Delivery Schedule":
+		frappe.throw(
+			_(
+				"Customer delivery dates must be changed through Schedule Import & Diff first, then applied from its Demand Delta."
+			),
+			frappe.ValidationError,
+		)
 
 
 def _validate_source_demand_delta(doc):
@@ -483,7 +979,20 @@ def _validate_source_demand_delta(doc):
 	delta = frappe.db.get_value(
 		"APS Demand Delta",
 		doc.source_demand_delta,
-		["company", "customer", "item_code", "change_type"],
+		[
+			"company",
+			"customer",
+			"item_code",
+			"change_type",
+			"schedule_reference",
+			"previous_schedule_date",
+			"current_schedule_date",
+			"previous_qty",
+			"current_qty",
+			"delta_qty",
+			"sales_order",
+			"customer_part_no",
+		],
 		as_dict=True,
 	)
 	if not delta:
@@ -506,7 +1015,7 @@ def _validate_source_demand_delta(doc):
 	for fieldname, label in (("company", _("Company")), ("customer", _("Customer")), ("item_code", _("Item"))):
 		delta_value = delta.get(fieldname)
 		request_value = doc.get(fieldname)
-		if delta_value and request_value and delta_value != request_value:
+		if delta_value and delta_value != request_value:
 			frappe.throw(
 				_("Source Demand Delta {0} {1} does not match this change request.").format(
 					doc.source_demand_delta,
@@ -514,12 +1023,37 @@ def _validate_source_demand_delta(doc):
 				),
 				frappe.ValidationError,
 			)
+	schedule_reference = delta.get("schedule_reference")
+	if schedule_reference:
+		schedule = frappe.db.get_value(
+			"Customer Delivery Schedule",
+			schedule_reference,
+			["status", "company", "customer"],
+			as_dict=True,
+		)
+		if not schedule or schedule.get("status") != "Active":
+			frappe.throw(
+				_(
+					"Source Demand Delta {0} no longer belongs to the active customer schedule. Re-import and analyze the latest delta."
+				).format(doc.source_demand_delta),
+				frappe.ValidationError,
+			)
+		if (schedule.get("company") or "") != (delta.get("company") or "") or (
+			schedule.get("customer") or ""
+		) != (delta.get("customer") or ""):
+			frappe.throw(
+				_("Source Demand Delta {0} has inconsistent customer schedule ownership.").format(
+					doc.source_demand_delta
+				),
+					frappe.ValidationError,
+				)
 	if not doc.target_result:
+		_resolve_exact_demand_sales_lineage(delta, delta_name=doc.source_demand_delta)
 		return
 	target = frappe.db.get_value(
 		"APS Schedule Result",
 		doc.target_result,
-		["company", "customer", "item_code"],
+		["name", "company", "customer", "sales_order", "sales_order_item", "item_code"],
 		as_dict=True,
 	)
 	for fieldname, label in (("company", _("Company")), ("customer", _("Customer")), ("item_code", _("Item"))):
@@ -534,13 +1068,116 @@ def _validate_source_demand_delta(doc):
 				),
 				frappe.ValidationError,
 			)
+	_resolve_exact_demand_sales_lineage(
+		delta,
+		target=target,
+		delta_name=doc.source_demand_delta,
+	)
+
+
+def _resolve_exact_demand_sales_lineage(
+	delta,
+	*,
+	target=None,
+	delta_name: str | None = None,
+	resolved_sales_order_item: str | None = None,
+) -> dict[str, str]:
+	"""Resolve one immutable Demand Delta to one exact Sales Order detail.
+
+	Customer schedule rows currently carry a Sales Order header, but not a detail
+	name.  Reusing the first compatible detail would silently mix framework-order
+	lines.  Therefore the header/item pair must resolve to exactly one detail, and
+	an existing Result must already carry that same exact lineage.
+	"""
+	delta_name = delta_name or (delta.get("name") if delta else None) or "-"
+	sales_order = (delta.get("sales_order") if delta else None) or ""
+	item_code = (delta.get("item_code") if delta else None) or ""
+	if not sales_order or not item_code:
+		frappe.throw(
+			_(
+				"Source Demand Delta {0} must identify an exact Sales Order and Item before it can be applied."
+			).format(delta_name),
+			frappe.ValidationError,
+		)
+	sales_order_item = resolved_sales_order_item or planning._resolve_unique_sales_order_item(
+		sales_order,
+		item_code,
+	)
+	if not sales_order_item:
+		frappe.throw(
+			_(
+				"Source Demand Delta {0} Sales Order {1} and Item {2} do not resolve to exactly one Sales Order Item."
+			).format(delta_name, sales_order, item_code),
+			frappe.ValidationError,
+		)
+	if target is not None:
+		target_name = target.get("name") or "-"
+		target_sales_order = target.get("sales_order") or ""
+		target_sales_order_item = target.get("sales_order_item") or ""
+		if target_sales_order != sales_order or target_sales_order_item != sales_order_item:
+			frappe.throw(
+				_(
+					"Source Demand Delta {0} Sales Order lineage does not match target result {1}."
+				).format(delta_name, target_name),
+				frappe.ValidationError,
+			)
+	return {
+		"sales_order": sales_order,
+		"sales_order_item": sales_order_item,
+		"item_code": item_code,
+	}
+
+
+def _get_source_demand_delta_sales_lineage(
+	delta_name: str,
+	*,
+	target=None,
+	locked_state=None,
+) -> dict[str, str]:
+	delta = locked_state.get("delta") if locked_state else None
+	if delta and delta.get("name") != delta_name:
+		delta = None
+	if not locked_state:
+		delta = frappe.db.get_value(
+			"APS Demand Delta",
+			delta_name,
+			["name", "sales_order", "item_code"],
+			as_dict=True,
+		)
+	if not delta:
+		frappe.throw(_("Source Demand Delta {0} was not found.").format(delta_name))
+	resolved_sales_order_item = None
+	if locked_state:
+		matches = [
+			row.get("name")
+			for row in locked_state.sales_order_items
+			if row.get("parent") == delta.get("sales_order")
+			and row.get("item_code") == delta.get("item_code")
+		]
+		if len(matches) != 1:
+			frappe.throw(
+				_("Source Demand Delta {0} Sales Order and Item do not resolve to exactly one locked Sales Order Item.", context="Injection APS").format(delta_name),
+				frappe.ValidationError,
+			)
+		resolved_sales_order_item = matches[0]
+	return _resolve_exact_demand_sales_lineage(
+		delta,
+		target=target,
+		delta_name=delta_name,
+		resolved_sales_order_item=resolved_sales_order_item,
+	)
 
 
 def _analyze_increase(doc, before_snapshot: dict[str, Any]) -> dict[str, Any]:
 	result, segments = _target_result_context(doc.target_result)
 	current_qty = flt(result.planned_qty)
-	target_qty = _resolve_target_qty(doc, current_qty)
-	if target_qty <= current_qty + QTY_TOLERANCE:
+	demand_change = _build_customer_schedule_demand_change(doc, result)
+	target_qty = (
+		flt(demand_change.get("target_planned_qty"))
+		if demand_change
+		else _resolve_target_qty(doc, current_qty)
+	)
+	if target_qty <= current_qty + QTY_TOLERANCE and not demand_change:
 		frappe.throw(_("Increase Qty target must be greater than current planned quantity {0}.").format(current_qty))
 	protection = _calculate_quantity_protection(result, segments, target_qty)
 	additional_schedule_qty = max(target_qty - protection["machine_scheduled_qty"], 0)
@@ -584,6 +1221,7 @@ def _analyze_increase(doc, before_snapshot: dict[str, Any]) -> dict[str, Any]:
 		"projected_machine_scheduled_qty": projected_machine_qty,
 		"projected_unscheduled_qty": max(target_qty - projected_machine_qty, 0),
 		"affected_orders": [impact_row],
+		"customer_demand_change": demand_change,
 	}
 	impact = {
 		"affected_orders": [impact_row],
@@ -599,8 +1237,17 @@ def _analyze_increase(doc, before_snapshot: dict[str, Any]) -> dict[str, Any]:
 def _analyze_decrease_or_cancel(doc, before_snapshot: dict[str, Any]) -> dict[str, Any]:
 	result, segments = _target_result_context(doc.target_result)
 	current_qty = flt(result.planned_qty)
-	target_qty = 0 if doc.change_type == "Cancel" else _resolve_target_qty(doc, current_qty)
-	if doc.change_type == "Decrease Qty" and (target_qty < 0 or target_qty >= current_qty - QTY_TOLERANCE):
+	demand_change = _build_customer_schedule_demand_change(doc, result)
+	target_qty = (
+		flt(demand_change.get("target_planned_qty"))
+		if demand_change
+		else (0 if doc.change_type == "Cancel" else _resolve_target_qty(doc, current_qty))
+	)
+	if (
+		doc.change_type == "Decrease Qty"
+		and (target_qty < 0 or target_qty >= current_qty - QTY_TOLERANCE)
+		and not demand_change
+	):
 		frappe.throw(_("Decrease Qty target must be between zero and current planned quantity {0}.").format(current_qty))
 	protection = _calculate_quantity_protection(result, segments, target_qty)
 	protection_gap = max(protection["minimum_retained_qty"] - protection["machine_scheduled_qty"], 0)
@@ -646,6 +1293,7 @@ def _analyze_decrease_or_cancel(doc, before_snapshot: dict[str, Any]) -> dict[st
 		"projected_unscheduled_qty": max(target_qty - projected_machine_qty, 0),
 		"projected_overproduction_qty": max(projected_machine_qty - target_qty, 0),
 		"affected_orders": [impact_row],
+		"customer_demand_change": demand_change,
 	}
 	impact = {
 		"affected_orders": [impact_row],
@@ -668,6 +1316,7 @@ def _analyze_decrease_or_cancel(doc, before_snapshot: dict[str, Any]) -> dict[st
 
 def _analyze_date_change(doc, before_snapshot: dict[str, Any]) -> dict[str, Any]:
 	result, segments = _target_result_context(doc.target_result)
+	demand_change = _build_customer_schedule_demand_change(doc, result)
 	current_date = getdate(result.requested_date)
 	new_date = getdate(doc.required_date)
 	if doc.change_type == "Pull In" and new_date >= current_date:
@@ -701,6 +1350,7 @@ def _analyze_date_change(doc, before_snapshot: dict[str, Any]) -> dict[str, Any]
 		"new_segments": [],
 		"affected_orders": [impact_row],
 		"late_after_change": 1 if late_after else 0,
+		"customer_demand_change": demand_change,
 	}
 	impact = {
 		"affected_orders": [impact_row],
@@ -715,12 +1365,19 @@ def _analyze_date_change(doc, before_snapshot: dict[str, Any]) -> dict[str, Any]
 def _analyze_urgent_order(doc, before_snapshot: dict[str, Any]) -> dict[str, Any]:
 	qty = _resolve_urgent_qty(doc)
 	urgent = _build_urgent_insertion_proposal(doc, qty)
+	sales_lineage = (
+		_get_source_demand_delta_sales_lineage(doc.source_demand_delta)
+		if doc.source_demand_delta
+		else {}
+	)
 	proposal = {
 		"allowed": 1 if urgent.get("selected_option") else 0,
 		"target_result": None,
 		"target_net_requirement": None,
 		"item_code": doc.item_code,
 		"customer": doc.customer,
+		"sales_order": sales_lineage.get("sales_order"),
+		"sales_order_item": sales_lineage.get("sales_order_item"),
 		"plant_floor": (urgent.get("selected_option") or {}).get("plant_floor") or doc.plant_floor,
 		"current_required_date": None,
 		"new_required_date": getdate(doc.required_date),
@@ -811,7 +1468,7 @@ def _analyze_machine_exception(doc, before_snapshot: dict[str, Any]) -> dict[str
 
 
 def _apply_increase(doc, proposal: dict[str, Any]) -> dict[str, Any]:
-	result_doc = frappe.get_doc("APS Schedule Result", proposal["target_result"])
+	result_doc = _get_apply_document(doc, "APS Schedule Result", proposal["target_result"])
 	result_doc.planned_qty = flt(proposal["target_planned_qty"])
 	max_sequence = max([cint(row.sequence_no) for row in result_doc.get("segments") or []] or [0])
 	created_segments = []
@@ -826,24 +1483,28 @@ def _apply_increase(doc, proposal: dict[str, Any]) -> dict[str, Any]:
 	result_doc.is_manual = 1
 	result_doc.save(ignore_permissions=True)
 	created_segment_names = [row.name for row in created_segments]
-	_update_target_net_requirement(result_doc, proposal)
+	demand_update = _update_target_net_requirement(result_doc, proposal)
 	_reset_run_approval(doc.planning_run)
 	return {
 		"target_result": result_doc.name,
 		"target_planned_qty": flt(proposal["target_planned_qty"]),
 		"created_segment_count": len(created_segment_names),
 		"created_segments": created_segment_names,
+		"demand_update": demand_update,
 	}
 
 
 def _apply_decrease_or_cancel(doc, proposal: dict[str, Any]) -> dict[str, Any]:
-	result_doc = frappe.get_doc("APS Schedule Result", proposal["target_result"])
+	result_doc = _get_apply_document(doc, "APS Schedule Result", proposal["target_result"])
 	changed_segments = _apply_segment_actions(doc, proposal.get("segment_actions") or [])
-	result_doc.reload()
 	result_doc.planned_qty = flt(proposal["target_planned_qty"])
 	result_doc.is_manual = 1
-	result_doc.save(ignore_permissions=True)
-	_update_target_net_requirement(result_doc, proposal)
+	frappe.db.set_value(
+		"APS Schedule Result",
+		result_doc.name,
+		{"planned_qty": result_doc.planned_qty, "is_manual": 1},
+	)
+	demand_update = _update_target_net_requirement(result_doc, proposal)
 	protection = proposal.get("quantity_protection") or {}
 	retained_excess_qty = flt(protection.get("retained_excess_qty"))
 	if retained_excess_qty > QTY_TOLERANCE:
@@ -870,33 +1531,50 @@ def _apply_decrease_or_cancel(doc, proposal: dict[str, Any]) -> dict[str, Any]:
 		"changed_segments": changed_segments,
 		"retained_excess_qty": retained_excess_qty,
 		"retained_disposition": doc.retained_disposition if retained_excess_qty > QTY_TOLERANCE else None,
+		"demand_update": demand_update,
 	}
 
 
 def _apply_date_change(doc, proposal: dict[str, Any]) -> dict[str, Any]:
-	result_doc = frappe.get_doc("APS Schedule Result", proposal["target_result"])
+	result_doc = _get_apply_document(doc, "APS Schedule Result", proposal["target_result"])
 	old_date = result_doc.requested_date
 	result_doc.requested_date = getdate(proposal["new_required_date"])
 	result_doc.is_manual = 1
 	result_doc.save(ignore_permissions=True)
-	_update_target_net_requirement(result_doc, proposal)
+	demand_update = _update_target_net_requirement(result_doc, proposal)
 	_reset_run_approval(doc.planning_run)
 	return {
 		"target_result": result_doc.name,
 		"old_required_date": old_date,
 		"new_required_date": result_doc.requested_date,
+		"demand_update": demand_update,
 	}
 
 
 def _apply_urgent_order(doc, proposal: dict[str, Any]) -> dict[str, Any]:
 	if not proposal.get("new_segments"):
 		frappe.throw(_("Urgent Order has no schedulable proposal and cannot be applied."), frappe.ValidationError)
+	if doc.source_demand_delta:
+		live_lineage = _get_source_demand_delta_sales_lineage(
+			doc.source_demand_delta,
+			locked_state=_get_application_locked_state(doc),
+		)
+		if (
+			(proposal.get("sales_order") or "") != live_lineage["sales_order"]
+			or (proposal.get("sales_order_item") or "") != live_lineage["sales_order_item"]
+		):
+			frappe.throw(
+				_("Demand Delta Sales Order lineage changed after analysis. Analyze the request again."),
+				frappe.ValidationError,
+			)
 	shifted_segments = _apply_segment_actions(doc, proposal.get("segment_actions") or [])
 	demand_doc = frappe.get_doc(
 		{
 			"doctype": "APS Demand Pool",
 			"company": doc.company,
 			"customer": doc.customer,
+			"sales_order": proposal.get("sales_order"),
+			"sales_order_item": proposal.get("sales_order_item"),
 			"item_code": doc.item_code,
 			"demand_source": "Urgent Order",
 			"demand_date": getdate(doc.required_date),
@@ -910,12 +1588,14 @@ def _apply_urgent_order(doc, proposal: dict[str, Any]) -> dict[str, Any]:
 			"is_system_generated": 0,
 		}
 	).insert(ignore_permissions=True)
-	run_doc = frappe.get_doc("APS Planning Run", doc.planning_run)
+	run_doc = _get_apply_document(doc, "APS Planning Run", doc.planning_run)
 	net_doc = frappe.get_doc(
 		{
 			"doctype": "APS Net Requirement",
 			"company": doc.company,
 			"customer": doc.customer,
+			"sales_order": proposal.get("sales_order"),
+			"sales_order_item": proposal.get("sales_order_item"),
 			"item_code": doc.item_code,
 			"demand_date": getdate(doc.required_date),
 			"demand_qty": flt(proposal["target_planned_qty"]),
@@ -949,6 +1629,8 @@ def _apply_urgent_order(doc, proposal: dict[str, Any]) -> dict[str, Any]:
 			"plant_floor": proposal.get("plant_floor"),
 			"net_requirement": net_doc.name,
 			"customer": doc.customer,
+			"sales_order": proposal.get("sales_order"),
+			"sales_order_item": proposal.get("sales_order_item"),
 			"item_code": doc.item_code,
 			"requested_date": getdate(doc.required_date),
 			"demand_source": "Urgent Order",
@@ -1055,6 +1737,714 @@ def _empty_quantity_protection() -> dict[str, float]:
 		"cancellable_qty": 0,
 		"retained_excess_qty": 0,
 		"effective_retained_qty": 0,
+	}
+
+
+def _get_complete_v4_net_requirement_evidence(baseline: dict[str, Any]) -> dict[str, Any]:
+	"""Fail closed when an older Result cannot prove safety/minimum-batch lineage."""
+	evidence = baseline.get("net_requirement") if isinstance(baseline, dict) else None
+	required_fields = (
+		"formula_version",
+		"demand_qty",
+		"available_stock_qty",
+		"open_work_order_qty",
+		"existing_work_order_policy",
+		"safety_stock_gap_qty",
+		"minimum_batch_qty",
+		"minimum_batch_coverage_qty",
+		"base_residual_qty",
+		"net_requirement_qty",
+		"planning_qty",
+		"new_batch_surplus_qty",
+		"is_safety_stock_group",
+	)
+	missing = [
+		fieldname
+		for fieldname in required_fields
+		if not isinstance(evidence, dict) or fieldname not in evidence
+	]
+	if cint(baseline.get("version")) != 4 or missing or cint((evidence or {}).get("formula_version")) != 1:
+		frappe.throw(
+			_(
+				"APS Result has no complete version-4 Net Requirement evidence ({0}). Rebuild the complete Planning Run."
+			).format(", ".join(missing) or "formula_version"),
+			frappe.ValidationError,
+		)
+	return evidence
+
+
+def _build_customer_schedule_demand_change(doc, result) -> dict[str, Any]:
+	"""Translate one imported gross-demand Delta into its net production response.
+
+	Customer schedule ``qty`` is gross customer demand.  ``Result.planned_qty`` is
+	net production after finite stock/open-WO coverage and may also carry a minimum
+	batch.  They must never be copied into each other.  The import is the only writer
+	of the source schedule; this context merely freezes the active targets that the
+	Change Request is accepting.
+	"""
+	delta_name = getattr(doc, "source_demand_delta", None)
+	if not delta_name or (getattr(result, "demand_source", None) or "") != "Customer Delivery Schedule":
+		return {}
+	delta = frappe.db.get_value(
+		"APS Demand Delta",
+		delta_name,
+		[
+			"name",
+			"schedule_reference",
+			"change_type",
+			"previous_qty",
+			"current_qty",
+			"delta_qty",
+			"previous_schedule_date",
+			"current_schedule_date",
+			"sales_order",
+			"customer_part_no",
+		],
+		as_dict=True,
+	)
+	if not delta:
+		frappe.throw(_("Source Demand Delta {0} was not found.").format(delta_name), frappe.ValidationError)
+	sales_lineage = _resolve_exact_demand_sales_lineage(
+		delta,
+		target=result,
+		delta_name=delta_name,
+	)
+	target_schedule_date = _resolve_demand_delta_target_date(doc, result, delta)
+
+	baseline = _load_customer_schedule_baseline(getattr(result, "fulfillment_baseline_json", None))
+	targets = [
+		row
+		for row in baseline.get("targets") or []
+		if isinstance(row, dict) and row.get("customer_schedule_item")
+	]
+	active_target_names = {
+		row.get("customer_schedule_item")
+		for row in targets
+		if not cint(row.get("retired")) and row.get("customer_schedule_item")
+	}
+	# Append keeps the older active schedule and therefore has no replacement row
+	# for baseline remapping.  Resolve the newly imported target by the complete
+	# Delta identity; never fall back to item-only matching.
+	if delta.get("change_type") == "Appended":
+		for row in _get_delta_customer_schedule_target_rows(delta, result):
+			if row.get("status") != "Cancelled" and flt(row.get("qty")) > QTY_TOLERANCE:
+				active_target_names.add(row.get("name"))
+	active_target_names = sorted(name for name in active_target_names if name)
+	live_rows = _get_customer_schedule_target_rows(active_target_names)
+	live_by_name = {row.get("name"): row for row in live_rows}
+	missing = sorted(set(active_target_names) - set(live_by_name))
+	if missing:
+		frappe.throw(
+			_("Customer schedule targets changed after import: {0}. Analyze the latest Demand Delta.").format(
+				", ".join(missing)
+			),
+			frappe.ValidationError,
+		)
+	for row in live_rows:
+		if row.get("schedule_status") != "Active":
+			frappe.throw(
+				_("Customer schedule target {0} is no longer active. Analyze the latest Demand Delta.").format(
+					row.get("name")
+				),
+				frappe.ValidationError,
+			)
+		for fieldname in ("company", "customer", "item_code"):
+			if (row.get(fieldname) or "") != (getattr(result, fieldname, None) or ""):
+				frappe.throw(
+					_("Customer schedule target {0} no longer matches APS result {1}.").format(
+						row.get("name"), result.name
+					),
+					frappe.ValidationError,
+				)
+		if (row.get("sales_order") or "") != sales_lineage["sales_order"]:
+			frappe.throw(
+				_(
+					"Customer schedule target {0} Sales Order does not match APS result {1}."
+				).format(row.get("name"), result.name),
+				frappe.ValidationError,
+			)
+		if not row.get("schedule_date") or getdate(row.get("schedule_date")) != target_schedule_date:
+			frappe.throw(
+				_(
+					"Customer schedule target {0} date does not match the exact Demand Delta date {1}."
+				).format(row.get("name"), target_schedule_date),
+				frappe.ValidationError,
+			)
+		row["sales_order_item"] = sales_lineage["sales_order_item"]
+
+	delivered_by_target = _get_authoritative_target_deliveries(result, active_target_names)
+	produced_by_target = _get_authoritative_target_production(result, active_target_names)
+	for row in live_rows:
+		row["delivered_qty"] = max(flt(delivered_by_target.get(row.get("name"))), 0)
+		# The child-row roll-up is only a display cache and may lag execution sync.
+		# Gate a customer reduction on the effective production allocation ledger.
+		row["produced_qty"] = max(flt(produced_by_target.get(row.get("name"))), 0)
+		row["open_qty"] = max(flt(row.get("qty")) - flt(row.get("delivered_qty")), 0)
+		row["fulfillment_lower_bound_qty"] = max(
+			flt(row.get("delivered_qty")),
+			flt(row.get("produced_qty")),
+			flt(row.get("allocated_qty")),
+		)
+		_assert_customer_schedule_target_qty_floor(row)
+
+	evidence = _get_complete_v4_net_requirement_evidence(baseline)
+	net_state = _get_exact_customer_change_net_requirement_state(result, sales_lineage)
+	for fieldname in (
+		"demand_qty",
+		"available_stock_qty",
+		"open_work_order_qty",
+		"safety_stock_gap_qty",
+		"minimum_batch_qty",
+	):
+		if fieldname in evidence and abs(flt(evidence.get(fieldname)) - flt(net_state.get(fieldname))) > QTY_TOLERANCE:
+			frappe.throw(
+				_(
+					"APS Result and Net Requirement formula evidence differ at {0}. Rebuild the complete Planning Run."
+				).format(fieldname),
+				frappe.ValidationError,
+			)
+	if evidence.get("existing_work_order_policy") and (
+		evidence.get("existing_work_order_policy") != net_state.get("existing_work_order_policy")
+	):
+		frappe.throw(
+			_("APS Result and Net Requirement Work Order policy differ. Rebuild the complete Planning Run."),
+			frappe.ValidationError,
+		)
+	current_demand_qty = max(flt(net_state.get("demand_qty")), 0)
+	target_demand_qty = sum(flt(row.get("open_qty")) for row in live_rows)
+	available_stock_qty = max(flt(net_state.get("available_stock_qty")), 0)
+	open_work_order_qty = max(flt(net_state.get("open_work_order_qty")), 0)
+	existing_work_order_policy = net_state.get("existing_work_order_policy") or ""
+	if existing_work_order_policy not in ("Include", "Exclude") or (
+		existing_work_order_policy != "Include" and open_work_order_qty > QTY_TOLERANCE
+	):
+		frappe.throw(
+			_("Net Requirement Work Order evidence is invalid. Rebuild the complete Planning Run."),
+			frappe.ValidationError,
+		)
+	credited_work_order_qty = open_work_order_qty if existing_work_order_policy == "Include" else 0
+	safety_stock_gap_qty = max(flt(net_state.get("safety_stock_gap_qty")), 0)
+	minimum_batch_coverage_qty = max(flt(evidence.get("minimum_batch_coverage_qty")), 0)
+	if minimum_batch_coverage_qty > QTY_TOLERANCE or cint(evidence.get("is_safety_stock_group")):
+		frappe.throw(
+			_(
+				"Demand Delta {0} belongs to cross-target minimum-batch or safety-stock coverage. Rebuild the complete Planning Run instead of applying an incremental change."
+			).format(delta_name),
+			frappe.ValidationError,
+		)
+	target_base_residual_qty = max(
+		target_demand_qty - available_stock_qty - credited_work_order_qty + safety_stock_gap_qty,
+		0,
+	)
+	target_net_qty = target_base_residual_qty
+	minimum_batch_qty = max(flt(net_state.get("minimum_batch_qty")), 0)
+	residual_planning_qty = (
+		max(target_net_qty, minimum_batch_qty) if target_net_qty > QTY_TOLERANCE else 0
+	)
+	new_batch_surplus_qty = max(residual_planning_qty - target_net_qty, 0)
+	if doc.change_type in DATE_CHANGE_TYPES:
+		target_planned_qty = flt(result.planned_qty)
+	else:
+		# A Result covers one total boundary: exact existing-WO coverage plus the
+		# residual, or a minimum-batch-expanded residual, whichever is larger.
+		target_planned_qty = max(
+			residual_planning_qty,
+			credited_work_order_qty + target_net_qty,
+			0,
+		)
+
+	target_snapshot = [_customer_schedule_target_state(row) for row in live_rows]
+	return {
+		"mode": "Imported Demand Delta",
+		"source_demand_delta": delta_name,
+		"schedule_reference": delta.get("schedule_reference"),
+		"delta_change_type": delta.get("change_type"),
+		"sales_order": sales_lineage["sales_order"],
+		"sales_order_item": sales_lineage["sales_order_item"],
+		"previous_customer_qty": flt(delta.get("previous_qty")),
+		"current_customer_qty": flt(delta.get("current_qty")),
+		"customer_delta_qty": flt(delta.get("delta_qty")),
+		"previous_schedule_date": delta.get("previous_schedule_date"),
+		"current_schedule_date": delta.get("current_schedule_date"),
+		"target_schedule_date": target_schedule_date,
+		"current_demand_qty": current_demand_qty,
+		"target_demand_qty": target_demand_qty,
+		"available_stock_qty": available_stock_qty,
+		"open_work_order_qty": open_work_order_qty,
+		"credited_open_work_order_qty": credited_work_order_qty,
+		"existing_work_order_policy": existing_work_order_policy,
+		"safety_stock_gap_qty": safety_stock_gap_qty,
+		"minimum_batch_coverage_qty": 0,
+		"target_base_residual_qty": target_base_residual_qty,
+		"target_net_requirement_qty": target_net_qty,
+		"minimum_batch_qty": minimum_batch_qty,
+		"target_residual_planning_qty": residual_planning_qty,
+		"new_batch_surplus_qty": new_batch_surplus_qty,
+		"is_safety_stock_group": 0,
+		"target_planned_qty": target_planned_qty,
+		"targets": target_snapshot,
+		"target_state_token": _hash_payload(target_snapshot),
+		"retired_target_count": sum(cint(row.get("retired")) for row in targets),
+		"source_schedule_mutated_by_change_request": 0,
+		"historical_offsets_preserved": 1,
+	}
+
+
+def _get_exact_customer_change_net_requirement_state(result, sales_lineage: dict[str, str]):
+	net_requirement = getattr(result, "net_requirement", None)
+	if not net_requirement:
+		frappe.throw(
+			_("Customer Demand Delta target has no exact APS Net Requirement. Rebuild the Planning Run."),
+			frappe.ValidationError,
+		)
+	state = frappe.db.get_value(
+		"APS Net Requirement",
+		net_requirement,
+		[
+			"name",
+			"company",
+			"customer",
+			"sales_order",
+			"sales_order_item",
+			"item_code",
+			"demand_qty",
+			"available_stock_qty",
+			"open_work_order_qty",
+			"existing_work_order_policy",
+			"safety_stock_gap_qty",
+			"minimum_batch_qty",
+			"planning_qty",
+			"net_requirement_qty",
+		],
+		as_dict=True,
+	)
+	if not state:
+		frappe.throw(
+			_("Customer Demand Delta target Net Requirement {0} was not found.").format(net_requirement),
+			frappe.DoesNotExistError,
+		)
+	expected = {
+		"company": getattr(result, "company", None) or "",
+		"customer": getattr(result, "customer", None) or "",
+		"sales_order": sales_lineage["sales_order"],
+		"sales_order_item": sales_lineage["sales_order_item"],
+		"item_code": getattr(result, "item_code", None) or "",
+	}
+	if any((state.get(fieldname) or "") != value for fieldname, value in expected.items()):
+		frappe.throw(
+			_(
+				"Net Requirement {0} does not match the exact Company/Customer/Sales Order/Item lineage of APS result {1}."
+			).format(net_requirement, result.name),
+			frappe.ValidationError,
+		)
+	return state
+
+
+def _resolve_demand_delta_target_date(doc, result, delta):
+	delta_name = delta.get("name") or getattr(doc, "source_demand_delta", None) or "-"
+	result_date_value = getattr(result, "requested_date", None)
+	result_date = getdate(result_date_value) if result_date_value else None
+	current_date_value = delta.get("current_schedule_date")
+	previous_date_value = delta.get("previous_schedule_date")
+	current_date = getdate(current_date_value) if current_date_value else None
+	previous_date = getdate(previous_date_value) if previous_date_value else None
+	if doc.change_type in DATE_CHANGE_TYPES:
+		requested_value = getattr(doc, "required_date", None)
+		requested_date = getdate(requested_value) if requested_value else None
+		if not current_date or requested_date != current_date:
+			frappe.throw(
+				_(
+					"Source Demand Delta {0} current date must exactly match the Change Request date."
+				).format(delta_name),
+				frappe.ValidationError,
+			)
+		if previous_date and result_date and previous_date != result_date:
+			frappe.throw(
+				_(
+					"Source Demand Delta {0} previous date does not match target result {1}."
+				).format(delta_name, result.name),
+				frappe.ValidationError,
+			)
+		return current_date
+	expected_delta_date = current_date or previous_date
+	if not result_date or (expected_delta_date and expected_delta_date != result_date):
+		frappe.throw(
+			_(
+				"Source Demand Delta {0} date does not match target result {1}. Rebuild the Planning Run instead of merging dates."
+			).format(delta_name, result.name),
+			frappe.ValidationError,
+		)
+	return result_date
+
+
+def _get_customer_schedule_target_rows(target_names: list[str] | tuple[str, ...]) -> list[dict[str, Any]]:
+	target_names = sorted({name for name in target_names or [] if name})
+	if not target_names:
+		return []
+	return [
+		dict(row)
+		for row in frappe.db.sql(
+			"""
+			select
+				i.name, i.parent, i.idx, i.sales_order, i.item_code, i.customer_part_no, i.schedule_date,
+				i.qty, i.allocated_qty, i.produced_qty, i.delivered_qty,
+				i.balance_qty, i.status, i.modified,
+				s.company, ifnull(s.customer, '') as customer,
+				s.schedule_scope, s.version_no, s.status as schedule_status,
+				s.modified as schedule_modified
+			from `tabCustomer Delivery Schedule Item` i
+			inner join `tabCustomer Delivery Schedule` s on s.name = i.parent
+			where i.name in %(target_names)s
+			order by i.parent asc, i.idx asc, i.name asc
+			""",
+			{"target_names": tuple(target_names)},
+			as_dict=True,
+		)
+	]
+
+
+def _get_delta_customer_schedule_target_rows(delta, result) -> list[dict[str, Any]]:
+	"""Resolve the imported row with full business identity for Append support."""
+	sales_lineage = _resolve_exact_demand_sales_lineage(
+		delta,
+		target=result,
+		delta_name=delta.get("name"),
+	)
+	schedule_reference = delta.get("schedule_reference")
+	current_date = delta.get("current_schedule_date")
+	if not schedule_reference or not current_date:
+		return []
+	names = frappe.get_all(
+		"Customer Delivery Schedule Item",
+		filters={
+			"parent": schedule_reference,
+			"parenttype": "Customer Delivery Schedule",
+			"item_code": getattr(result, "item_code", None),
+			"schedule_date": getdate(current_date),
+		},
+		pluck="name",
+		order_by="idx asc, name asc",
+	)
+	rows = _get_customer_schedule_target_rows(names)
+	expected_sales_order = sales_lineage["sales_order"]
+	expected_customer_part = delta.get("customer_part_no") or ""
+	matches = [
+		row
+		for row in rows
+		if (row.get("sales_order") or "") == expected_sales_order
+		and (row.get("customer_part_no") or "") == expected_customer_part
+	]
+	if len(matches) > 1:
+		frappe.throw(
+			_(
+				"Source Demand Delta {0} matches multiple customer schedule rows. Resolve the duplicate source identity before Apply."
+			).format(delta.get("name") or "-"),
+			frappe.ValidationError,
+		)
+	if not matches and delta.get("change_type") != "Cancelled":
+		frappe.throw(
+			_("Source Demand Delta {0} has no exact active schedule row.").format(delta.get("name") or "-"),
+			frappe.ValidationError,
+		)
+	for row in matches:
+		row["sales_order_item"] = sales_lineage["sales_order_item"]
+	return matches
+
+
+def _get_authoritative_target_deliveries(result, target_names: list[str]) -> dict[str, float]:
+	if not target_names:
+		return {}
+	locked_state = _get_application_locked_state(result)
+	if locked_state:
+		return _get_locked_target_delivery_lower_bounds(result, target_names, locked_state)
+	from injection_aps.services import delivery_sync
+
+	return delivery_sync.get_schedule_delivery_lower_bounds(
+		company=getattr(result, "company", None),
+		customer=getattr(result, "customer", None),
+		schedule_item_names=target_names,
+	)
+
+
+def _get_authoritative_target_production(result, target_names: list[str]) -> dict[str, float]:
+	"""Read effective good output from the allocation ledger, not the child cache."""
+	target_names = sorted({name for name in target_names or [] if name})
+	if not target_names:
+		return {}
+	locked_state = _get_application_locked_state(result)
+	if locked_state:
+		return _get_locked_target_production_lower_bounds(result, target_names, locked_state)
+	rows = frappe.db.sql(
+		"""
+		select
+			a.customer_schedule_item,
+			coalesce(sum(a.good_qty), 0) as produced_qty
+		from `tabAPS Production Allocation` a
+		inner join `tabAPS Schedule Result` r on r.name = a.schedule_result
+		where a.is_effective = 1
+			and a.customer_schedule_item in %(target_names)s
+			and r.company = %(company)s
+			and ifnull(r.customer, '') = ifnull(%(customer)s, '')
+		group by a.customer_schedule_item
+		""",
+		{
+			"target_names": tuple(target_names),
+			"company": getattr(result, "company", None),
+			"customer": getattr(result, "customer", None),
+		},
+		as_dict=True,
+	)
+	return {
+		row.get("customer_schedule_item"): max(flt(row.get("produced_qty")), 0)
+		for row in rows
+		if row.get("customer_schedule_item")
+	}
+
+
+def _get_locked_target_delivery_lower_bounds(result, target_names, locked_state) -> dict[str, float]:
+	"""Validate locked Delivery Note truth before trusting its locked allocation ledger."""
+	from injection_aps.services import delivery_sync
+
+	target_names = sorted(set(target_names))
+	schedule_by_name = {row.get("name"): row for row in locked_state.schedules}
+	active_targets = []
+	for item in locked_state.schedule_items:
+		header = schedule_by_name.get(item.get("parent")) or {}
+		if (
+			header.get("status") == "Active"
+			and (header.get("company") or "") == (result.get("company") or "")
+			and (header.get("customer") or "") == (result.get("customer") or "")
+		):
+			active_targets.append({**dict(item), "company": header.get("company"), "customer": header.get("customer")})
+	active_by_name = {row.get("name"): row for row in active_targets if row.get("name")}
+	missing = sorted(set(target_names) - set(active_by_name))
+	if missing:
+		frappe.throw(
+			_("Customer schedule rows are no longer Active or do not belong to this scope: {0}.").format(
+				", ".join(missing)
+			),
+			frappe.ValidationError,
+		)
+	allocations = [dict(row) for row in locked_state.delivery_allocations]
+	note_by_name = {row.get("name"): row for row in locked_state.delivery_notes}
+	item_by_name = {row.get("name"): row for row in locked_state.delivery_note_items}
+	active_target_names = set(active_by_name)
+	target_related_sources = {
+		row.get("source_delivery_note_item")
+		for row in allocations
+		if row.get("customer_schedule_item") in active_target_names
+		and row.get("source_delivery_note_item")
+	}
+	allocations_by_source: dict[str, list[dict[str, Any]]] = defaultdict(list)
+	for allocation in allocations:
+		if allocation.get("source_delivery_note_item"):
+			allocations_by_source[allocation["source_delivery_note_item"]].append(allocation)
+
+	def build_source(note, item):
+		qty = abs(flt(item.get("stock_qty") or item.get("qty")))
+		posting_time = get_datetime(
+			"{0} {1}".format(getdate(note.get("posting_date")), note.get("posting_time") or "00:00:00")
+		)
+		return {
+			"source_delivery_note": note.get("name"),
+			"source_delivery_note_item": item.get("name"),
+			"source_docstatus": cint(note.get("docstatus")),
+			"source_qty": qty,
+			"source_posting_time": posting_time,
+			"is_return": cint(note.get("is_return")),
+			"return_against": note.get("return_against"),
+			"original_delivery_note_item": item.get("dn_detail"),
+			"direct_schedule_item": item.get("custom_aps_customer_schedule_item"),
+		}
+
+	for item in locked_state.delivery_note_items:
+		note = note_by_name.get(item.get("parent")) or {}
+		if cint(note.get("docstatus")) != 1:
+			continue
+		source_qty = abs(flt(item.get("stock_qty") or item.get("qty")))
+		if source_qty <= QTY_TOLERANCE:
+			continue
+		matches_active_target = any(
+			(target.get("item_code") or "") == (item.get("item_code") or "")
+			and (target.get("sales_order") or "") == (item.get("against_sales_order") or "")
+			and getdate(target.get("schedule_date")) == getdate(note.get("posting_date"))
+			for target in active_targets
+		)
+		direct_target = item.get("custom_aps_customer_schedule_item")
+		original_direct = item_by_name.get(item.get("dn_detail")) or {}
+		is_relevant = (
+			item.get("name") in target_related_sources
+			or direct_target in active_target_names
+			or original_direct.get("custom_aps_customer_schedule_item") in active_target_names
+			or matches_active_target
+		)
+		if not is_relevant:
+			continue
+		effective = [
+			row
+			for row in allocations_by_source.get(item.get("name")) or []
+			if cint(row.get("is_effective"))
+		]
+		if abs(sum(flt(row.get("allocated_qty")) for row in effective) - source_qty) > QTY_TOLERANCE:
+			frappe.throw(
+				_("Delivery source {0} is not fully represented by the locked APS delivery ledger. Run delivery synchronization and retry.", context="Injection APS").format(item.get("name") or "-"),
+				frappe.ValidationError,
+			)
+		expected_fingerprint = delivery_sync._delivery_source_fingerprint(build_source(note, item))
+		if any(
+			cint(row.get("source_docstatus")) != 1
+			or (row.get("source_fingerprint") or "") != expected_fingerprint
+			for row in effective
+		):
+			frappe.throw(
+				_("Delivery source {0} changed after allocation synchronization. Retry after synchronization.", context="Injection APS").format(
+					item.get("name") or "-"
+				),
+				frappe.ValidationError,
+			)
+
+	for allocation in allocations:
+		if not cint(allocation.get("is_effective")):
+			continue
+		note = note_by_name.get(allocation.get("source_delivery_note"))
+		item = item_by_name.get(allocation.get("source_delivery_note_item"))
+		if not note or not item or cint(note.get("docstatus")) != 1:
+			frappe.throw(
+				_("APS delivery allocation has no submitted locked Delivery Note source.", context="Injection APS"),
+				frappe.ValidationError,
+			)
+
+	result_qty = {name: 0.0 for name in target_names}
+	for allocation in allocations:
+		target = allocation.get("customer_schedule_item")
+		if target in result_qty and cint(allocation.get("is_effective")):
+			result_qty[target] += flt(allocation.get("effective_qty"))
+	return {name: max(flt(qty), 0) for name, qty in result_qty.items()}
+
+
+def _get_locked_target_production_lower_bounds(result, target_names, locked_state) -> dict[str, float]:
+	"""Fail closed on unsynchronized Manufacture sources, then sum locked good output."""
+	from injection_aps.services import execution_sync
+
+	allocations = [dict(row) for row in locked_state.production_allocations]
+	entry_by_name = {row.get("name"): row for row in locked_state.stock_entries}
+	detail_by_name = {row.get("name"): row for row in locked_state.stock_entry_details}
+	work_order_by_name = {row.get("name"): row for row in locked_state.work_orders}
+	allocations_by_source: dict[str, list[dict[str, Any]]] = defaultdict(list)
+	for allocation in allocations:
+		if allocation.get("source_stock_entry_detail"):
+			allocations_by_source[allocation["source_stock_entry_detail"]].append(allocation)
+
+	for detail in locked_state.stock_entry_details:
+		entry = entry_by_name.get(detail.get("parent")) or {}
+		if cint(entry.get("docstatus")) != 1 or entry.get("purpose") != "Manufacture":
+			continue
+		work_order = work_order_by_name.get(entry.get("work_order")) or {}
+		source = {
+			"source_stock_entry": entry.get("name"),
+			"source_stock_entry_detail": detail.get("name"),
+			"source_docstatus": cint(entry.get("docstatus")),
+			"work_order": entry.get("work_order"),
+			"work_order_scheduling": entry.get("work_order_scheduling"),
+			"direct_scheduling_item": entry.get("custom_aps_scheduling_item"),
+			"direct_segment": entry.get("custom_aps_segment_reference"),
+			"explicit_output_type": entry.get("custom_aps_output_type"),
+			"item_code": detail.get("item_code"),
+			"source_qty": flt(detail.get("transfer_qty")) or flt(detail.get("qty")),
+			"is_finished_item": detail.get("is_finished_item"),
+			"is_scrap_item": detail.get("is_scrap_item"),
+			"t_warehouse": detail.get("t_warehouse"),
+			"work_order_item": work_order.get("production_item"),
+			"scrap_warehouse": work_order.get("scrap_warehouse"),
+		}
+		if source["source_qty"] <= QTY_TOLERANCE or not execution_sync._is_work_order_finished_output(source):
+			continue
+		execution_sync._assert_work_order_output_item(source)
+		source["output_type"] = execution_sync._classify_manufacture_output(source)
+		source["source_posting_time"] = get_datetime(
+			"{0} {1}".format(getdate(entry.get("posting_date")), entry.get("posting_time") or "00:00:00")
+		)
+		effective = [
+			row
+			for row in allocations_by_source.get(detail.get("name")) or []
+			if cint(row.get("is_effective"))
+		]
+		if abs(
+			sum(flt(row.get("allocated_qty")) for row in effective) - flt(source["source_qty"])
+		) > QTY_TOLERANCE:
+			frappe.throw(
+				_("Manufacture source {0} is not fully represented by the locked APS production ledger. Run production synchronization and retry.", context="Injection APS").format(detail.get("name") or "-"),
+				frappe.ValidationError,
+			)
+		expected_fingerprint = execution_sync._source_fingerprint(source)
+		if any(
+			cint(row.get("source_docstatus")) != 1
+			or (row.get("source_fingerprint") or "") != expected_fingerprint
+			for row in effective
+		):
+			frappe.throw(
+				_("Manufacture source {0} changed after production synchronization.", context="Injection APS").format(
+					detail.get("name") or "-"
+				),
+				frappe.ValidationError,
+			)
+
+	for allocation in allocations:
+		if not cint(allocation.get("is_effective")):
+			continue
+		entry = entry_by_name.get(allocation.get("source_stock_entry"))
+		detail = detail_by_name.get(allocation.get("source_stock_entry_detail"))
+		if not entry or not detail or cint(entry.get("docstatus")) != 1:
+			frappe.throw(
+				_("APS production allocation has no submitted locked Stock Entry source.", context="Injection APS"),
+				frappe.ValidationError,
+			)
+
+	result_qty = {name: 0.0 for name in target_names}
+	for allocation in allocations:
+		target = allocation.get("customer_schedule_item")
+		if target in result_qty and cint(allocation.get("is_effective")):
+			result_qty[target] += flt(allocation.get("good_qty"))
+	return {name: max(flt(qty), 0) for name, qty in result_qty.items()}
+
+
+def _assert_customer_schedule_target_qty_floor(row: dict[str, Any]) -> None:
+	qty = flt(row.get("qty"))
+	lower_bound = max(flt(row.get("fulfillment_lower_bound_qty")), 0)
+	if qty + QTY_TOLERANCE < lower_bound:
+		frappe.throw(
+			_(
+				"Customer schedule target {0} quantity {1} is below the authoritative delivered/produced/allocated lower bound {2}."
+			).format(row.get("name") or "-", qty, lower_bound),
+			frappe.ValidationError,
+		)
+
+
+def _customer_schedule_target_state(row: dict[str, Any]) -> dict[str, Any]:
+	return {
+		"name": row.get("name") or "",
+		"parent": row.get("parent") or "",
+		"idx": cint(row.get("idx")),
+		"sales_order": row.get("sales_order") or "",
+		"sales_order_item": row.get("sales_order_item") or "",
+		"customer_part_no": row.get("customer_part_no") or "",
+		"item_code": row.get("item_code") or "",
+		"schedule_date": str(row.get("schedule_date") or ""),
+		"qty": round(flt(row.get("qty")), 6),
+		"allocated_qty": round(flt(row.get("allocated_qty")), 6),
+		"produced_qty": round(flt(row.get("produced_qty")), 6),
+		"delivered_qty": round(flt(row.get("delivered_qty")), 6),
+		"open_qty": round(flt(row.get("open_qty")), 6),
+		"balance_qty": round(flt(row.get("balance_qty")), 6),
+		"fulfillment_lower_bound_qty": round(flt(row.get("fulfillment_lower_bound_qty")), 6),
+		"status": row.get("status") or "",
+		"modified": str(row.get("modified") or ""),
+		"company": row.get("company") or "",
+		"customer": row.get("customer") or "",
+		"schedule_scope": row.get("schedule_scope") or "",
+		"version_no": row.get("version_no") or "",
+		"schedule_status": row.get("schedule_status") or "",
+		"schedule_modified": str(row.get("schedule_modified") or ""),
 	}
 
 
@@ -1804,8 +3194,22 @@ def _apply_segment_actions(
 	downtime_window: str | None = None,
 ) -> list[dict[str, Any]]:
 	changed = []
+	locked_state = _get_application_locked_state(doc)
 	for action in actions:
-		segment, result_doc, run_doc = planning._get_segment_with_result(action.get("segment_name"))
+		if locked_state:
+			segment = next(
+				(row for row in locked_state.segments if row.get("name") == action.get("segment_name")),
+				None,
+			)
+			if not segment:
+				frappe.throw(
+					_("Segment {0} is outside the locked Apply scope.", context="Injection APS").format(action.get("segment_name")),
+					frappe.ValidationError,
+				)
+			result_doc = _get_apply_document(doc, "APS Schedule Result", segment.get("parent"))
+			run_doc = _get_apply_document(doc, "APS Planning Run", doc.planning_run)
+		else:
+			segment, result_doc, run_doc = planning._get_segment_with_result(action.get("segment_name"))
 		if run_doc.name != doc.planning_run:
 			frappe.throw(_("Segment {0} no longer belongs to the selected Planning Run.").format(segment.get("name")))
 		if planning._is_segment_execution_protected(segment):
@@ -1848,7 +3252,7 @@ def _apply_segment_actions(
 				_("Unsupported segment action: {0}.", context="Injection APS").format(action_name)
 			)
 		frappe.db.set_value("APS Schedule Segment", segment.get("name"), values)
-		_apply_family_segment_action(segment, action_name, values, action)
+		_apply_family_segment_action(segment, action_name, values, action, locked_state=locked_state)
 		frappe.db.set_value(
 			"APS Schedule Result",
 			result_doc.name,
@@ -1896,18 +3300,29 @@ def _apply_family_segment_action(
 	action_name: str,
 	primary_values: dict[str, Any],
 	action: dict[str, Any],
+	*,
+	locked_state=None,
 ):
 	if not primary_segment.get("family_group"):
 		return
-	siblings = frappe.get_all(
-		"APS Schedule Segment",
-		filters={
-			"parent": primary_segment.get("parent"),
-			"family_group": primary_segment.get("family_group"),
-			"segment_kind": "Family Co-Product",
-		},
-		fields=["name", "planned_qty"],
-	)
+	if locked_state:
+		siblings = [
+			row
+			for row in locked_state.segments
+			if row.get("parent") == primary_segment.get("parent")
+			and row.get("family_group") == primary_segment.get("family_group")
+			and row.get("segment_kind") == "Family Co-Product"
+		]
+	else:
+		siblings = frappe.get_all(
+			"APS Schedule Segment",
+			filters={
+				"parent": primary_segment.get("parent"),
+				"family_group": primary_segment.get("family_group"),
+				"segment_kind": "Family Co-Product",
+			},
+			fields=["name", "planned_qty"],
+		)
 	before_qty = flt(action.get("before_qty"))
 	ratio = flt(action.get("after_qty")) / before_qty if before_qty > 0 else 0
 	for sibling in siblings:
@@ -1988,108 +3403,531 @@ def _prepare_new_change_segment(row: dict[str, Any], note: str) -> dict[str, Any
 
 def _update_target_net_requirement(result_doc, proposal: dict[str, Any]):
 	net_requirement = proposal.get("target_net_requirement") or result_doc.net_requirement
-	if not net_requirement or not frappe.db.exists("APS Net Requirement", net_requirement):
-		return None
+	demand_change = proposal.get("customer_demand_change") or {}
+	locked_state = _get_application_locked_state(result_doc)
+	locked_net_state = next(
+		(
+			row
+			for row in (locked_state.get("net_requirements") if locked_state else [])
+			if row.get("name") == net_requirement
+		),
+		None,
+	)
+	net_exists = bool(locked_net_state) if locked_state else bool(
+		net_requirement and frappe.db.exists("APS Net Requirement", net_requirement)
+	)
+	if demand_change and not net_exists:
+		frappe.throw(
+			_("Imported Demand Delta requires its exact APS Net Requirement. Rebuild the Planning Run."),
+			frappe.ValidationError,
+		)
+	demand_acceptance = _accept_customer_schedule_delta_baseline(
+		result_doc,
+		proposal,
+	)
+	if not net_exists:
+		return {
+			"net_requirement": None,
+			"customer_demand": demand_acceptance,
+		}
+	target_total_qty = flt(proposal.get("target_planned_qty"))
+	if demand_change:
+		planning_qty = flt(demand_change.get("target_residual_planning_qty"))
+		net_requirement_qty = flt(demand_change.get("target_net_requirement_qty"))
+	else:
+		net_state = locked_net_state or frappe.db.get_value(
+			"APS Net Requirement",
+			net_requirement,
+			["open_work_order_qty", "existing_work_order_policy"],
+			as_dict=True,
+		) or {}
+		credited_work_order_qty = (
+			max(flt(net_state.get("open_work_order_qty")), 0)
+			if net_state.get("existing_work_order_policy") == "Include"
+			else 0
+		)
+		planning_qty = max(target_total_qty - credited_work_order_qty, 0)
+		net_requirement_qty = planning_qty
 	values = {
-		"demand_qty": flt(proposal.get("target_planned_qty")),
-		"planning_qty": flt(proposal.get("target_planned_qty")),
-		"net_requirement_qty": flt(proposal.get("target_planned_qty")),
+		"planning_qty": planning_qty,
+		"net_requirement_qty": net_requirement_qty,
 		"reason_text": _("Current plan target applied by APS Change Request {0}.").format(
 			proposal.get("change_request") or "-"
 		),
 	}
+	# Gross/outstanding customer demand is independent from the net production
+	# target.  It changes here only when an imported Demand Delta is explicitly
+	# accepted; a plan-only quantity adjustment leaves demand_qty untouched.
+	if demand_change:
+		values["demand_qty"] = flt(demand_change.get("target_demand_qty"))
+	if demand_acceptance.get("baseline_json"):
+		values["fulfillment_baseline_json"] = demand_acceptance["baseline_json"]
+	if demand_acceptance.get("demand_source_snapshot_json"):
+		values["demand_source_snapshot_json"] = demand_acceptance["demand_source_snapshot_json"]
 	if proposal.get("new_required_date"):
 		values["demand_date"] = getdate(proposal.get("new_required_date"))
 	frappe.db.set_value("APS Net Requirement", net_requirement, values)
-	_sync_customer_schedule_targets_for_change(result_doc, proposal, net_requirement)
-	return net_requirement
+	return {
+		"net_requirement": net_requirement,
+		"customer_demand": {
+			key: value for key, value in demand_acceptance.items() if key != "baseline_json"
+		},
+	}
 
 
-def _sync_customer_schedule_targets_for_change(result_doc, proposal: dict[str, Any], net_requirement: str) -> list[str]:
-	"""Keep controlled Change Request mutations aligned with frozen customer demand."""
+def _get_frozen_customer_schedule_target_offsets(target: dict[str, Any]) -> dict[str, float]:
+	"""Validate and return the immutable fulfillment epoch for one target."""
+	required_fields = (
+		"opening_required_qty",
+		"opening_allocated_qty",
+		"opening_produced_qty",
+		"opening_delivered_qty",
+		"source_open_qty",
+	)
+	missing = [fieldname for fieldname in required_fields if target.get(fieldname) in (None, "")]
+	target_name = target.get("customer_schedule_item") or "-"
+	if missing:
+		frappe.throw(
+			_(
+				"Customer schedule target {0} has no complete original fulfillment offsets ({1}). Rebuild the complete Planning Run."
+			).format(target_name, ", ".join(missing)),
+			frappe.ValidationError,
+		)
+	values = {fieldname: flt(target.get(fieldname)) for fieldname in required_fields}
+	if any(value < -QTY_TOLERANCE for value in values.values()):
+		frappe.throw(
+			_(
+				"Customer schedule target {0} has invalid negative original fulfillment offsets. Rebuild the complete Planning Run."
+			).format(target_name),
+			frappe.ValidationError,
+		)
+	values = {fieldname: max(value, 0) for fieldname, value in values.items()}
+	expected_source_open_qty = max(
+		values["opening_required_qty"] - values["opening_delivered_qty"],
+		0,
+	)
+	if abs(values["source_open_qty"] - expected_source_open_qty) > QTY_TOLERANCE:
+		frappe.throw(
+			_(
+				"Customer schedule target {0} original gross, delivered and source-open quantities are not conserved. Rebuild the complete Planning Run."
+			).format(target_name),
+			frappe.ValidationError,
+		)
+	return values
+
+
+def _build_customer_schedule_accepted_epoch(
+	target: dict[str, Any],
+	current: dict[str, Any],
+) -> dict[str, float]:
+	"""Build a conserved accepted epoch while keeping the original epoch immutable."""
+	frozen = _get_frozen_customer_schedule_target_offsets(target)
+	target_name = target.get("customer_schedule_item") or current.get("name") or "-"
+	accepted_required_qty = max(flt(current.get("qty")), 0)
+	accepted_delivered_qty = max(flt(current.get("delivered_qty")), 0)
+	if accepted_delivered_qty + QTY_TOLERANCE < frozen["opening_delivered_qty"]:
+		frappe.throw(
+			_(
+				"Customer schedule target {0} has a return crossing its original delivery offset. Rebuild the complete Planning Run."
+			).format(target_name),
+			frappe.ValidationError,
+		)
+	# A gross reduction below the original delivered epoch cannot be reconciled by
+	# merely clamping source-open to zero; that would lose part of returned demand.
+	if accepted_required_qty + QTY_TOLERANCE < frozen["opening_delivered_qty"]:
+		frappe.throw(
+			_(
+				"Customer schedule target {0} accepted quantity cannot be reconciled with its original delivery offset. Rebuild the complete Planning Run."
+			).format(target_name),
+			frappe.ValidationError,
+		)
+	accepted_source_open_qty = max(
+		accepted_required_qty - frozen["opening_delivered_qty"],
+		0,
+	)
+	accepted_current_open_qty = max(
+		accepted_required_qty - accepted_delivered_qty,
+		0,
+	)
+	if abs(accepted_current_open_qty - flt(current.get("open_qty"))) > QTY_TOLERANCE:
+		frappe.throw(
+			_(
+				"Customer schedule target {0} accepted open quantity is not conserved. Rebuild the complete Planning Run."
+			).format(target_name),
+			frappe.ValidationError,
+		)
+	return {
+		"accepted_required_qty": accepted_required_qty,
+		"accepted_delivered_qty": accepted_delivered_qty,
+		"accepted_source_open_qty": accepted_source_open_qty,
+		"accepted_current_open_qty": accepted_current_open_qty,
+	}
+
+
+def _accept_customer_schedule_delta_baseline(result_doc, proposal: dict[str, Any]) -> dict[str, Any]:
+	"""Accept imported source state without ever modifying its schedule rows.
+
+	The Result/Net Requirement baseline is APS-owned audit data.  Updating it is the
+	explicit acknowledgement of a reviewed Demand Delta.  The original opening epoch
+	is immutable; a separate accepted epoch records the reviewed gross/current-open
+	quantities so a sync replay cannot count pre-change execution a second time.
+	"""
+	demand_change = proposal.get("customer_demand_change") or {}
+	if not demand_change:
+		return {
+			"mode": "Plan Only",
+			"source_schedule_mutated": 0,
+			"baseline_updated": 0,
+		}
 	if (result_doc.get("demand_source") or "") != "Customer Delivery Schedule":
-		return []
+		frappe.throw(
+			_("Imported customer Demand Delta cannot be applied to a non-customer APS result."),
+			frappe.ValidationError,
+		)
+	if (demand_change.get("source_demand_delta") or "") != (proposal.get("source_demand_delta") or ""):
+		frappe.throw(_("Demand Delta proposal lineage is inconsistent. Analyze the request again."), frappe.ValidationError)
+	locked_state = _get_application_locked_state(result_doc)
+	live_lineage = _get_source_demand_delta_sales_lineage(
+		demand_change.get("source_demand_delta"),
+		target=result_doc,
+		locked_state=locked_state,
+	)
+	if (
+		(demand_change.get("sales_order") or "") != live_lineage["sales_order"]
+		or (demand_change.get("sales_order_item") or "") != live_lineage["sales_order_item"]
+	):
+		frappe.throw(
+			_("Demand Delta Sales Order lineage changed after analysis. Analyze the request again."),
+			frappe.ValidationError,
+		)
+
 	baseline = _load_customer_schedule_baseline(result_doc.get("fulfillment_baseline_json"))
+	_get_complete_v4_net_requirement_evidence(baseline)
+	baseline_targets = baseline.setdefault("targets", [])
 	targets = [
 		row
-		for row in baseline.get("targets") or []
-		if isinstance(row, dict) and row.get("customer_schedule_item") and not cint(row.get("retired"))
+		for row in baseline_targets
+		if isinstance(row, dict) and row.get("customer_schedule_item")
 	]
-	if not targets:
-		return []
-	target_qty_by_name = _allocate_changed_target_qty(targets, flt(proposal.get("target_planned_qty")))
-	new_date = getdate(proposal.get("new_required_date") or result_doc.get("requested_date"))
-	rows = frappe.db.sql(
-		"""
-		select
-			i.name,
-			i.delivered_qty,
-			s.status as schedule_status
-		from `tabCustomer Delivery Schedule Item` i
-		inner join `tabCustomer Delivery Schedule` s on s.name = i.parent
-		where i.name in %(target_names)s
-		for update
-		""",
-		{"target_names": tuple(sorted(target_qty_by_name))},
-		as_dict=True,
+	active_target_names = sorted(
+		{
+			row.get("customer_schedule_item")
+			for row in targets
+			if not cint(row.get("retired")) and row.get("customer_schedule_item")
+		}
+		| {
+			row.get("name")
+			for row in demand_change.get("targets") or []
+			if isinstance(row, dict) and row.get("name")
+		}
 	)
-	row_by_name = {row.name: row for row in rows}
-	updated = []
+	if locked_state:
+		schedule_by_name = {row.get("name"): row for row in locked_state.schedules}
+		live_rows = []
+		for source in locked_state.schedule_items:
+			if source.get("name") not in active_target_names:
+				continue
+			header = schedule_by_name.get(source.get("parent")) or {}
+			live_rows.append(
+				{
+					**dict(source),
+					"company": header.get("company"),
+					"customer": header.get("customer") or "",
+					"schedule_scope": header.get("schedule_scope"),
+					"version_no": header.get("version_no"),
+					"schedule_status": header.get("status"),
+					"schedule_modified": header.get("modified"),
+				}
+			)
+		live_rows.sort(key=lambda row: (row.get("parent") or "", cint(row.get("idx")), row.get("name") or ""))
+	else:
+		live_rows = _get_customer_schedule_target_rows(active_target_names)
+	delivered_by_target = _get_authoritative_target_deliveries(result_doc, active_target_names)
+	produced_by_target = _get_authoritative_target_production(result_doc, active_target_names)
+	target_schedule_date_value = demand_change.get("target_schedule_date")
+	if not target_schedule_date_value:
+		frappe.throw(
+			_("Demand Delta proposal has no exact accepted schedule date. Analyze the request again."),
+			frappe.ValidationError,
+		)
+	target_schedule_date = getdate(target_schedule_date_value)
+	for row in live_rows:
+		for fieldname in ("company", "customer", "item_code"):
+			if (row.get(fieldname) or "") != (result_doc.get(fieldname) or ""):
+				frappe.throw(
+					_("Customer schedule target {0} no longer matches APS result {1}.").format(
+						row.get("name"), result_doc.name
+					),
+					frappe.ValidationError,
+				)
+		if (row.get("sales_order") or "") != live_lineage["sales_order"]:
+			frappe.throw(
+				_(
+					"Customer schedule target {0} Sales Order does not match APS result {1}."
+				).format(row.get("name"), result_doc.name),
+				frappe.ValidationError,
+			)
+		if not row.get("schedule_date") or getdate(row.get("schedule_date")) != target_schedule_date:
+			frappe.throw(
+				_(
+					"Customer schedule target {0} date does not match the exact Demand Delta date {1}."
+				).format(row.get("name"), target_schedule_date),
+				frappe.ValidationError,
+			)
+		row["sales_order_item"] = live_lineage["sales_order_item"]
+		row["delivered_qty"] = max(flt(delivered_by_target.get(row.get("name"))), 0)
+		row["produced_qty"] = max(flt(produced_by_target.get(row.get("name"))), 0)
+		row["open_qty"] = max(flt(row.get("qty")) - flt(row.get("delivered_qty")), 0)
+		row["fulfillment_lower_bound_qty"] = max(
+			flt(row.get("delivered_qty")),
+			flt(row.get("produced_qty")),
+			flt(row.get("allocated_qty")),
+		)
+		_assert_customer_schedule_target_qty_floor(row)
+	current_state = [_customer_schedule_target_state(row) for row in live_rows]
+	if _hash_payload(current_state) != (demand_change.get("target_state_token") or ""):
+		frappe.throw(
+			_("The active customer schedule changed after analysis. Analyze the latest Demand Delta before Apply."),
+			frappe.ValidationError,
+		)
+	row_by_name = {row.get("name"): row for row in live_rows}
+	existing_target_names = {row.get("customer_schedule_item") for row in targets}
+	for current in live_rows:
+		if current.get("name") in existing_target_names:
+			continue
+		# Append imports introduce a genuinely new exact demand target.  This is the
+		# first epoch for that row, so freeze all original offsets exactly once.
+		opening_required_qty = max(flt(current.get("qty")), 0)
+		opening_delivered_qty = max(flt(current.get("delivered_qty")), 0)
+		new_target = {
+			"customer_schedule": current.get("parent"),
+			"customer_schedule_item": current.get("name"),
+			"sales_order": current.get("sales_order"),
+			"sales_order_item": live_lineage["sales_order_item"],
+			"item_code": current.get("item_code"),
+			"schedule_date": str(current.get("schedule_date") or ""),
+			"source_open_qty": max(opening_required_qty - opening_delivered_qty, 0),
+			"opening_required_qty": opening_required_qty,
+			"opening_allocated_qty": max(flt(current.get("allocated_qty")), 0),
+			"opening_produced_qty": max(flt(current.get("produced_qty")), 0),
+			"opening_delivered_qty": opening_delivered_qty,
+		}
+		baseline_targets.append(new_target)
+		targets.append(new_target)
+		existing_target_names.add(current.get("name"))
+	accepted = []
 	for target in targets:
 		target_name = target.get("customer_schedule_item")
-		if target_name not in target_qty_by_name:
+		if cint(target.get("retired")):
 			continue
 		current = row_by_name.get(target_name)
-		if not current or current.schedule_status != "Active":
+		if not current or current.get("schedule_status") != "Active":
 			frappe.throw(
-				_("Customer schedule target {0} is no longer active. Rebuild the plan before applying this change.").format(
+				_("Customer schedule target {0} is no longer active. Analyze the latest Demand Delta.").format(
 					target_name
 				),
 				frappe.ValidationError,
 			)
-		qty = flt(target_qty_by_name[target_name])
-		delivered_qty = flt(current.delivered_qty)
-		frappe.db.set_value(
-			"Customer Delivery Schedule Item",
-			target_name,
+		for fieldname, expected in (
+			("sales_order", live_lineage["sales_order"]),
+			("sales_order_item", live_lineage["sales_order_item"]),
+			("item_code", current.get("item_code") or ""),
+		):
+			if target.get(fieldname) and (target.get(fieldname) or "") != (expected or ""):
+				frappe.throw(
+					_(
+						"Customer schedule target {0} frozen {1} lineage differs from the accepted Demand Delta. Rebuild the complete Planning Run."
+					).format(target_name, fieldname),
+					frappe.ValidationError,
+				)
+		accepted_epoch = _build_customer_schedule_accepted_epoch(target, current)
+		accepted_required_qty = accepted_epoch["accepted_required_qty"]
+		accepted_delivered_qty = accepted_epoch["accepted_delivered_qty"]
+		accepted_source_open_qty = accepted_epoch["accepted_source_open_qty"]
+		accepted_current_open_qty = accepted_epoch["accepted_current_open_qty"]
+		# Never overwrite opening_* / source_open_qty / schedule_date.  Consumers use
+		# this explicit accepted epoch after a reviewed Delta and retain the originals
+		# for replaying production, delivery and returns idempotently.
+		target["accepted_required_qty"] = accepted_required_qty
+		target["accepted_delivered_qty"] = accepted_delivered_qty
+		target["accepted_source_open_qty"] = accepted_source_open_qty
+		target["accepted_current_open_qty"] = accepted_current_open_qty
+		target["accepted_schedule_date"] = str(current.get("schedule_date") or "")
+		target["attributed_qty"] = accepted_source_open_qty
+		target["sales_order"] = current.get("sales_order")
+		target["sales_order_item"] = live_lineage["sales_order_item"]
+		target["item_code"] = current.get("item_code")
+		target["accepted_source_demand_delta"] = demand_change.get("source_demand_delta")
+		target["accepted_by_change_request"] = proposal.get("change_request")
+		target.pop("current_required_qty", None)
+		accepted.append(
 			{
-				"schedule_date": new_date,
-				"qty": qty,
-				"balance_qty": max(qty - delivered_qty, 0),
-				"status": "Cancelled" if qty <= QTY_TOLERANCE else ("Covered" if delivered_qty >= qty else "Open"),
-			},
-			update_modified=False,
+				"customer_schedule_item": target_name,
+				"qty": accepted_required_qty,
+				"open_qty": accepted_current_open_qty,
+				"accepted_source_open_qty": accepted_source_open_qty,
+				"schedule_date": str(current.get("schedule_date") or ""),
+				"fulfillment_lower_bound_qty": max(flt(current.get("fulfillment_lower_bound_qty")), 0),
+			}
 		)
-		target["opening_required_qty"] = qty
-		target["source_open_qty"] = qty
-		target["schedule_date"] = str(new_date)
-		updated.append(target_name)
-	net_requirement_baseline = baseline.setdefault("net_requirement", {})
-	net_requirement_baseline["demand_qty"] = flt(proposal.get("target_planned_qty"))
-	net_requirement_baseline["available_stock_qty"] = flt(net_requirement_baseline.get("available_stock_qty"))
-	net_requirement_baseline["open_work_order_qty"] = flt(net_requirement_baseline.get("open_work_order_qty"))
-	if not net_requirement_baseline.get("existing_work_order_policy"):
-		net_requirement_baseline["existing_work_order_policy"] = frappe.db.get_value(
-			"APS Planning Run",
-			result_doc.planning_run,
-			"existing_work_order_policy",
+	if baseline.get("sales_order_items"):
+		frappe.throw(
+			_(
+				"This Result combines customer schedule and Sales Order backlog sources. Rebuild the complete Planning Run instead of applying an incremental Demand Delta."
+			),
+			frappe.ValidationError,
 		)
-	baseline_json = json.dumps(baseline, ensure_ascii=False, sort_keys=True)
+	existing_source_rows = _load_json_list(result_doc.get("demand_source_snapshot_json"))
+	unsupported_sources = [
+		row
+		for row in existing_source_rows
+		if (row.get("source_doctype") or "") != "Customer Delivery Schedule"
+	]
+	if unsupported_sources:
+		frappe.throw(
+			_(
+				"This Result has mixed demand sources that cannot be updated incrementally. Rebuild the complete Planning Run."
+			),
+			frappe.ValidationError,
+		)
+	existing_sources_by_target: dict[str, list[dict[str, Any]]] = defaultdict(list)
+	for row in existing_source_rows:
+		if row.get("source_detail_name"):
+			existing_sources_by_target[row["source_detail_name"]].append(row)
+	duplicate_source_targets = sorted(
+		target_name
+		for target_name, rows in existing_sources_by_target.items()
+		if len(rows) > 1
+	)
+	if duplicate_source_targets:
+		frappe.throw(
+			_(
+				"Demand source snapshot has duplicate customer schedule targets: {0}. Rebuild the complete Planning Run."
+			).format(", ".join(duplicate_source_targets)),
+			frappe.ValidationError,
+		)
+	accepted_target_by_name = {
+		row.get("customer_schedule_item"): row
+		for row in targets
+		if isinstance(row, dict) and not cint(row.get("retired"))
+	}
+	accepted_source_rows = []
+	for current in live_rows:
+		accepted_target = accepted_target_by_name.get(current.get("name"))
+		if not accepted_target or "accepted_current_open_qty" not in accepted_target:
+			frappe.throw(
+				_(
+					"Customer schedule target {0} has no complete accepted demand epoch. Rebuild the complete Planning Run."
+				).format(current.get("name") or "-"),
+				frappe.ValidationError,
+			)
+		previous_source = (existing_sources_by_target.get(current.get("name")) or [{}])[0]
+		accepted_source_rows.append(
+			{
+				"demand_pool": previous_source.get("demand_pool"),
+				"source_doctype": "Customer Delivery Schedule",
+				"source_name": current.get("parent"),
+				"source_detail_name": current.get("name"),
+				"sales_order": live_lineage["sales_order"],
+				"sales_order_item": live_lineage["sales_order_item"],
+				"qty": max(flt(accepted_target.get("accepted_current_open_qty")), 0),
+			}
+		)
+	accepted_source_rows.sort(
+		key=lambda row: (
+			row.get("sales_order") or "",
+			row.get("source_detail_name") or "",
+			row.get("demand_pool") or "",
+		)
+	)
+	if abs(
+		sum(flt(row.get("qty")) for row in accepted_source_rows)
+		- flt(demand_change.get("target_demand_qty"))
+	) > QTY_TOLERANCE:
+		frappe.throw(
+			_("Accepted customer schedule targets do not conserve the Demand Delta quantity."),
+			frappe.ValidationError,
+		)
+	demand_source_snapshot_json = json.dumps(
+		accepted_source_rows,
+		ensure_ascii=True,
+		sort_keys=True,
+		separators=(",", ":"),
+		default=str,
+	)
+	_, formula_baseline_json = planning._build_net_requirement_lineage_snapshot(
+		[],
+		demand_qty=demand_change.get("target_demand_qty"),
+		available_stock_qty=demand_change.get("available_stock_qty"),
+		open_work_order_qty=demand_change.get("credited_open_work_order_qty"),
+		existing_work_order_policy=demand_change.get("existing_work_order_policy"),
+		safety_stock_gap_qty=demand_change.get("safety_stock_gap_qty"),
+		minimum_batch_qty=demand_change.get("minimum_batch_qty"),
+		minimum_batch_coverage_qty=demand_change.get("minimum_batch_coverage_qty"),
+		net_requirement_qty=demand_change.get("target_net_requirement_qty"),
+		planning_qty=demand_change.get("target_residual_planning_qty"),
+		new_batch_surplus_qty=demand_change.get("new_batch_surplus_qty"),
+		is_safety_stock_group=demand_change.get("is_safety_stock_group"),
+	)
+	formula_baseline = _load_customer_schedule_baseline(formula_baseline_json)
+	net_requirement_baseline = formula_baseline.get("net_requirement") or {}
+	formula_quantities = {
+		"demand_qty": demand_change.get("target_demand_qty"),
+		"available_stock_qty": demand_change.get("available_stock_qty"),
+		"open_work_order_qty": demand_change.get("credited_open_work_order_qty"),
+		"safety_stock_gap_qty": demand_change.get("safety_stock_gap_qty"),
+		"minimum_batch_qty": demand_change.get("minimum_batch_qty"),
+		"minimum_batch_coverage_qty": demand_change.get("minimum_batch_coverage_qty"),
+		"base_residual_qty": demand_change.get("target_base_residual_qty"),
+		"net_requirement_qty": demand_change.get("target_net_requirement_qty"),
+		"planning_qty": demand_change.get("target_residual_planning_qty"),
+		"new_batch_surplus_qty": demand_change.get("new_batch_surplus_qty"),
+	}
+	formula_changed = any(
+		abs(flt(net_requirement_baseline.get(fieldname)) - flt(expected)) > QTY_TOLERANCE
+		for fieldname, expected in formula_quantities.items()
+	) or (net_requirement_baseline.get("existing_work_order_policy") or "") != (
+		demand_change.get("existing_work_order_policy") or ""
+	) or cint(net_requirement_baseline.get("is_safety_stock_group")) != cint(
+		demand_change.get("is_safety_stock_group")
+	) or cint(net_requirement_baseline.get("formula_version")) != 1
+	if formula_changed:
+		frappe.throw(
+			_("Demand Delta formula evidence changed after analysis. Analyze the request again."),
+			frappe.ValidationError,
+		)
+	baseline["version"] = 4
+	baseline["net_requirement"] = net_requirement_baseline
+	baseline["sales_order_items"] = []
+	baseline["accepted_source_demand_delta"] = demand_change.get("source_demand_delta")
+	baseline["accepted_by_change_request"] = proposal.get("change_request")
+	baseline_json = json.dumps(
+		baseline,
+		ensure_ascii=True,
+		sort_keys=True,
+		separators=(",", ":"),
+		default=str,
+	)
 	frappe.db.set_value(
 		"APS Schedule Result",
 		result_doc.name,
-		"fulfillment_baseline_json",
-		baseline_json,
+		{
+			"fulfillment_baseline_json": baseline_json,
+			"demand_source_snapshot_json": demand_source_snapshot_json,
+		},
 		update_modified=False,
 	)
-	frappe.db.set_value(
-		"APS Net Requirement",
-		net_requirement,
-		"fulfillment_baseline_json",
-		baseline_json,
-		update_modified=False,
-	)
-	return updated
+	return {
+		"mode": "Imported Demand Delta",
+		"source_demand_delta": demand_change.get("source_demand_delta"),
+		"source_schedule_mutated": 0,
+		"baseline_updated": 1,
+		"accepted_targets": accepted,
+		"retired_target_count": sum(cint(row.get("retired")) for row in targets),
+		"historical_offsets_preserved": 1,
+		"baseline_json": baseline_json,
+		"demand_source_snapshot_json": demand_source_snapshot_json,
+	}
 
 
 def _load_customer_schedule_baseline(value) -> dict[str, Any]:
@@ -2102,27 +3940,15 @@ def _load_customer_schedule_baseline(value) -> dict[str, Any]:
 	return baseline if isinstance(baseline, dict) else {}
 
 
-def _allocate_changed_target_qty(targets: list[dict[str, Any]], target_qty: float) -> dict[str, float]:
-	names = [row.get("customer_schedule_item") for row in targets if row.get("customer_schedule_item")]
-	if not names:
-		return {}
-	target_qty = max(flt(target_qty), 0)
-	if len(names) == 1:
-		return {names[0]: target_qty}
-	basis = [
-		max(flt(row.get("source_open_qty") or row.get("opening_required_qty")), 0)
-		for row in targets
-		if row.get("customer_schedule_item")
-	]
-	basis_total = sum(basis)
-	remaining = target_qty
-	allocated: dict[str, float] = {}
-	for name, base_qty in zip(names[:-1], basis[:-1], strict=True):
-		qty = round(target_qty * base_qty / basis_total, 6) if basis_total > QTY_TOLERANCE else 0
-		allocated[name] = max(qty, 0)
-		remaining -= allocated[name]
-	allocated[names[-1]] = max(remaining, 0)
-	return allocated
+def _load_json_list(value) -> list[dict[str, Any]]:
+	if isinstance(value, list):
+		rows = value
+	else:
+		try:
+			rows = json.loads(value or "[]")
+		except (TypeError, ValueError):
+			rows = []
+	return [dict(row) for row in rows if isinstance(row, dict)] if isinstance(rows, list) else []
 
 
 def _reset_run_approval(run_name: str):
@@ -2156,17 +3982,24 @@ def _validate_changed_schedule(doc, proposal: dict[str, Any]):
 		)
 
 
-def _capture_plan_snapshot(doc, scope: str) -> dict[str, Any]:
-	run_row = frappe.db.get_value(
-		"APS Planning Run",
-		doc.planning_run,
-		list(RUN_SNAPSHOT_FIELDS),
-		as_dict=True,
-	)
+def _capture_plan_snapshot(doc, scope: str, *, locked_state=None) -> dict[str, Any]:
+	if locked_state:
+		run_row = frappe._dict(
+			{fieldname: locked_state.run.get(fieldname) for fieldname in RUN_SNAPSHOT_FIELDS}
+		)
+	else:
+		run_row = frappe.db.get_value(
+			"APS Planning Run",
+			doc.planning_run,
+			list(RUN_SNAPSHOT_FIELDS),
+			as_dict=True,
+		)
 	if not run_row:
 		frappe.throw(_("Planning Run {0} was not found.").format(doc.planning_run))
 	if scope == "target":
 		result_names = [doc.target_result]
+	elif locked_state:
+		result_names = [row.get("name") for row in locked_state.results]
 	else:
 		result_names = frappe.get_all(
 			"APS Schedule Result",
@@ -2174,64 +4007,226 @@ def _capture_plan_snapshot(doc, scope: str) -> dict[str, Any]:
 			pluck="name",
 			order_by="creation asc, name asc",
 		)
-	results = frappe.get_all(
-		"APS Schedule Result",
-		filters={"name": ("in", result_names or [""])},
-		fields=list(RESULT_SNAPSHOT_FIELDS),
-		order_by="creation asc, name asc",
-	)
-	segments = frappe.get_all(
-		"APS Schedule Segment",
-		filters={
-			"parent": ("in", [row.name for row in results] or [""]),
-			"parenttype": "APS Schedule Result",
-		},
-		fields=list(SEGMENT_SNAPSHOT_FIELDS),
-		order_by="parent asc, start_time asc, sequence_no asc, name asc",
-	)
+	if locked_state:
+		result_name_set = set(result_names)
+		results = [
+			frappe._dict({fieldname: row.get(fieldname) for fieldname in RESULT_SNAPSHOT_FIELDS})
+			for row in locked_state.results
+			if row.get("name") in result_name_set
+		]
+		segments = [
+			frappe._dict({fieldname: row.get(fieldname) for fieldname in SEGMENT_SNAPSHOT_FIELDS})
+			for row in locked_state.segments
+			if row.get("parent") in result_name_set
+		]
+		segments.sort(
+			key=lambda row: (
+				row.get("parent") or "",
+				get_datetime(row.get("start_time")) if row.get("start_time") else get_datetime("1900-01-01"),
+				cint(row.get("sequence_no")),
+				row.get("name") or "",
+			)
+		)
+	else:
+		results = frappe.get_all(
+			"APS Schedule Result",
+			filters={"name": ("in", result_names or [""])},
+			fields=list(RESULT_SNAPSHOT_FIELDS),
+			order_by="creation asc, name asc",
+		)
+		segments = frappe.get_all(
+			"APS Schedule Segment",
+			filters={
+				"parent": ("in", [row.name for row in results] or [""]),
+				"parenttype": "APS Schedule Result",
+			},
+			fields=list(SEGMENT_SNAPSHOT_FIELDS),
+			order_by="parent asc, start_time asc, sequence_no asc, name asc",
+		)
 	net_names = sorted({row.net_requirement for row in results if row.net_requirement})
-	net_requirements = frappe.get_all(
-		"APS Net Requirement",
-		filters={"name": ("in", net_names or [""])},
-		fields=[
-			"name",
-			"company",
-			"customer",
-			"item_code",
-			"demand_date",
-			"demand_qty",
-			"available_stock_qty",
-			"open_work_order_qty",
-			"planning_qty",
-			"net_requirement_qty",
-			"is_system_generated",
-		],
-		order_by="name asc",
-	)
+	if locked_state:
+		net_requirements = [
+			frappe._dict(
+				{fieldname: row.get(fieldname) for fieldname in NET_REQUIREMENT_SNAPSHOT_FIELDS}
+			)
+			for row in locked_state.net_requirements
+			if row.get("name") in net_names
+		]
+		net_requirements.sort(key=lambda row: row.get("name") or "")
+	else:
+		net_requirements = frappe.get_all(
+			"APS Net Requirement",
+			filters={"name": ("in", net_names or [""])},
+			fields=list(NET_REQUIREMENT_SNAPSHOT_FIELDS),
+			order_by="name asc",
+		)
 	snapshot = {
 		"scope": scope,
 		"run": dict(run_row),
 		"results": [dict(row) for row in results],
 		"segments": [dict(row) for row in segments],
 		"net_requirements": [dict(row) for row in net_requirements],
+		"customer_schedule_targets": _capture_customer_schedule_target_snapshot(
+			results,
+			locked_state=locked_state,
+		),
+		"source_demand_delta": _capture_source_demand_delta_snapshot(
+			doc.source_demand_delta,
+			locked_state=locked_state,
+		),
 	}
 	if scope == "run":
-		snapshot["capacity_windows"] = [
-			dict(row)
-			for row in planning._get_active_downtime_windows(
-				company=run_row.company,
-				plant_floors=planning._get_run_selected_plant_floors(frappe.get_doc("APS Planning Run", doc.planning_run)),
-				horizon_start=run_row.horizon_start,
-				horizon_end=run_row.horizon_end,
-				run_name=doc.planning_run,
-			)
-		]
+		if locked_state:
+			snapshot["capacity_windows"] = [dict(row) for row in locked_state.capacity_windows]
+		else:
+			snapshot["capacity_windows"] = [
+				dict(row)
+				for row in planning._get_active_downtime_windows(
+					company=run_row.company,
+					plant_floors=planning._get_run_selected_plant_floors(frappe.get_doc("APS Planning Run", doc.planning_run)),
+					horizon_start=run_row.horizon_start,
+					horizon_end=run_row.horizon_end,
+					run_name=doc.planning_run,
+				)
+			]
 	return _json_normalize(snapshot)
+
+
+def _capture_customer_schedule_target_snapshot(results, *, locked_state=None) -> dict[str, Any]:
+	"""Include source demand identity in optimistic-concurrency snapshots."""
+	lineage_rows = sorted(
+		[
+			{
+				"result": result.get("name") or "",
+				"customer_schedule_item": target.get("customer_schedule_item") or "",
+				"sales_order": result.get("sales_order") or "",
+				"sales_order_item": result.get("sales_order_item") or "",
+			}
+			for result in results or []
+			for target in (
+				_load_customer_schedule_baseline(result.get("fulfillment_baseline_json")).get("targets") or []
+			)
+			if isinstance(target, dict) and target.get("customer_schedule_item")
+		],
+		key=lambda row: (row["customer_schedule_item"], row["result"]),
+	)
+	target_names = sorted(
+		{
+			target.get("customer_schedule_item")
+			for result in results or []
+			for target in (
+				_load_customer_schedule_baseline(result.get("fulfillment_baseline_json")).get("targets") or []
+			)
+			if isinstance(target, dict) and target.get("customer_schedule_item")
+		}
+	)
+	if locked_state:
+		schedule_by_name = {row.get("name"): row for row in locked_state.schedules}
+		rows = []
+		for source in locked_state.schedule_items:
+			if source.get("name") not in target_names:
+				continue
+			header = schedule_by_name.get(source.get("parent")) or {}
+			rows.append(
+				{
+					**dict(source),
+					"company": header.get("company"),
+					"customer": header.get("customer") or "",
+					"schedule_scope": header.get("schedule_scope"),
+					"version_no": header.get("version_no"),
+					"schedule_status": header.get("status"),
+					"schedule_modified": header.get("modified"),
+				}
+			)
+		rows.sort(key=lambda row: (row.get("parent") or "", cint(row.get("idx")), row.get("name") or ""))
+	else:
+		rows = _get_customer_schedule_target_rows(target_names)
+	lineages_by_target: dict[str, set[str]] = defaultdict(set)
+	for lineage in lineage_rows:
+		if lineage["sales_order_item"]:
+			lineages_by_target[lineage["customer_schedule_item"]].add(lineage["sales_order_item"])
+	for row in rows:
+		lineages = lineages_by_target.get(row.get("name")) or set()
+		if len(lineages) == 1:
+			row["sales_order_item"] = next(iter(lineages))
+	return {
+		"target_names": target_names,
+		"missing_target_names": sorted(set(target_names) - {row.get("name") for row in rows}),
+		"result_lineage": lineage_rows,
+		"rows": [_customer_schedule_target_state(row) for row in rows],
+	}
+
+
+def _capture_source_demand_delta_snapshot(
+	delta_name: str | None,
+	*,
+	locked_state=None,
+) -> dict[str, Any] | None:
+	if not delta_name:
+		return None
+	fields = [
+		"name", "import_batch", "schedule_reference", "company", "customer",
+		"sales_order", "item_code", "customer_part_no", "previous_schedule_date",
+		"current_schedule_date", "previous_qty", "current_qty", "delta_qty",
+		"change_type", "modified",
+	]
+	if locked_state:
+		locked_delta = locked_state.get("delta")
+		row = (
+			frappe._dict({fieldname: locked_delta.get(fieldname) for fieldname in fields})
+			if locked_delta and locked_delta.get("name") == delta_name
+			else None
+		)
+	else:
+		row = frappe.db.get_value("APS Demand Delta", delta_name, fields, as_dict=True)
+	if not row:
+		return {"name": delta_name, "missing": 1}
+	if locked_state:
+		schedule = next(
+			(
+				schedule
+				for schedule in locked_state.schedules
+				if schedule.get("name") == row.get("schedule_reference")
+			),
+			None,
+		)
+	else:
+		schedule = frappe.db.get_value(
+			"Customer Delivery Schedule",
+			row.get("schedule_reference"),
+			["status", "modified"],
+			as_dict=True,
+		) if row.get("schedule_reference") else None
+	if locked_state:
+		matching_sales_order_items = [
+			item.get("name")
+			for item in locked_state.sales_order_items
+			if item.get("parent") == row.get("sales_order")
+			and item.get("item_code") == row.get("item_code")
+		]
+		resolved_sales_order_item = (
+			matching_sales_order_items[0] if len(matching_sales_order_items) == 1 else None
+		)
+	else:
+		resolved_sales_order_item = planning._resolve_unique_sales_order_item(
+			row.get("sales_order"), row.get("item_code")
+		)
+	return {
+		**dict(row),
+		"resolved_sales_order_item": resolved_sales_order_item,
+		"schedule_status": schedule.get("status") if schedule else None,
+		"schedule_modified": schedule.get("modified") if schedule else None,
+	}
 
 
 def _assert_snapshot_current(doc, proposal: dict[str, Any]) -> dict[str, Any]:
 	scope = proposal.get("snapshot_scope") or "target"
-	current_snapshot = _capture_plan_snapshot(doc, scope)
+	locked_state = _get_application_locked_state(doc)
+	current_snapshot = _capture_plan_snapshot(
+		doc,
+		scope,
+		locked_state=locked_state,
+	)
 	current_hash = _hash_payload(current_snapshot)
 	expected_hash = proposal.get("source_snapshot_hash") or doc.source_snapshot_hash
 	if not expected_hash or current_hash != expected_hash:
@@ -2239,6 +4234,18 @@ def _assert_snapshot_current(doc, proposal: dict[str, Any]) -> dict[str, Any]:
 			_("The plan changed after analysis. Re-analyze this request before confirmation or Apply."),
 			frappe.ValidationError,
 		)
+	if locked_state:
+		# Later consistency code uses Frappe's normal reads.  A routing hint may have
+		# opened an older RR snapshot before these current-read locks were acquired.
+		# Never use that snapshot as truth: require it to be byte-for-byte equivalent
+		# to the locked state before allowing any mutation.  This also closes the
+		# narrow changed-then-reverted race between the hint and the Customer lock.
+		repeatable_read_snapshot = _capture_plan_snapshot(doc, scope)
+		if _hash_payload(repeatable_read_snapshot) != current_hash:
+			frappe.throw(
+				_("The transaction snapshot differs from the locked current plan. Retry Apply in a new request.", context="Injection APS"),
+				frappe.ValidationError,
+			)
 	return current_snapshot
 
 

@@ -14,6 +14,48 @@ def _raise_validation(message, *args, **kwargs):
 
 
 class TestProductionSyncPolicies(unittest.TestCase):
+	def test_submit_validation_uses_same_scrap_warehouse_signal_as_reconciliation(self):
+		doc = execution_sync.frappe._dict(
+			{
+				"name": "STE-1",
+				"purpose": "Manufacture",
+				"work_order": "WO-1",
+				"custom_aps_output_type": "Scrap",
+				"items": [
+					execution_sync.frappe._dict(
+						{
+							"name": "SED-1",
+							"item_code": "FG-1",
+							"qty": 5,
+							"transfer_qty": 5,
+							"is_finished_item": 0,
+							"is_scrap_item": 0,
+							"t_warehouse": "SCRAP-WH",
+						}
+					)
+				],
+			}
+		)
+		work_order = execution_sync.frappe._dict(
+			production_item="FG-1",
+			scrap_warehouse="SCRAP-WH",
+			sales_order="SO-1",
+			sales_order_item="SOI-1",
+		)
+		with (
+			patch.object(execution_sync, "_get_eligible_work_order_runs", return_value=["RUN-1"]),
+			patch.object(execution_sync, "_get_run_segment_contexts", return_value=[]),
+			patch.object(execution_sync, "_get_source_candidates", return_value=([], "none")) as candidates,
+			patch.object(execution_sync.frappe.db, "sql", return_value=[]),
+			patch.object(execution_sync.frappe.db, "get_value", return_value=work_order),
+		):
+			execution_sync.validate_manufacture_before_submit(doc)
+
+		candidates.assert_called_once()
+		source = candidates.call_args.args[1]
+		self.assertEqual(source["output_type"], "Scrap")
+		self.assertEqual(source["source_qty"], 5)
+
 	def test_production_queue_job_id_is_unique_per_committed_source_event(self):
 		docs = [
 			execution_sync.frappe._dict(
@@ -223,6 +265,335 @@ class TestProductionSyncPolicies(unittest.TestCase):
 		query = sql.call_args.args[0]
 		self.assertIn("se.work_order in %(work_orders)s", query)
 		self.assertNotIn("ifnull(se.work_order_scheduling, '') = ''", query)
+
+	def test_delta_split_work_orders_are_both_in_production_source_scope(self):
+		contexts = [
+			{
+				"planning_run": "RUN-1",
+				"segment": "SEG-1",
+				"work_order": "WO-DELTA",
+				"scheduling_items": [
+					{"name": "SI-BASE", "work_order": "WO-BASE", "parent": "WOS-1"},
+					{"name": "SI-DELTA", "work_order": "WO-DELTA", "parent": "WOS-1"},
+				],
+			}
+		]
+		with (
+			patch.object(execution_sync, "_get_eligible_work_order_runs", return_value=["RUN-1"]),
+			patch.object(execution_sync.frappe.db, "has_column", return_value=True),
+			patch.object(execution_sync.frappe.db, "sql", return_value=[]) as sql,
+		):
+			execution_sync._get_formal_manufacture_sources(contexts)
+
+		params = sql.call_args.args[1]
+		self.assertEqual(params["work_orders"], ["WO-BASE", "WO-DELTA"])
+
+	def test_pre_wos_owned_work_order_is_attached_in_one_query_and_enters_source_scope(self):
+		contexts = [
+			{
+				"planning_run": "RUN-1",
+				"schedule_result": "RES-1",
+				"segment": "SEG-1",
+				"scheduling_items": [],
+			}
+		]
+		with patch.object(
+			execution_sync.frappe.db,
+			"sql",
+			return_value=[
+				execution_sync.frappe._dict(
+					name="WO-PRE-WOS", custom_aps_result_reference="RES-1"
+				)
+			],
+		) as sql:
+			execution_sync._attach_aps_owned_work_orders(contexts, "RUN-1")
+
+		self.assertEqual(contexts[0]["aps_owned_work_orders"], ["WO-PRE-WOS"])
+		self.assertEqual(sql.call_count, 1)
+		self.assertIn("wo.custom_aps_run = %(run_name)s", sql.call_args.args[0])
+		self.assertNotIn("wo.status", sql.call_args.args[0])
+
+		with (
+			patch.object(execution_sync, "_get_eligible_work_order_runs", return_value=["RUN-1"]),
+			patch.object(execution_sync.frappe.db, "has_column", return_value=True),
+			patch.object(execution_sync.frappe.db, "sql", return_value=[]) as source_sql,
+		):
+			execution_sync._get_formal_manufacture_sources(contexts)
+		self.assertEqual(source_sql.call_args.args[1]["work_orders"], ["WO-PRE-WOS"])
+
+	def test_stopped_pre_wos_work_order_keeps_submitted_history_but_rejects_new_output(self):
+		context = {
+			"planning_run": "RUN-1",
+			"schedule_result": "RES-1",
+			"segment": "SEG-1",
+			"planned_qty": 100,
+			"item_code": "FG-1",
+			"sales_order": "SO-1",
+			"sales_order_item": "SOI-1",
+			"aps_owned_work_orders": ["WO-STOPPED"],
+			"scheduling_items": [],
+			"start_time": datetime(2026, 8, 11, 8),
+		}
+		historical_source = {
+			"source_stock_entry": "SE-HISTORY",
+			"source_stock_entry_detail": "SED-HISTORY",
+			"source_docstatus": 1,
+			"source_qty": 20,
+			"source_posting_time": datetime(2026, 8, 11, 10),
+			"output_type": "Good",
+			"work_order_scheduling": None,
+			"direct_scheduling_item": None,
+			"direct_segment": None,
+			"modified": None,
+			"work_order": "WO-STOPPED",
+			"work_order_docstatus": 1,
+			"work_order_status": "Stopped",
+			"work_order_item": "FG-1",
+			"work_order_sales_order": "SO-1",
+			"work_order_sales_order_item": "SOI-1",
+			"work_order_aps_run": "RUN-1",
+			"work_order_aps_result": "RES-1",
+			"item_code": "FG-1",
+		}
+		with (
+			patch.object(execution_sync, "_get_eligible_work_order_runs", return_value=[]),
+			patch.object(execution_sync.frappe.db, "has_column", return_value=True),
+			patch.object(execution_sync.frappe.db, "sql", return_value=[]) as source_sql,
+		):
+			execution_sync._get_formal_manufacture_sources([context])
+		self.assertEqual(source_sql.call_args.args[1]["work_orders"], ["WO-STOPPED"])
+		self.assertIn("wo.status as work_order_status", source_sql.call_args.args[0])
+
+		with patch.object(execution_sync, "_get_eligible_work_order_runs", return_value=[]):
+			matching, method = execution_sync._get_source_candidates(
+				"RUN-1", historical_source, [context], {"SEG-1": context}, {}
+			)
+		self.assertEqual(matching, [context])
+		self.assertEqual(method, "Execution Detail FIFO")
+		with (
+			patch.object(execution_sync, "_get_eligible_work_order_runs", return_value=[]),
+			patch.object(execution_sync, "_get_customer_schedule_targets", return_value={}),
+		):
+			first = execution_sync._build_desired_production_allocations(
+				"RUN-1", [context], [historical_source]
+			)
+			second = execution_sync._build_desired_production_allocations(
+				"RUN-1", [context], [historical_source]
+			)
+		self.assertEqual(
+			[{key: value for key, value in row.items() if key != "last_synced_on"} for row in first],
+			[{key: value for key, value in row.items() if key != "last_synced_on"} for row in second],
+		)
+		self.assertEqual(sum(row["effective_qty"] for row in first), 20)
+
+		with (
+			patch.object(execution_sync, "_get_eligible_work_order_runs", return_value=[]),
+			patch.object(execution_sync, "_", side_effect=lambda message, **_kwargs: message),
+			patch.object(execution_sync.frappe, "throw", side_effect=_raise_validation),
+		):
+			with self.assertRaisesRegex(ValueError, "not uniquely linked"):
+				execution_sync._get_source_candidates(
+					"RUN-1",
+					{**historical_source, "source_docstatus": 0},
+					[context],
+					{"SEG-1": context},
+					{},
+				)
+			with self.assertRaisesRegex(ValueError, "not uniquely linked"):
+				execution_sync._get_source_candidates(
+					"RUN-1",
+					{**historical_source, "work_order_aps_result": "RES-OTHER"},
+					[context],
+					{"SEG-1": context},
+					{},
+				)
+
+	def test_delta_base_work_order_without_wos_still_matches_its_segment_context(self):
+		context = {
+			"planning_run": "RUN-1",
+			"segment": "SEG-1",
+			"work_order": "WO-DELTA",
+			"item_code": "FG-1",
+			"scheduling_items": [{"name": "SI-BASE", "work_order": "WO-BASE"}],
+		}
+		source = {
+			"work_order": "WO-BASE",
+			"item_code": "FG-1",
+			"work_order_item": "FG-1",
+		}
+		with patch.object(execution_sync, "_get_eligible_work_order_runs", return_value=["RUN-1"]):
+			matching, method = execution_sync._get_source_candidates(
+				"RUN-1",
+				source,
+				[context],
+				{"SEG-1": context},
+				{"SI-BASE": context},
+			)
+
+		self.assertEqual(matching, [context])
+		self.assertEqual(method, "Execution Detail FIFO")
+
+	def test_eligible_work_order_run_query_includes_split_scheduling_item_lineage(self):
+		with patch.object(execution_sync.frappe.db, "sql_list", return_value=["RUN-1"]) as sql_list:
+			self.assertEqual(execution_sync._get_eligible_work_order_runs("WO-BASE"), ["RUN-1"])
+
+		query, params = sql_list.call_args.args
+		self.assertIn("from `tabScheduling Item` si", query)
+		self.assertIn("si.custom_aps_segment_reference", query)
+		self.assertIn("si.custom_aps_result_reference = r.name", query)
+		self.assertIn("from `tabWork Order` wo", query)
+		self.assertIn("wo.custom_aps_run = r.planning_run", query)
+		self.assertIn("wo.production_item = r.item_code", query)
+		self.assertIn("wo.sales_order_item", query)
+		self.assertEqual(params, ("WO-BASE", "WO-BASE", "WO-BASE"))
+
+	def test_pre_wos_work_order_owner_fields_are_validated_and_allocatable(self):
+		context = {
+			"planning_run": "RUN-1",
+			"schedule_result": "RES-1",
+			"segment": "SEG-1",
+			"item_code": "FG-1",
+			"sales_order": "SO-1",
+			"sales_order_item": "SOI-1",
+			"aps_owned_work_orders": ["WO-1"],
+			"scheduling_items": [],
+			"start_time": datetime(2026, 8, 11, 8),
+		}
+		source = {
+			"work_order": "WO-1",
+			"work_order_item": "FG-1",
+			"work_order_sales_order": "SO-1",
+			"work_order_sales_order_item": "SOI-1",
+			"work_order_aps_run": "RUN-1",
+			"work_order_aps_result": "RES-1",
+			"item_code": "FG-1",
+		}
+		with patch.object(execution_sync, "_get_eligible_work_order_runs", return_value=["RUN-1"]):
+			matching, method = execution_sync._get_source_candidates(
+				"RUN-1", source, [context], {"SEG-1": context}, {}
+			)
+		self.assertEqual(matching, [context])
+		self.assertEqual(method, "Execution Detail FIFO")
+
+		with (
+			patch.object(execution_sync, "_", side_effect=lambda message, **_kwargs: message),
+			patch.object(execution_sync.frappe, "throw", side_effect=_raise_validation),
+		):
+				with self.assertRaisesRegex(ValueError, "APS owner Run/Result"):
+					execution_sync._validate_work_order_owner_context(
+						{**source, "work_order_aps_result": "RES-OTHER"}, context
+					)
+
+	def test_pre_wos_good_and_scrap_share_each_segment_total_fifo_quota(self):
+		contexts = [
+			{
+				"planning_run": "RUN-1",
+				"schedule_result": "RES-1",
+				"segment": f"SEG-{index}",
+				"planned_qty": 50,
+				"scheduling_items": [],
+				"start_time": datetime(2026, 8, 11, 8 + index),
+			}
+			for index in (1, 2)
+		]
+		base_source = {
+			"work_order": "WO-1",
+			"source_stock_entry": "SE-1",
+			"source_docstatus": 1,
+			"source_posting_time": datetime(2026, 8, 11, 10),
+			"work_order_scheduling": None,
+			"direct_scheduling_item": None,
+			"modified": None,
+		}
+		sources = [
+			{
+				**base_source,
+				"source_stock_entry_detail": "SED-GOOD",
+				"source_qty": 90,
+				"output_type": "Good",
+			},
+			{
+				**base_source,
+				"source_stock_entry_detail": "SED-SCRAP",
+				"source_qty": 10,
+				"output_type": "Scrap",
+			},
+		]
+		with (
+			patch.object(
+				execution_sync,
+				"_get_source_candidates",
+				return_value=(contexts, "Execution Detail FIFO"),
+			),
+			patch.object(execution_sync, "_get_customer_schedule_targets", return_value={}),
+		):
+			desired = execution_sync._build_desired_production_allocations(
+				"RUN-1", contexts, sources
+			)
+
+		by_segment = defaultdict(float)
+		for row in desired:
+			by_segment[row["segment"]] += row["effective_qty"]
+		self.assertEqual(dict(by_segment), {"SEG-1": 50, "SEG-2": 50})
+
+	def test_manufacture_before_submit_uses_work_order_owner_before_wos_exists(self):
+		context = {
+			"planning_run": "RUN-1",
+			"schedule_result": "RES-1",
+			"segment": "SEG-1",
+			"item_code": "FG-1",
+			"sales_order": "SO-1",
+			"sales_order_item": "SOI-1",
+			"aps_owned_work_orders": ["WO-1"],
+			"scheduling_items": [],
+			"start_time": datetime(2026, 8, 11, 8),
+		}
+		doc = execution_sync.frappe._dict(
+			name="STE-NEW",
+			purpose="Manufacture",
+			work_order="WO-1",
+			items=[
+				execution_sync.frappe._dict(
+					name="SED-1",
+					item_code="FG-1",
+					qty=10,
+					transfer_qty=10,
+					is_finished_item=1,
+					is_scrap_item=0,
+				)
+			],
+		)
+		work_order = execution_sync.frappe._dict(
+			production_item="FG-1",
+			scrap_warehouse="SCRAP-WH",
+			sales_order="SO-1",
+			sales_order_item="SOI-1",
+			custom_aps_run="RUN-1",
+			custom_aps_result_reference="RES-1",
+		)
+		with (
+			patch.object(execution_sync, "_get_eligible_work_order_runs", return_value=["RUN-1"]),
+			patch.object(execution_sync, "_get_run_segment_contexts", return_value=[context]),
+			patch.object(execution_sync.frappe.db, "get_value", return_value=work_order),
+			patch.object(execution_sync.frappe.db, "sql") as sql,
+		):
+			execution_sync.validate_manufacture_before_submit(doc)
+		self.assertIn("for update", sql.call_args.args[0].lower())
+
+	def test_pre_wos_work_order_owner_enters_affected_run_queue_scope(self):
+		stock_entry = execution_sync.frappe._dict(
+			name="STE-1",
+			work_order="WO-1",
+			custom_aps_segment_reference=None,
+			custom_aps_scheduling_item=None,
+			work_order_scheduling=None,
+		)
+		with (
+			patch.object(execution_sync.frappe, "get_all", return_value=[]),
+			patch.object(execution_sync, "_get_eligible_work_order_runs", return_value=["RUN-1"]),
+			patch.object(execution_sync.frappe.db, "exists", return_value=True),
+		):
+			self.assertEqual(execution_sync.get_affected_production_runs(stock_entry), ["RUN-1"])
 
 	def test_wrong_wos_on_unique_aps_work_order_is_an_error_not_a_silent_skip(self):
 		context = {

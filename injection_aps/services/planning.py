@@ -85,6 +85,7 @@ SCHEDULE_PROGRESS_RUN_STATUS_PRIORITY = {
 SCHEDULE_PROGRESS_RISK_ACTUAL_STATUSES = ("Delayed", "Slow Progress", "No Recent Update", "Overproduced")
 SCHEDULE_PROGRESS_RISK_RESULT_STATUSES = ("Attention", "Critical", "Blocked")
 EXISTING_WORK_ORDER_POLICIES = ("Include", "Exclude")
+INACTIVE_WORK_ORDER_STATUSES = ("Stopped", "Completed", "Closed", "Cancelled")
 MAX_SCHEDULE_FILE_BYTES = 15 * 1024 * 1024
 MAX_XLSX_UNCOMPRESSED_BYTES = 120 * 1024 * 1024
 MAX_XLSX_COMPRESSION_RATIO = 150
@@ -2917,6 +2918,13 @@ def rebuild_net_requirements(
 			available_stock_qty=available_stock_qty,
 			open_work_order_qty=open_work_order_qty,
 			existing_work_order_policy=existing_work_order_policy,
+			safety_stock_gap_qty=safety_gap,
+			minimum_batch_qty=minimum_batch_qty,
+			minimum_batch_coverage_qty=minimum_batch_coverage_qty,
+			net_requirement_qty=net_qty,
+			planning_qty=planning_qty,
+			new_batch_surplus_qty=new_batch_surplus,
+			is_safety_stock_group=is_safety_stock_group,
 		)
 
 		if coverage_owner:
@@ -2959,6 +2967,9 @@ def rebuild_net_requirements(
 					"values": doc_values,
 					"rows": list(rows),
 					"surplus_qty": new_batch_surplus,
+					"minimum_batch_coverage_qty": minimum_batch_coverage_qty,
+					"new_batch_surplus_qty": new_batch_surplus,
+					"is_safety_stock_group": is_safety_stock_group,
 					"base_reason_text": reason_text,
 				}
 			)
@@ -2981,6 +2992,13 @@ def _build_net_requirement_lineage_snapshot(
 	available_stock_qty: float | None = None,
 	open_work_order_qty: float | None = None,
 	existing_work_order_policy: str | None = None,
+	safety_stock_gap_qty: float | None = None,
+	minimum_batch_qty: float | None = None,
+	minimum_batch_coverage_qty: float | None = None,
+	net_requirement_qty: float | None = None,
+	planning_qty: float | None = None,
+	new_batch_surplus_qty: float | None = None,
+	is_safety_stock_group: bool | int = False,
 ) -> tuple[str, str]:
 	"""Freeze demand sources and fulfillment offsets at net-requirement creation."""
 	source_rows = []
@@ -3048,6 +3066,7 @@ def _build_net_requirement_lineage_snapshot(
 				"customer_schedule": target.parent,
 				"customer_schedule_item": target.name,
 				"sales_order": target.sales_order,
+				"sales_order_item": row.get("sales_order_item"),
 				"item_code": target.item_code,
 				"schedule_date": str(target.schedule_date or ""),
 				"source_open_qty": max(flt(row.get("qty")), 0),
@@ -3085,15 +3104,30 @@ def _build_net_requirement_lineage_snapshot(
 		json.dumps(source_rows, ensure_ascii=True, sort_keys=True, separators=(",", ":"), default=str),
 		json.dumps(
 			{
-				"version": 3,
+				"version": 4,
 				# Net Requirements are rebuilt and old rows are intentionally deleted.
 				# Persist the stock-coverage evidence with the Result lineage so an
 				# already Applied run keeps its finite-stock claim after that rebuild.
 				"net_requirement": {
+					"formula_version": 1,
 					"demand_qty": max(flt(demand_qty), 0),
 					"available_stock_qty": max(flt(available_stock_qty), 0),
 					"open_work_order_qty": max(flt(open_work_order_qty), 0),
 					"existing_work_order_policy": existing_work_order_policy or "",
+					"safety_stock_gap_qty": max(flt(safety_stock_gap_qty), 0),
+					"minimum_batch_qty": max(flt(minimum_batch_qty), 0),
+					"minimum_batch_coverage_qty": max(flt(minimum_batch_coverage_qty), 0),
+					"base_residual_qty": max(
+						flt(demand_qty)
+						- flt(available_stock_qty)
+						- flt(open_work_order_qty)
+						+ flt(safety_stock_gap_qty),
+						0,
+					),
+					"net_requirement_qty": max(flt(net_requirement_qty), 0),
+					"planning_qty": max(flt(planning_qty), 0),
+					"new_batch_surplus_qty": max(flt(new_batch_surplus_qty), 0),
+					"is_safety_stock_group": cint(is_safety_stock_group),
 				},
 				"targets": fulfillment_targets,
 				"sales_order_items": fulfillment_sales_order_items,
@@ -3119,6 +3153,9 @@ def _extend_minimum_batch_owner_lineage(
 	)
 	owner_values["demand_qty"] = flt(owner_values.get("demand_qty")) + covered_qty
 	owner["covered_later_qty"] = flt(owner.get("covered_later_qty")) + covered_qty
+	owner["minimum_batch_coverage_qty"] = (
+		flt(owner.get("minimum_batch_coverage_qty")) + covered_qty
+	)
 	owner_values["reason_text"] = "{0} {1}".format(
 		owner.get("base_reason_text") or owner_values.get("reason_text") or "",
 		_(
@@ -3132,6 +3169,13 @@ def _extend_minimum_batch_owner_lineage(
 		available_stock_qty=owner_values.get("available_stock_qty"),
 		open_work_order_qty=owner_values.get("open_work_order_qty"),
 		existing_work_order_policy=owner_values.get("existing_work_order_policy"),
+		safety_stock_gap_qty=owner_values.get("safety_stock_gap_qty"),
+		minimum_batch_qty=owner_values.get("minimum_batch_qty"),
+		minimum_batch_coverage_qty=owner.get("minimum_batch_coverage_qty"),
+		net_requirement_qty=owner_values.get("net_requirement_qty"),
+		planning_qty=owner_values.get("planning_qty"),
+		new_batch_surplus_qty=owner.get("new_batch_surplus_qty"),
+		is_safety_stock_group=owner.get("is_safety_stock_group"),
 	)
 	owner_values["demand_source_snapshot_json"] = source_snapshot_json
 	owner_values["fulfillment_baseline_json"] = fulfillment_baseline_json
@@ -3540,11 +3584,14 @@ def run_planning_run(
 
 
 def _net_requirement_requires_result(row: dict[str, Any] | Any) -> bool:
-	"""Keep production, finite-stock and exact existing-WO coverage in a run."""
+	"""Keep every finite resource or lot-coverage claim auditable in a run."""
+	baseline = _parse_json_object(row.get("fulfillment_baseline_json"), {})
+	formula_evidence = baseline.get("net_requirement") if isinstance(baseline, dict) else {}
 	return (
 		flt(row.get("net_requirement_qty")) > QTY_TOLERANCE
 		or flt(row.get("available_stock_qty")) > QTY_TOLERANCE
 		or flt(row.get("open_work_order_qty")) > QTY_TOLERANCE
+		or flt((formula_evidence or {}).get("minimum_batch_coverage_qty")) > QTY_TOLERANCE
 	)
 
 
@@ -3984,7 +4031,7 @@ def _get_open_work_orders_by_result(result_names) -> dict[str, list[str]]:
 		filters={
 			"custom_aps_result_reference": ("in", result_names),
 			"docstatus": 1,
-			"status": ("not in", ["Completed", "Closed", "Cancelled"]),
+			"status": ("not in", list(INACTIVE_WORK_ORDER_STATUSES)),
 		},
 		fields=["name", "custom_aps_result_reference"],
 		order_by="name asc",
@@ -4053,11 +4100,29 @@ def _prepare_work_order_apply_state(batch, approved_rows: list[Any]) -> dict[str
 		name: _get_work_order_reconciliation_snapshot(name)
 		for name in work_order_names
 	}
+	for row in approved_rows:
+		_assert_destructive_work_order_action_permission(row)
 	return {
 		"open_by_result": locked_open_by_result,
 		"work_order_snapshots": work_order_snapshots,
 		"exact_sales_order_lineage_locked": True,
 	}
+
+
+def _assert_destructive_work_order_action_permission(row) -> None:
+	action = row.get("action") or ""
+	work_order = row.get("existing_work_order")
+	if not work_order or action not in {"Cancel Unstarted", "Close Residual"}:
+		return
+	permission_type = "cancel" if action == "Cancel Unstarted" else "write"
+	if frappe.has_permission("Work Order", permission_type, doc=work_order):
+		return
+	frappe.throw(
+		_("You need {0} permission on Work Order {1} before applying APS action {2}.", context="Injection APS").format(
+			permission_type, work_order, action
+		),
+		frappe.PermissionError,
+	)
 
 
 def _validate_work_order_proposal_row_current(
@@ -4191,11 +4256,7 @@ def _validate_work_order_proposal_row_current(
 			),
 			frappe.ValidationError,
 		)
-	if cint(snapshot.get("docstatus")) != 1 or (snapshot.get("status") or "") in {
-		"Completed",
-		"Closed",
-		"Cancelled",
-	}:
+	if cint(snapshot.get("docstatus")) != 1 or (snapshot.get("status") or "") in INACTIVE_WORK_ORDER_STATUSES:
 		frappe.throw(
 			_("Work Order {0} is no longer open. Regenerate the proposal batch.").format(work_order_name),
 			frappe.ValidationError,
@@ -4291,11 +4352,7 @@ def _validate_orphan_work_order_proposal_row(*, row, run_doc, apply_state: dict[
 			),
 			frappe.ValidationError,
 		)
-	if cint(snapshot.get("docstatus")) != 1 or (snapshot.get("status") or "") in {
-		"Completed",
-		"Closed",
-		"Cancelled",
-	}:
+	if cint(snapshot.get("docstatus")) != 1 or (snapshot.get("status") or "") in INACTIVE_WORK_ORDER_STATUSES:
 		frappe.throw(
 			_("Residual Work Order {0} is no longer open. Regenerate the proposal batch.").format(
 				work_order_name
@@ -4929,6 +4986,239 @@ def _build_shift_schedule_release_context(
 	}
 
 
+def _get_shift_release_work_orders(proposal_row) -> list[str]:
+	"""Return every execution container that owns this Result quantity.
+
+	A Create Delta row has two containers by design: the reviewed existing WO and
+	the newly created delta WO.  Collapsing that row to ``target_work_order`` made
+	the later WOS proposal put the complete Result on the smaller delta container.
+	"""
+	if proposal_row.action == "Create Delta":
+		names = [proposal_row.existing_work_order, proposal_row.target_work_order]
+	else:
+		names = [proposal_row.target_work_order or proposal_row.existing_work_order]
+	result = list(dict.fromkeys(name for name in names if name))
+	if proposal_row.action == "Create Delta" and len(result) != 2:
+		frappe.throw(
+			_("Create Delta result {0} must retain both the existing and delta Work Orders.").format(
+				proposal_row.result_reference or "-"
+			),
+			frappe.ValidationError,
+		)
+	return result
+
+
+def _scheduling_row_is_in_release_scope(
+	row: dict[str, Any],
+	*,
+	release_from,
+	release_to,
+	shift_type: str | None,
+) -> bool:
+	posting_date = row.get("posting_date")
+	if not posting_date and (row.get("planned_start_date") or row.get("from_time")):
+		posting_date = getdate(row.get("from_time") or row.get("planned_start_date"))
+	if not posting_date:
+		return False
+	posting_date = getdate(posting_date)
+	if release_from and posting_date < getdate(release_from):
+		return False
+	if release_to and posting_date > getdate(release_to):
+		return False
+	return not shift_type or (row.get("shift_type") or "") == shift_type
+
+
+def _shift_slice_is_in_release_scope(
+	row: dict[str, Any],
+	*,
+	release_from,
+	release_to,
+	shift_type: str | None,
+) -> bool:
+	posting_date = getdate(row.get("posting_date") or row.get("start_time"))
+	if release_from and posting_date < getdate(release_from):
+		return False
+	if release_to and posting_date > getdate(release_to):
+		return False
+	row_shift = row.get("shift_type") or _determine_shift_type(row.get("start_time"))
+	return not shift_type or row_shift == shift_type
+
+
+def _consume_committed_shift_slice_qty(
+	shift_slice: dict[str, Any],
+	committed_qty: float,
+) -> tuple[dict[str, Any] | None, float]:
+	"""Remove already produced/frozen quantity once, in deterministic time order."""
+	planned_qty = max(flt(shift_slice.get("planned_qty")), 0)
+	committed_qty = max(flt(committed_qty), 0)
+	consumed_qty = min(planned_qty, committed_qty)
+	remaining_committed = max(committed_qty - consumed_qty, 0)
+	if consumed_qty >= planned_qty - QTY_TOLERANCE:
+		return None, remaining_committed
+	if consumed_qty <= QTY_TOLERANCE:
+		return dict(shift_slice), remaining_committed
+	result = dict(shift_slice)
+	start_time = get_datetime(result.get("start_time"))
+	end_time = get_datetime(result.get("end_time"))
+	if start_time and end_time and end_time > start_time:
+		fraction = consumed_qty / planned_qty
+		result["start_time"] = start_time + (end_time - start_time) * fraction
+	result["planned_qty"] = planned_qty - consumed_qty
+	return result, remaining_committed
+
+
+def _consume_segment_committed_quantities(
+	shift_slices: list[dict[str, Any]],
+	fixed_rows: list[dict[str, Any]],
+	actual_completed_qty: float,
+) -> list[dict[str, Any]]:
+	"""Apply formal commitments to their own shift before consuming FIFO.
+
+	This matters when one APS segment crosses a release boundary.  A future frozen
+	WOS row must not accidentally consume today's slice merely because both rows
+	share the same segment reference.
+	"""
+	if not shift_slices:
+		return []
+	consumed = [0.0 for _slice in shift_slices]
+
+	def consume(quantity: float, preferred_indexes: list[int]) -> None:
+		remaining = max(flt(quantity), 0)
+		indexes = preferred_indexes + [
+			index for index in range(len(shift_slices)) if index not in preferred_indexes
+		]
+		for index in indexes:
+			available = max(flt(shift_slices[index].get("planned_qty")) - consumed[index], 0)
+			allocated = min(remaining, available)
+			consumed[index] += allocated
+			remaining = max(remaining - allocated, 0)
+			if remaining <= QTY_TOLERANCE:
+				break
+
+	proven_fixed_actual_qty = 0.0
+	for existing in sorted(
+		fixed_rows,
+		key=lambda value: (
+			str(value.get("posting_date") or value.get("planned_start_date") or ""),
+			str(value.get("planned_start_date") or ""),
+			value.get("name") or "",
+		),
+	):
+		quantity = max(flt(existing.get("scheduling_qty")), 0)
+		# A segment-level actual can overlap a fixed WOS row only when that exact
+		# Scheduling Item carries completed/defect evidence.  Merely having some
+		# fixed quantity on the same segment is not proof: WO-level direct reporting
+		# can belong to a different (current) slice.
+		proven_fixed_actual_qty += min(
+			quantity,
+			max(flt(existing.get("completed_qty")), 0)
+			+ max(flt(existing.get("defect_qty")), 0),
+		)
+		posting_date = getdate(existing.get("posting_date") or existing.get("planned_start_date"))
+		row_shift = existing.get("shift_type") or (
+			_determine_shift_type(existing.get("planned_start_date"))
+			if existing.get("planned_start_date")
+			else ""
+		)
+		preferred = [
+			index
+			for index, shift_slice in enumerate(shift_slices)
+			if getdate(shift_slice.get("posting_date") or shift_slice.get("start_time")) == posting_date
+			and (shift_slice.get("shift_type") or _determine_shift_type(shift_slice.get("start_time")))
+			== row_shift
+		]
+		consume(quantity, preferred)
+	# Deduplicate only the actual quantity proven on those exact fixed rows. Any
+	# WO-level/direct actual without that evidence is an additional commitment.
+	proven_fixed_actual_qty = min(
+		max(flt(actual_completed_qty), 0),
+		proven_fixed_actual_qty,
+	)
+	consume(
+		max(flt(actual_completed_qty) - proven_fixed_actual_qty, 0),
+		list(range(len(shift_slices))),
+	)
+
+	result = []
+	for shift_slice, consumed_qty in zip(shift_slices, consumed):
+		remaining_slice, _unused = _consume_committed_shift_slice_qty(shift_slice, consumed_qty)
+		if remaining_slice:
+			result.append(remaining_slice)
+	return result
+
+
+def _preferred_work_orders_for_shift_slice(
+	segment: dict[str, Any],
+	work_order_names: list[str],
+	scope_rows: dict[str, list[dict[str, Any]]],
+	matched_existing_rows: dict[str, set[str]],
+) -> list[str]:
+	target_date = getdate(segment.get("posting_date") or segment.get("start_time"))
+	target_shift = segment.get("shift_type") or _determine_shift_type(segment.get("start_time"))
+	preferred = []
+	for work_order_name in work_order_names:
+		if any(
+			not existing.get("is_frozen")
+			and existing.get("name") not in matched_existing_rows[work_order_name]
+			and existing.get("custom_aps_segment_reference") == segment.get("name")
+			and getdate(existing.get("posting_date") or existing.get("planned_start_date")) == target_date
+			and (existing.get("shift_type") or "") == target_shift
+			for existing in scope_rows.get(work_order_name) or []
+		):
+			preferred.append(work_order_name)
+	return preferred + [name for name in work_order_names if name not in preferred]
+
+
+def _allocate_shift_slice_to_work_orders(
+	segment: dict[str, Any],
+	work_order_names: list[str],
+	remaining_capacity: dict[str, float],
+) -> list[tuple[str, dict[str, Any]]]:
+	"""Split one physical slice across explicit WOs without losing quantity."""
+	planned_qty = max(flt(segment.get("planned_qty")), 0)
+	remaining_qty = planned_qty
+	quantities: list[tuple[str, float]] = []
+	for work_order_name in work_order_names:
+		available_qty = max(flt(remaining_capacity.get(work_order_name)), 0)
+		allocated_qty = min(remaining_qty, available_qty)
+		if allocated_qty <= QTY_TOLERANCE:
+			continue
+		quantities.append((work_order_name, allocated_qty))
+		remaining_capacity[work_order_name] = max(available_qty - allocated_qty, 0)
+		remaining_qty = max(remaining_qty - allocated_qty, 0)
+		if remaining_qty <= QTY_TOLERANCE:
+			break
+	if remaining_qty > QTY_TOLERANCE:
+		frappe.throw(
+			_("APS segment {0} has {1} unscheduled quantity after applying the exact Work Order boundaries. Regenerate the Work Order proposal.", context="Injection APS").format(
+				segment.get("name") or "-",
+				frappe.format(remaining_qty, {"fieldtype": "Float"}),
+			),
+			frappe.ValidationError,
+		)
+	if not quantities:
+		return []
+	start_time = get_datetime(segment.get("start_time")) if segment.get("start_time") else None
+	end_time = get_datetime(segment.get("end_time")) if segment.get("end_time") else None
+	allocated = []
+	cumulative_qty = 0.0
+	for index, (work_order_name, allocated_qty) in enumerate(quantities, start=1):
+		piece = dict(segment)
+		piece["planned_qty"] = allocated_qty
+		if start_time and end_time and end_time > start_time and planned_qty > QTY_TOLERANCE:
+			piece["start_time"] = start_time + (end_time - start_time) * (cumulative_qty / planned_qty)
+			cumulative_qty += allocated_qty
+			piece["end_time"] = (
+				end_time
+				if index == len(quantities)
+				else start_time + (end_time - start_time) * (cumulative_qty / planned_qty)
+			)
+		piece["work_order_split_index"] = index
+		piece["work_order_split_count"] = len(quantities)
+		allocated.append((work_order_name, piece))
+	return allocated
+
+
 def _build_shift_schedule_proposal_items(
 	wo_batch,
 	release_from,
@@ -4939,106 +5229,195 @@ def _build_shift_schedule_proposal_items(
 	for row in wo_batch.items:
 		if row.review_status != "Applied":
 			continue
-		work_order_name = row.target_work_order or row.existing_work_order
-		if not work_order_name:
+		work_order_names = _get_shift_release_work_orders(row)
+		if not work_order_names:
 			continue
-		work_order_snapshot = _get_work_order_reconciliation_snapshot(work_order_name)
-		work_order_state_token = _work_order_proposal_state_token(work_order_snapshot)
+		snapshots = {
+			name: _get_work_order_reconciliation_snapshot(name)
+			for name in work_order_names
+		}
+		state_tokens = {
+			name: _work_order_proposal_state_token(snapshots.get(name))
+			for name in work_order_names
+		}
+		scope_rows: dict[str, list[dict[str, Any]]] = {}
+		matched_existing_rows: dict[str, set[str]] = defaultdict(set)
+		remaining_capacity: dict[str, float] = {}
+		fixed_rows_by_segment: dict[str, list[dict[str, Any]]] = defaultdict(list)
+		for work_order_name in work_order_names:
+			snapshot = snapshots.get(work_order_name)
+			if not snapshot:
+				frappe.throw(
+					_("Work Order {0} is no longer available for shift proposal generation.").format(
+						work_order_name
+					),
+					frappe.ValidationError,
+				)
+			all_rows = [dict(existing) for existing in snapshot.get("scheduling_rows") or []]
+			current_scope_rows = [
+				existing
+				for existing in all_rows
+				if _scheduling_row_is_in_release_scope(
+					existing,
+					release_from=release_from,
+					release_to=release_to,
+					shift_type=shift_type,
+				)
+			]
+			for existing in current_scope_rows:
+				existing["is_frozen"] = 1 if _is_frozen_scheduling_row(existing) else 0
+			scope_rows[work_order_name] = current_scope_rows
+			fixed_rows = [
+				existing
+				for existing in all_rows
+				if _is_frozen_scheduling_row(existing)
+				or not _scheduling_row_is_in_release_scope(
+					existing,
+					release_from=release_from,
+					release_to=release_to,
+					shift_type=shift_type,
+				)
+			]
+			fixed_scheduling_qty = sum(max(flt(existing.get("scheduling_qty")), 0) for existing in fixed_rows)
+			# ERPNext Work Order.produced_qty is good finished output.  Only the exact
+			# Scheduling Item completed_qty can prove overlap; defect_qty consumes a
+			# segment but must never hide separate good production at WO level.
+			proven_fixed_actual_qty = min(
+				max(flt(snapshot.get("produced_qty")), 0),
+				sum(
+					min(
+						max(flt(existing.get("scheduling_qty")), 0),
+						max(flt(existing.get("completed_qty")), 0),
+					)
+					for existing in fixed_rows
+				),
+			)
+			direct_produced_qty = max(
+				max(flt(snapshot.get("produced_qty")), 0) - proven_fixed_actual_qty,
+				0,
+			)
+			remaining_capacity[work_order_name] = max(
+				flt(snapshot.get("qty"))
+				- fixed_scheduling_qty
+				- direct_produced_qty,
+				0,
+			)
+			for existing in fixed_rows:
+				segment_name = existing.get("custom_aps_segment_reference")
+				if segment_name:
+					fixed_rows_by_segment[segment_name].append(existing)
+
 		current_segments = []
-		frozen_qty_by_segment: dict[str, float] = defaultdict(float)
-		for existing_row in _get_formal_scheduling_reconciliation_rows(work_order_name, release_to=release_to):
-			if existing_row.get("is_frozen") and existing_row.get("custom_aps_segment_reference"):
-				frozen_qty_by_segment[existing_row.get("custom_aps_segment_reference")] += flt(existing_row.get("scheduling_qty"))
-		if row.result_reference and frappe.db.exists("APS Schedule Result", row.result_reference):
-			for segment in _get_primary_segments_for_result(row.result_reference):
-				if getdate(segment.get("end_time") or segment.get("start_time")) < release_from or getdate(segment.get("start_time")) > release_to:
-					continue
-				if frozen_qty_by_segment.get(segment.get("name"), 0) >= flt(segment.get("planned_qty")) - 0.0001:
-					continue
-				segment = dict(segment)
+		if (
+			row.action not in ("Cancel Unstarted", "Close Residual")
+			and row.result_reference
+			and frappe.db.exists("APS Schedule Result", row.result_reference)
+		):
+			for source_segment in _get_primary_segments_for_result(row.result_reference):
+				segment = dict(source_segment)
 				segment["item_code"] = row.item_code
 				segment["proposal_state_token"] = _segment_proposal_state_token(segment)
-				current_segments.extend(
-					_split_segment_into_shift_slices(
-						segment,
+				shift_slices = _consume_segment_committed_quantities(
+					_split_segment_into_shift_slices(segment),
+					fixed_rows_by_segment.get(segment.get("name")) or [],
+					max(flt(segment.get("actual_completed_qty")), 0),
+				)
+				for shift_slice in shift_slices:
+					if not _shift_slice_is_in_release_scope(
+						shift_slice,
 						release_from=release_from,
 						release_to=release_to,
-					)
-				)
+						shift_type=shift_type,
+					):
+						continue
+					current_segments.append(shift_slice)
 
-		matched_existing_rows = set()
+		visible_qty = sum(flt(segment.get("planned_qty")) for segment in current_segments)
+		allocated_qty = 0.0
 		for segment in current_segments:
-			segment_shift_type = segment.get("shift_type") or _determine_shift_type(segment.get("start_time"))
-			if shift_type and segment_shift_type != shift_type:
-				continue
-			existing_row = _find_matching_scheduling_row(
-				work_order_name=work_order_name,
-				segment=segment,
-				matched_row_names=matched_existing_rows,
-				release_from=release_from,
-				release_to=release_to,
+			preferred_work_orders = _preferred_work_orders_for_shift_slice(
+				segment,
+				work_order_names,
+				scope_rows,
+				matched_existing_rows,
 			)
-			if existing_row:
-				matched_existing_rows.add(existing_row.get("name"))
-			action = _classify_shift_schedule_action(existing_row, segment)
-			items.append(
-				{
-					"result_reference": row.result_reference,
-					"segment_reference": segment.get("name"),
-					"action": action,
-					"item_code": row.item_code,
-					"work_order": work_order_name,
-					"plant_floor": segment.get("plant_floor"),
-					"posting_date": segment.get("posting_date") or getdate(segment.get("start_time")),
-					"shift_type": segment_shift_type,
-					"workstation": segment.get("workstation"),
-					"planned_start_time": segment.get("start_time"),
-					"planned_end_time": segment.get("end_time"),
-					"planned_qty": segment.get("planned_qty"),
-					"existing_scheduling": existing_row.get("work_order_scheduling") if existing_row else None,
-					"existing_scheduling_item": existing_row.get("name") if existing_row else None,
-					"work_order_state_token": work_order_state_token,
-					"segment_state_token": segment.get("proposal_state_token") or "",
-					"scheduling_state_token": _scheduling_row_proposal_state_token(existing_row),
-					"review_status": "Pending",
-					"review_note": (
-						_("Formal scheduling will be reconciled as daily shift slices for this segment.")
-						if cint(segment.get("slice_count")) > 1
-						else _("Formal scheduling will be reconciled in place for this segment.")
-					),
-				}
+			allocations = _allocate_shift_slice_to_work_orders(
+				segment,
+				preferred_work_orders,
+				remaining_capacity,
 			)
-
-		for existing_row in _get_formal_scheduling_reconciliation_rows(work_order_name, release_from=release_from, release_to=release_to):
-			if existing_row.get("name") in matched_existing_rows or existing_row.get("is_frozen"):
-				continue
-			if shift_type and (existing_row.get("shift_type") or "") != shift_type:
-				continue
-			if row.action in ("Cancel Unstarted", "Close Residual") or existing_row.get("custom_aps_segment_reference"):
-				segment_snapshot = _get_segment_proposal_snapshot(existing_row.get("custom_aps_segment_reference"))
+			for work_order_name, allocated_segment in allocations:
+				existing_row = _find_matching_scheduling_row(
+					work_order_name=work_order_name,
+					segment=allocated_segment,
+					matched_row_names=matched_existing_rows[work_order_name],
+					release_from=release_from,
+					release_to=release_to,
+				)
+				if existing_row:
+					matched_existing_rows[work_order_name].add(existing_row.get("name"))
+				action = _classify_shift_schedule_action(existing_row, allocated_segment)
+				allocated_qty += flt(allocated_segment.get("planned_qty"))
 				items.append(
 					{
-						"result_reference": row.result_reference or existing_row.get("custom_aps_result_reference"),
-						"segment_reference": existing_row.get("custom_aps_segment_reference") or f"cancel::{existing_row.get('name')}",
-						"action": "Cancel Existing",
+						"result_reference": row.result_reference,
+						"segment_reference": allocated_segment.get("name"),
+						"action": action,
 						"item_code": row.item_code,
 						"work_order": work_order_name,
-						"plant_floor": existing_row.get("plant_floor"),
-						"posting_date": existing_row.get("posting_date"),
-						"shift_type": existing_row.get("shift_type"),
-						"workstation": existing_row.get("workstation"),
-						"planned_start_time": existing_row.get("planned_start_date"),
-						"planned_end_time": existing_row.get("planned_end_date"),
-						"planned_qty": existing_row.get("scheduling_qty"),
-						"existing_scheduling": existing_row.get("work_order_scheduling"),
-						"existing_scheduling_item": existing_row.get("name"),
-						"work_order_state_token": work_order_state_token,
-						"segment_state_token": _segment_proposal_state_token(segment_snapshot),
+						"plant_floor": allocated_segment.get("plant_floor"),
+						"posting_date": allocated_segment.get("posting_date") or getdate(allocated_segment.get("start_time")),
+						"shift_type": allocated_segment.get("shift_type") or _determine_shift_type(allocated_segment.get("start_time")),
+						"workstation": allocated_segment.get("workstation"),
+						"planned_start_time": allocated_segment.get("start_time"),
+						"planned_end_time": allocated_segment.get("end_time"),
+						"planned_qty": allocated_segment.get("planned_qty"),
+						"existing_scheduling": existing_row.get("work_order_scheduling") if existing_row else None,
+						"existing_scheduling_item": existing_row.get("name") if existing_row else None,
+						"work_order_state_token": state_tokens.get(work_order_name) or "",
+						"segment_state_token": allocated_segment.get("proposal_state_token") or "",
 						"scheduling_state_token": _scheduling_row_proposal_state_token(existing_row),
 						"review_status": "Pending",
-						"review_note": _("Unexecuted formal scheduling row will be cancelled or removed."),
+						"review_note": _("APS allocated this segment quantity to Work Order {0}; split Work Orders remain quantity-conserving and separately auditable.", context="Injection APS").format(work_order_name),
 					}
 				)
+		if abs(allocated_qty - visible_qty) > QTY_TOLERANCE:
+			frappe.throw(
+				_("Shift proposal quantities for APS result {0} do not conserve the visible segment total.").format(
+					row.result_reference or "-"
+				),
+				frappe.ValidationError,
+			)
+
+		for work_order_name in work_order_names:
+			for existing_row in scope_rows.get(work_order_name) or []:
+				if existing_row.get("name") in matched_existing_rows[work_order_name] or existing_row.get("is_frozen"):
+					continue
+				if row.action in ("Cancel Unstarted", "Close Residual") or existing_row.get("custom_aps_segment_reference"):
+					segment_snapshot = _get_segment_proposal_snapshot(existing_row.get("custom_aps_segment_reference"))
+					items.append(
+						{
+							"result_reference": row.result_reference or existing_row.get("custom_aps_result_reference"),
+							"segment_reference": existing_row.get("custom_aps_segment_reference") or f"cancel::{existing_row.get('name')}",
+							"action": "Cancel Existing",
+							"item_code": row.item_code,
+							"work_order": work_order_name,
+							"plant_floor": existing_row.get("plant_floor"),
+							"posting_date": existing_row.get("posting_date"),
+							"shift_type": existing_row.get("shift_type"),
+							"workstation": existing_row.get("workstation"),
+							"planned_start_time": existing_row.get("planned_start_date"),
+							"planned_end_time": existing_row.get("planned_end_date"),
+							"planned_qty": existing_row.get("scheduling_qty"),
+							"existing_scheduling": existing_row.get("work_order_scheduling"),
+							"existing_scheduling_item": existing_row.get("name"),
+							"work_order_state_token": state_tokens.get(work_order_name) or "",
+							"segment_state_token": _segment_proposal_state_token(segment_snapshot),
+							"scheduling_state_token": _scheduling_row_proposal_state_token(existing_row),
+							"review_status": "Pending",
+							"review_note": _("Unexecuted formal scheduling row will be cancelled or removed."),
+						}
+					)
 	return items
 
 
@@ -5130,7 +5509,17 @@ def _validate_shift_proposal_work_order_totals(batch, approved_rows: list[Any]):
 		if row.work_order:
 			by_work_order[row.work_order].append(row)
 	for work_order_name, rows in by_work_order.items():
-		work_order_qty = flt(frappe.db.get_value("Work Order", work_order_name, "qty"))
+		work_order = frappe.db.get_value(
+			"Work Order",
+			work_order_name,
+			["qty", "produced_qty"],
+			as_dict=True,
+		) or {}
+		if not hasattr(work_order, "get"):
+			# Keep the guard compatible with lightweight/custom database adapters that
+			# return the first requested value even when ``as_dict`` is supplied.
+			work_order = {"qty": work_order, "produced_qty": 0}
+		work_order_qty = flt(work_order.get("qty"))
 		if work_order_qty <= 0:
 			continue
 		touched_items = {
@@ -5138,16 +5527,36 @@ def _validate_shift_proposal_work_order_totals(batch, approved_rows: list[Any]):
 			for row in rows
 			if row.existing_scheduling_item
 		}
-		remaining_existing_qty = 0.0
+		remaining_existing_rows = []
 		for existing in _get_formal_scheduling_reconciliation_rows(work_order_name):
 			if existing.get("name") in touched_items and not _is_frozen_scheduling_row(existing):
 				continue
-			remaining_existing_qty += flt(existing.get("scheduling_qty"))
+			remaining_existing_rows.append(existing)
+		remaining_existing_qty = sum(
+			max(flt(existing.get("scheduling_qty")), 0)
+			for existing in remaining_existing_rows
+		)
+		# Same semantic boundary as proposal generation: produced_qty can overlap
+		# completed_qty on the same retained WOS item, never its defect quantity.
+		proven_existing_actual_qty = min(
+			max(flt(work_order.get("produced_qty")), 0),
+			sum(
+				min(
+					max(flt(existing.get("scheduling_qty")), 0),
+					max(flt(existing.get("completed_qty")), 0),
+				)
+				for existing in remaining_existing_rows
+			),
+		)
+		direct_produced_qty = max(
+			max(flt(work_order.get("produced_qty")), 0) - proven_existing_actual_qty,
+			0,
+		)
 		approved_qty = sum(flt(row.planned_qty) for row in rows if row.action != "Cancel Existing")
-		total_qty = remaining_existing_qty + approved_qty
+		total_qty = remaining_existing_qty + approved_qty + direct_produced_qty
 		if total_qty > work_order_qty + 0.0001:
 			frappe.throw(
-				_("WOS proposals for Work Order {0} would schedule {1}, exceeding Work Order qty {2}.").format(
+				_("WOS proposals and non-overlapping production for Work Order {0} would commit {1}, exceeding Work Order qty {2}.", context="Injection APS").format(
 					work_order_name,
 					frappe.format(total_qty, {"fieldtype": "Float"}),
 					frappe.format(work_order_qty, {"fieldtype": "Float"}),
@@ -5265,11 +5674,10 @@ def _validate_shift_proposal_row_current(*, row, batch, apply_state: dict[str, A
 			),
 			frappe.ValidationError,
 		)
-	if cint(work_order_snapshot.get("docstatus")) != 1 or (work_order_snapshot.get("status") or "") in {
-		"Completed",
-		"Closed",
-		"Cancelled",
-	}:
+	if (
+		cint(work_order_snapshot.get("docstatus")) != 1
+		or (work_order_snapshot.get("status") or "") in INACTIVE_WORK_ORDER_STATUSES
+	):
 		frappe.throw(
 			_("Work Order {0} is no longer open for shift scheduling. Regenerate the batch.").format(
 				row.work_order or "-"
@@ -6315,16 +6723,16 @@ def _get_customer_schedule_progress_result_targets(result, item_code: str) -> li
 			"customer": result.get("customer") or "",
 			"sales_order": row.get("sales_order") or result.get("sales_order") or "",
 			"item_code": item_code,
-			"schedule_date": getdate(row.get("schedule_date")),
-			"remaining_qty": max(flt(row.get("source_open_qty")), 0),
+			"schedule_date": getdate(row.get("accepted_schedule_date") or row.get("schedule_date")),
+			"remaining_qty": _get_frozen_target_fulfillment_qty(row),
 			"schedule_item": row.get("customer_schedule_item") or "",
 		}
 		for row in baseline.get("targets") or []
 		if isinstance(row, dict)
 		and not cint(row.get("retired"))
 		and (row.get("item_code") or result.get("item_code") or "") == item_code
-		and row.get("schedule_date")
-		and flt(row.get("source_open_qty")) > QTY_TOLERANCE
+		and (row.get("accepted_schedule_date") or row.get("schedule_date"))
+		and _get_frozen_target_fulfillment_qty(row) > QTY_TOLERANCE
 	]
 	if not targets:
 		targets = [
@@ -6346,6 +6754,15 @@ def _get_customer_schedule_progress_result_targets(result, item_code: str) -> li
 			row.get("schedule_item") or "",
 		),
 	)
+
+
+def _get_frozen_target_fulfillment_qty(row) -> float:
+	value = (
+		row.get("accepted_source_open_qty")
+		if row.get("accepted_source_open_qty") not in (None, "")
+		else row.get("source_open_qty")
+	)
+	return max(flt(value), 0)
 
 
 def _emit_customer_schedule_progress_supply(
@@ -9305,7 +9722,12 @@ def get_settings_dict() -> dict[str, Any]:
 		"mold_change_penalty_minutes": flt(settings.mold_change_penalty_minutes or 30),
 		"missing_cycle_fallback_seconds": flt(settings.missing_cycle_fallback_seconds or 60),
 		"default_hourly_capacity_qty": flt(settings.default_hourly_capacity_qty or 120),
-		"item_food_grade_field": settings.item_food_grade_field or "custom_food_grade",
+		"item_food_grade_field": (
+			"custom_aps_food_grade"
+			if not settings.item_food_grade_field
+			or settings.item_food_grade_field == "custom_food_grade"
+			else settings.item_food_grade_field
+		),
 		"item_first_article_field": settings.item_first_article_field or "custom_is_first_article",
 		"item_color_field": settings.item_color_field or "color",
 		"item_material_field": settings.item_material_field or "material",
@@ -13189,6 +13611,7 @@ def _get_primary_segments_for_result(result_name: str) -> list[dict[str, Any]]:
 			"segment_status",
 			"risk_status",
 			"schedule_delay_minutes",
+			"actual_completed_qty",
 			"linked_work_order",
 			"linked_work_order_scheduling",
 			"linked_scheduling_item",
@@ -13238,10 +13661,10 @@ def _get_work_order_reconciliation_snapshot(work_order_name: str) -> dict[str, A
 			"sales_order",
 			"sales_order_item",
 			"custom_aps_source",
-				"qty",
-				"produced_qty",
-				"material_transferred_for_manufacturing",
-				"docstatus",
+			"qty",
+			"produced_qty",
+			"material_transferred_for_manufacturing",
+			"docstatus",
 			"planned_start_date",
 			"planned_end_date",
 			"status",
@@ -13250,8 +13673,8 @@ def _get_work_order_reconciliation_snapshot(work_order_name: str) -> dict[str, A
 			"custom_aps_schedule_reference",
 			"custom_aps_proposal_batch",
 			"custom_aps_required_delivery_date",
-				"custom_aps_locked_for_reschedule",
-				"modified",
+			"custom_aps_locked_for_reschedule",
+			"modified",
 		],
 		limit=1,
 	)
@@ -13271,15 +13694,16 @@ def _get_work_order_reconciliation_snapshot(work_order_name: str) -> dict[str, A
 				si.planned_end_date,
 				si.from_time,
 				si.to_time,
-					si.completed_qty,
-					si.modified,
+				si.completed_qty,
+				si.defect_qty,
+				si.modified,
 				si.custom_aps_segment_reference,
 				si.custom_aps_result_reference,
 				wos.status as scheduling_status,
 				wos.plant_floor,
 				wos.posting_date,
-					wos.shift_type,
-					wos.modified as scheduling_modified,
+				wos.shift_type,
+				wos.modified as scheduling_modified,
 				seg.campaign_key,
 				seg.mould_reference
 			from `tabScheduling Item` si
@@ -13295,6 +13719,7 @@ def _get_work_order_reconciliation_snapshot(work_order_name: str) -> dict[str, A
 		(row.get("scheduling_status") or "") in FROZEN_SCHEDULING_STATUSES
 		or row.get("from_time")
 		or flt(row.get("completed_qty")) > 0
+		or flt(row.get("defect_qty")) > 0
 		for row in scheduling_rows
 	)
 	has_execution = (
@@ -13373,6 +13798,7 @@ def _work_order_proposal_state_token(snapshot: dict[str, Any] | None) -> str:
 			"from_time": str(row.get("from_time") or ""),
 			"to_time": str(row.get("to_time") or ""),
 			"completed_qty": round(flt(row.get("completed_qty")), 6),
+			"defect_qty": round(flt(row.get("defect_qty")), 6),
 			"segment_reference": row.get("custom_aps_segment_reference") or "",
 			"result_reference": row.get("custom_aps_result_reference") or "",
 			"scheduling_status": row.get("scheduling_status") or "",
@@ -13754,7 +14180,7 @@ def _find_existing_work_order_for_result(
 				"sales_order": sales_order if exact_sales_lineage else None,
 				"sales_order_item": sales_order_item if exact_sales_lineage else None,
 				"docstatus": 1,
-				"status": ("not in", ["Completed", "Closed", "Cancelled"]),
+				"status": ("not in", list(INACTIVE_WORK_ORDER_STATUSES)),
 			}
 		),
 		fields=[
@@ -13817,12 +14243,29 @@ def _classify_work_order_action(
 ) -> str:
 	if not existing:
 		return "New"
+	if (existing.get("status") or "") in INACTIVE_WORK_ORDER_STATUSES:
+		frappe.throw(
+			_("Work Order {0} is {1} and cannot be reused by APS.", context="Injection APS").format(
+				existing.get("name") or "-", existing.get("status")
+			),
+			frappe.ValidationError,
+		)
 	existing_qty = flt(existing.get("qty"))
 	produced_qty = flt(existing.get("produced_qty"))
 	if proposed_qty <= 0:
 		return "Close Residual" if existing.get("has_execution") else "Cancel Unstarted"
 	if abs(existing_qty - proposed_qty) < 0.0001:
 		return "Keep Existing"
+	can_update_existing = bool(existing.get("can_update_existing"))
+	if not can_update_existing:
+		if proposed_qty > existing_qty + 0.0001:
+			return "Create Delta"
+		frappe.throw(
+			_("Work Order {0} has execution, transferred material, or fixed scheduling and cannot be reduced automatically. Resolve its residual quantity before regenerating APS proposals.", context="Injection APS").format(
+				existing.get("name") or "-"
+			),
+			frappe.ValidationError,
+		)
 	if existing.get("has_execution"):
 		if proposed_qty > existing_qty + 0.0001:
 			return "Update Existing" if prefer_update_existing else "Create Delta"
@@ -13839,7 +14282,7 @@ def _get_open_aps_managed_work_orders(company: str | None = None) -> list[dict[s
 			{
 				"company": company,
 				"docstatus": 1,
-				"status": ("not in", ["Completed", "Closed", "Cancelled"]),
+				"status": ("not in", list(INACTIVE_WORK_ORDER_STATUSES)),
 			}
 		),
 		fields=["name", "custom_aps_run", "custom_aps_result_reference", "custom_aps_locked_for_reschedule"],
@@ -14190,6 +14633,7 @@ def _is_frozen_scheduling_row(row: dict[str, Any] | None) -> bool:
 		(row.get("scheduling_status") or "") in FROZEN_SCHEDULING_STATUSES
 		or bool(row.get("from_time"))
 		or flt(row.get("completed_qty")) > 0
+		or flt(row.get("defect_qty")) > 0
 	)
 
 
@@ -14284,6 +14728,7 @@ def _get_or_create_formal_shift_scheduling_doc(
 			"company": company,
 			"plant_floor": plant_floor,
 			"shift_type": shift_type,
+			"custom_aps_run": planning_run,
 		},
 		"name",
 		order_by="modified desc",

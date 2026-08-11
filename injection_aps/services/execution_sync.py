@@ -13,6 +13,7 @@ from frappe.utils import cint, flt, get_datetime, getdate, now_datetime
 
 QTY_TOLERANCE = 0.000001
 ACTIVE_WOS_STATUSES = ("Manufacture",)
+INACTIVE_WORK_ORDER_STATUSES = ("Stopped", "Completed", "Closed", "Cancelled")
 PHYSICAL_SEGMENT_KINDS = ("Primary", "Manual")
 
 
@@ -86,6 +87,21 @@ def validate_manufacture_before_submit(doc, method: str | None = None):
 	direct_scheduling_item = doc.get("custom_aps_scheduling_item")
 	wos = doc.get("work_order_scheduling")
 	work_order = doc.get("work_order")
+	work_order_values = frappe.db.get_value(
+		"Work Order",
+		work_order,
+		[
+			"production_item",
+			"scrap_warehouse",
+			"sales_order",
+			"sales_order_item",
+			"custom_aps_run",
+			"custom_aps_result_reference",
+		],
+		as_dict=True,
+	) if work_order else None
+	work_order_aps_run = (work_order_values or {}).get("custom_aps_run")
+	work_order_aps_result = (work_order_values or {}).get("custom_aps_result_reference")
 	runs = set()
 	if direct_segment:
 		run_name = _get_segment_run(direct_segment)
@@ -116,10 +132,18 @@ def validate_manufacture_before_submit(doc, method: str | None = None):
 		wos_run = frappe.db.get_value("Work Order Scheduling", wos, "custom_aps_run")
 		if wos_run:
 			runs.add(wos_run)
+	if work_order_aps_run:
+		runs.add(work_order_aps_run)
 	eligible_wo_runs = _get_eligible_work_order_runs(work_order) if work_order else []
 	if len(eligible_wo_runs) == 1:
 		runs.add(eligible_wo_runs[0])
-	has_aps_signal = bool(direct_segment or direct_scheduling_item or runs or eligible_wo_runs)
+	has_aps_signal = bool(
+		direct_segment
+		or direct_scheduling_item
+		or runs
+		or eligible_wo_runs
+		or work_order_aps_result
+	)
 	if not has_aps_signal:
 		return
 	if len(runs) != 1:
@@ -137,15 +161,7 @@ def validate_manufacture_before_submit(doc, method: str | None = None):
 		for item in context.get("scheduling_items") or []
 		if item.get("name")
 	}
-	work_order_values = frappe.db.get_value(
-		"Work Order",
-		work_order,
-		["production_item", "scrap_warehouse", "sales_order", "sales_order_item"],
-		as_dict=True,
-	) if work_order else None
 	for detail in doc.get("items") or []:
-		if not (cint(detail.get("is_finished_item")) or cint(detail.get("is_scrap_item"))):
-			continue
 		qty = flt(detail.get("transfer_qty")) or flt(detail.get("qty"))
 		if qty <= QTY_TOLERANCE:
 			continue
@@ -165,8 +181,16 @@ def validate_manufacture_before_submit(doc, method: str | None = None):
 			"work_order_item": (work_order_values or {}).get("production_item"),
 			"work_order_sales_order": (work_order_values or {}).get("sales_order"),
 			"work_order_sales_order_item": (work_order_values or {}).get("sales_order_item"),
+			"work_order_aps_run": work_order_aps_run,
+			"work_order_aps_result": work_order_aps_result,
 			"scrap_warehouse": (work_order_values or {}).get("scrap_warehouse"),
 		}
+		# Use the exact same output predicate as reconciliation.  Some ERPNext
+		# schemas do not expose ``is_scrap_item`` and defect-FG integrations instead
+		# identify scrap by the header hint or the Work Order scrap warehouse.  A
+		# flag-only prefilter here used to let those rows bypass submit validation and
+		# fail later in the asynchronous reconciliation job.
+		#
 		# ERPNext ``is_scrap_item`` also marks BOM scrap/by-products, whose
 		# quantity and Stock UOM are unrelated to completed finished units.
 		# APS execution progress only accepts the Work Order production item;
@@ -276,6 +300,7 @@ def _get_run_segment_contexts(run_name: str) -> list[dict[str, Any]]:
 		as_dict=True,
 	)
 	contexts = [dict(row) for row in rows]
+	_attach_aps_owned_work_orders(contexts, run_name)
 	if not contexts or not frappe.db.exists("DocType", "Scheduling Item"):
 		return contexts
 	segment_names = [row["segment"] for row in contexts]
@@ -324,8 +349,65 @@ def _get_run_segment_contexts(run_name: str) -> list[dict[str, Any]]:
 	return contexts
 
 
+def _attach_aps_owned_work_orders(contexts: list[dict[str, Any]], run_name: str) -> None:
+	"""Attach submitted Work Orders whose APS owner fields point at each Result.
+
+	The owner fields are written when a WO proposal is applied, before a Work
+	Order Scheduling document necessarily exists.  Loading them in one query keeps
+	that pre-WOS execution state visible to submit validation and reconciliation.
+	A stopped/completed Work Order remains visible only so already-submitted output
+	can be replayed; the new-entry validation path still rejects it through the
+	active-run eligibility check.
+	"""
+	result_names = sorted(
+		{context.get("schedule_result") for context in contexts if context.get("schedule_result")}
+	)
+	if not result_names:
+		return
+	rows = frappe.db.sql(
+		"""
+		select wo.name, wo.custom_aps_result_reference
+		from `tabWork Order` wo
+		where wo.docstatus = 1
+			and wo.custom_aps_run = %(run_name)s
+			and wo.custom_aps_result_reference in %(result_names)s
+		order by wo.custom_aps_result_reference, wo.name
+		""",
+		{"run_name": run_name, "result_names": result_names},
+		as_dict=True,
+	)
+	by_result: dict[str, list[str]] = defaultdict(list)
+	for row in rows:
+		row = dict(row)
+		if row.get("name") and row.get("custom_aps_result_reference"):
+			by_result[row["custom_aps_result_reference"]].append(row["name"])
+	for context in contexts:
+		context["aps_owned_work_orders"] = list(
+			by_result.get(context.get("schedule_result")) or []
+		)
+
+
+def _context_work_orders(context: dict[str, Any]) -> set[str]:
+	return {
+		value
+		for value in (
+			context.get("work_order"),
+			*(item.get("work_order") for item in context.get("scheduling_items") or []),
+			*(context.get("aps_owned_work_orders") or []),
+		)
+		if value
+	}
+
+
 def _get_formal_manufacture_sources(contexts: list[dict[str, Any]]) -> list[dict[str, Any]]:
-	work_orders = sorted({row.get("work_order") for row in contexts if row.get("work_order")})
+	# A Result segment can be quantity-split across an existing WO and a delta WO.
+	# The segment's convenience link stores only one value, while Scheduling Items
+	# are the auditable one-to-many execution lineage.  Include both sources so a
+	# valid Manufacture entry is never hidden merely because another split WO was
+	# written to the segment link last.
+	work_orders = sorted(
+		{work_order for context in contexts for work_order in _context_work_orders(context)}
+	)
 	run_names = {row.get("planning_run") for row in contexts if row.get("planning_run")}
 	run_name = next(iter(run_names)) if len(run_names) == 1 else None
 	unique_work_orders = [
@@ -333,6 +415,15 @@ def _get_formal_manufacture_sources(contexts: list[dict[str, Any]]) -> list[dict
 		for work_order in work_orders
 		if run_name and set(_get_eligible_work_order_runs(work_order)) == {run_name}
 	]
+	historical_owned_work_orders = sorted(
+		{
+			work_order
+			for context in contexts
+			for work_order in context.get("aps_owned_work_orders") or []
+			if work_order
+		}
+	)
+	source_work_orders = sorted(set(unique_work_orders) | set(historical_owned_work_orders))
 	segment_names = sorted({row.get("segment") for row in contexts if row.get("segment")})
 	scheduling_item_names = sorted(
 		{
@@ -356,15 +447,15 @@ def _get_formal_manufacture_sources(contexts: list[dict[str, Any]]) -> list[dict
 			if value
 		}
 	)
-	if not unique_work_orders and not wos_names and not segment_names and not scheduling_item_names:
+	if not source_work_orders and not wos_names and not segment_names and not scheduling_item_names:
 		return []
 	conditions = []
 	params: dict[str, Any] = {}
-	if unique_work_orders:
+	if source_work_orders:
 		# Include every Manufacture entry for a uniquely APS-owned WO. A populated but
 		# invalid WOS must reach validation instead of disappearing from the source set.
 		conditions.append("se.work_order in %(work_orders)s")
-		params["work_orders"] = unique_work_orders
+		params["work_orders"] = source_work_orders
 	if wos_names:
 		conditions.append("se.work_order_scheduling in %(wos_names)s")
 		params["wos_names"] = wos_names
@@ -400,6 +491,10 @@ def _get_formal_manufacture_sources(contexts: list[dict[str, Any]]) -> list[dict
 			wo.production_item as work_order_item,
 			wo.sales_order as work_order_sales_order,
 			wo.sales_order_item as work_order_sales_order_item,
+			wo.custom_aps_run as work_order_aps_run,
+			wo.custom_aps_result_reference as work_order_aps_result,
+			wo.docstatus as work_order_docstatus,
+			wo.status as work_order_status,
 			wo.scrap_warehouse
 		from `tabStock Entry` se
 		inner join `tabStock Entry Detail` detail on detail.parent = se.name
@@ -538,8 +633,15 @@ def _build_desired_production_allocations(
 		for context in candidates:
 			if remaining <= QTY_TOLERANCE:
 				break
-			key = (context["segment"], source["output_type"])
-			quota = _context_output_quota(context, source["output_type"])
+			if allocation_method == "Direct":
+				key = (context["segment"], source["output_type"])
+				quota = _context_output_quota(context, source["output_type"])
+			else:
+				# Before a formal Scheduling Item exists, Good and Scrap details are
+				# two outcomes of the same physical segment quantity.  They must share
+				# one FIFO quota or each output type can consume the full segment.
+				key = (context["segment"], "Total")
+				quota = _context_total_output_quota(context)
 			available = max(quota - used_by_context_output[key], 0)
 			qty = remaining if allocation_method == "Direct" else min(remaining, available)
 			if qty <= QTY_TOLERANCE:
@@ -550,7 +652,12 @@ def _build_desired_production_allocations(
 		if remaining > QTY_TOLERANCE:
 			context = candidates[-1]
 			segment_allocations.append((context, remaining))
-			used_by_context_output[(context["segment"], source["output_type"])] += remaining
+			overflow_key = (
+				(context["segment"], source["output_type"])
+				if allocation_method == "Direct"
+				else (context["segment"], "Total")
+			)
+			used_by_context_output[overflow_key] += remaining
 			remaining = 0
 		for context, qty in segment_allocations:
 			for target, target_qty in _split_production_to_schedule_targets(
@@ -669,9 +776,10 @@ def _get_source_candidates(
 		matching = [
 			row
 			for row in contexts
-			if source.get("work_order") in ({row.get("work_order")} | {item.get("work_order") for item in row.get("scheduling_items") or []})
+			if source.get("work_order") in _context_work_orders(row)
 			and wos in ({row.get("work_order_scheduling")} | {item.get("parent") for item in row.get("scheduling_items") or []})
 			and _work_order_lineage_matches_context(source, row)
+			and _work_order_owner_matches_context(source, row)
 		]
 		if not matching:
 			frappe.throw(
@@ -686,11 +794,17 @@ def _get_source_candidates(
 	matching = [
 		row
 		for row in contexts
-		if row.get("work_order") == source.get("work_order")
+		if source.get("work_order") in _context_work_orders(row)
 		and _work_order_lineage_matches_context(source, row)
+		and _work_order_owner_matches_context(source, row)
 	]
 	eligible_runs = set(_get_eligible_work_order_runs(source.get("work_order")))
-	if eligible_runs != {run_name}:
+	historical_exact_owner = _is_submitted_historical_exact_owner(
+		run_name,
+		source,
+		matching,
+	)
+	if eligible_runs != {run_name} and not historical_exact_owner:
 		frappe.throw(
 			_("Work Order {0} is not uniquely linked to planning run {1}; select the APS segment explicitly.").format(
 				source.get("work_order") or "-", run_name
@@ -707,6 +821,29 @@ def _get_source_candidates(
 	for context in matching:
 		_validate_production_output_context(source, context)
 	return sorted(matching, key=_context_sort_key), "Execution Detail FIFO"
+
+
+def _is_submitted_historical_exact_owner(
+	run_name: str,
+	source: dict[str, Any],
+	matching: list[dict[str, Any]],
+) -> bool:
+	"""Allow replay, never new submission, for an inactive exact APS-owned WO."""
+	if cint(source.get("source_docstatus")) != 1 or cint(source.get("work_order_docstatus")) != 1:
+		return False
+	if (source.get("work_order_status") or "") not in INACTIVE_WORK_ORDER_STATUSES:
+		return False
+	owner_run = source.get("work_order_aps_run") or ""
+	owner_result = source.get("work_order_aps_result") or ""
+	if owner_run != run_name or not owner_result:
+		return False
+	return any(
+		(context.get("planning_run") or "") == run_name
+		and (context.get("schedule_result") or "") == owner_result
+		and _work_order_lineage_matches_context(source, context)
+		and _work_order_owner_matches_context(source, context)
+		for context in matching
+	)
 
 
 def _validate_direct_production_context(
@@ -727,6 +864,7 @@ def _validate_direct_production_context(
 		)
 	if direct_segment and context.get("segment") != direct_segment:
 		frappe.throw(_("Direct APS segment does not match the selected APS result."), frappe.ValidationError)
+	_validate_work_order_owner_context(source, context)
 
 	items = context.get("scheduling_items") or []
 	direct_item = next((row for row in items if row.get("name") == direct_scheduling_item), None)
@@ -808,14 +946,7 @@ def _validate_direct_production_context(
 				frappe.ValidationError,
 			)
 
-	expected_work_orders = {
-		value
-		for value in (
-			context.get("work_order"),
-			*(row.get("work_order") for row in items),
-		)
-		if value
-	}
+	expected_work_orders = _context_work_orders(context)
 	if expected_work_orders and source.get("work_order") not in expected_work_orders:
 		frappe.throw(
 			_("Stock Entry Work Order {0} does not match APS segment {1}.").format(
@@ -884,6 +1015,36 @@ def _work_order_lineage_matches_context(source: dict[str, Any], context: dict[st
 	)
 
 
+def _work_order_owner_matches_context(source: dict[str, Any], context: dict[str, Any]) -> bool:
+	owner_run = source.get("work_order_aps_run") or ""
+	owner_result = source.get("work_order_aps_result") or ""
+	if not owner_run and not owner_result:
+		return True
+	return bool(
+		owner_run
+		and owner_result
+		and owner_run == (context.get("planning_run") or "")
+		and owner_result == (context.get("schedule_result") or "")
+	)
+
+
+def _validate_work_order_owner_context(
+	source: dict[str, Any], context: dict[str, Any]
+) -> None:
+	if _work_order_owner_matches_context(source, context):
+		return
+	frappe.throw(
+		_(
+			"Work Order {0} APS owner Run/Result does not match planning run {1} and result {2}."
+		).format(
+			source.get("work_order") or "-",
+			context.get("planning_run") or "-",
+			context.get("schedule_result") or "-",
+		),
+		frappe.ValidationError,
+	)
+
+
 def _validate_direct_execution_item_state(item: dict[str, Any]) -> None:
 	if (item.get("wos_status") or "") not in ACTIVE_WOS_STATUSES:
 		frappe.throw(
@@ -905,26 +1066,81 @@ def _get_eligible_work_order_runs(work_order: str | None) -> list[str]:
 		return []
 	return frappe.db.sql_list(
 		"""
-		select distinct r.planning_run
-		from `tabAPS Schedule Segment` seg
-		inner join `tabAPS Schedule Result` r on r.name = seg.parent
-		inner join `tabAPS Planning Run` run on run.name = r.planning_run
-		where seg.parenttype = 'APS Schedule Result'
-			and seg.linked_work_order = %s
-			and seg.segment_kind in ('Primary', 'Manual')
-			and ifnull(seg.segment_status, 'Planned') not in ('Blocked', 'Cancelled')
-			and ifnull(seg.planned_qty, 0) > 0
-			and ifnull(run.status, 'Draft') != 'Closed'
-			and ifnull(run.approval_state, 'Pending') != 'Rejected'
-		order by r.planning_run asc
+		select distinct lineage.planning_run
+		from (
+			select r.planning_run
+			from `tabAPS Schedule Segment` seg
+			inner join `tabAPS Schedule Result` r on r.name = seg.parent
+			inner join `tabAPS Planning Run` run on run.name = r.planning_run
+			inner join `tabWork Order` wo on wo.name = seg.linked_work_order
+			where seg.parenttype = 'APS Schedule Result'
+				and seg.linked_work_order = %s
+				and wo.docstatus = 1
+				and ifnull(wo.status, '') not in ('Stopped', 'Completed', 'Closed', 'Cancelled')
+				and seg.segment_kind in ('Primary', 'Manual')
+				and ifnull(seg.segment_status, 'Planned') not in ('Blocked', 'Cancelled')
+				and ifnull(seg.planned_qty, 0) > 0
+				and ifnull(run.status, 'Draft') != 'Closed'
+				and ifnull(run.approval_state, 'Pending') != 'Rejected'
+			union all
+			select r.planning_run
+			from `tabScheduling Item` si
+			inner join `tabAPS Schedule Segment` seg
+				on seg.name = si.custom_aps_segment_reference
+			inner join `tabAPS Schedule Result` r on r.name = seg.parent
+			inner join `tabAPS Planning Run` run on run.name = r.planning_run
+			inner join `tabWork Order` wo on wo.name = si.work_order
+			where si.work_order = %s
+				and wo.docstatus = 1
+				and ifnull(wo.status, '') not in ('Stopped', 'Completed', 'Closed', 'Cancelled')
+				and si.custom_aps_run = r.planning_run
+				and si.custom_aps_result_reference = r.name
+				and seg.parenttype = 'APS Schedule Result'
+				and seg.segment_kind in ('Primary', 'Manual')
+				and ifnull(seg.segment_status, 'Planned') not in ('Blocked', 'Cancelled')
+				and ifnull(seg.planned_qty, 0) > 0
+				and ifnull(run.status, 'Draft') != 'Closed'
+				and ifnull(run.approval_state, 'Pending') != 'Rejected'
+			union all
+			select r.planning_run
+			from `tabWork Order` wo
+			inner join `tabAPS Schedule Result` r
+				on r.name = wo.custom_aps_result_reference
+			inner join `tabAPS Planning Run` run
+				on run.name = r.planning_run
+			inner join `tabAPS Schedule Segment` seg
+				on seg.parent = r.name
+				and seg.parenttype = 'APS Schedule Result'
+			where wo.name = %s
+				and wo.docstatus = 1
+				and ifnull(wo.status, '') not in ('Stopped', 'Completed', 'Closed', 'Cancelled')
+				and wo.custom_aps_run = r.planning_run
+				and wo.production_item = r.item_code
+				and ifnull(wo.sales_order, '') = ifnull(r.sales_order, '')
+				and ifnull(wo.sales_order_item, '') = ifnull(r.sales_order_item, '')
+				and seg.segment_kind in ('Primary', 'Manual')
+				and ifnull(seg.segment_status, 'Planned') not in ('Blocked', 'Cancelled')
+				and ifnull(seg.planned_qty, 0) > 0
+				and ifnull(run.status, 'Draft') != 'Closed'
+				and ifnull(run.approval_state, 'Pending') != 'Rejected'
+		) lineage
+		order by lineage.planning_run asc
 		""",
-		work_order,
+		(work_order, work_order, work_order),
 	)
 
 
 def _context_output_quota(context: dict[str, Any], output_type: str) -> float:
 	fieldname = "defect_qty" if output_type == "Scrap" else "completed_qty"
 	qty = sum(flt(row.get(fieldname)) for row in context.get("scheduling_items") or [])
+	return qty if qty > QTY_TOLERANCE else max(flt(context.get("planned_qty")), 0)
+
+
+def _context_total_output_quota(context: dict[str, Any]) -> float:
+	qty = sum(
+		flt(row.get("completed_qty")) + flt(row.get("defect_qty"))
+		for row in context.get("scheduling_items") or []
+	)
 	return qty if qty > QTY_TOLERANCE else max(flt(context.get("planned_qty")), 0)
 
 
@@ -1067,7 +1283,7 @@ def _get_persisted_schedule_targets(
 		frozen = baseline_by_name[name]
 		attributed_qty = min(
 			remaining,
-			max(flt(frozen.get("source_open_qty")), 0),
+			_get_frozen_target_fulfillment_qty(frozen),
 			max(flt(source.get("qty")), 0),
 		)
 		if attributed_qty <= QTY_TOLERANCE:
@@ -1082,6 +1298,15 @@ def _get_persisted_schedule_targets(
 		claimed_target_names.add(name)
 		remaining -= attributed_qty
 	return claimed
+
+
+def _get_frozen_target_fulfillment_qty(row) -> float:
+	value = (
+		row.get("accepted_source_open_qty")
+		if row.get("accepted_source_open_qty") not in (None, "")
+		else row.get("source_open_qty")
+	)
+	return max(flt(value), 0)
 
 
 def _split_production_to_schedule_targets(context, qty, output_type, target_map, used_schedule_good):

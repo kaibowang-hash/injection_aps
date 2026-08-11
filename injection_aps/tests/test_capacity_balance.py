@@ -1669,6 +1669,7 @@ class TestCapacityBalanceEngine(unittest.TestCase):
 			[frappe._dict(name="WO-1", qty=100, skip_transfer=0)],
 			[
 				frappe._dict(
+					parent="WO-1",
 					item_code="RM-1",
 					source_warehouse=None,
 					required_qty=100,
@@ -1706,6 +1707,7 @@ class TestCapacityBalanceEngine(unittest.TestCase):
 			[frappe._dict(name="WO-1", qty=100, skip_transfer=0)],
 			[
 				frappe._dict(
+					parent="WO-1",
 					item_code="RM-1",
 					source_warehouse="RM-WH",
 					required_qty=100,
@@ -1726,6 +1728,243 @@ class TestCapacityBalanceEngine(unittest.TestCase):
 		self.assertEqual(database.sql.call_count, 3)
 		for call in database.sql.call_args_list:
 			self.assertTrue(call.args[0].rstrip().endswith("for update"))
+
+	def test_new_aps_work_order_reservation_credits_result_even_when_baseline_open_wo_is_zero(self):
+		result = {
+			"name": "RESULT-1",
+			"planning_run": "RUN-1",
+			"company": "COMPANY-A",
+			"item_code": "FG-1",
+			"sales_order": "SO-1",
+			"sales_order_item": "SOI-1",
+			"planned_qty": 100,
+			"open_work_order_qty": 0,
+		}
+		requirements = [
+			{
+				"item_code": "RM-1",
+				"warehouse": "RM-WH",
+				"qty_per_unit": 1,
+			}
+		]
+		database = MagicMock()
+		database.sql.side_effect = [
+			[
+				frappe._dict(
+					name="WO-APS-1",
+					qty=100,
+					produced_qty=0,
+					skip_transfer=0,
+					custom_aps_result_reference="RESULT-1",
+					custom_aps_run="RUN-1",
+				)
+			],
+			[
+				frappe._dict(
+					parent="WO-APS-1",
+					item_code="RM-1",
+					source_warehouse="RM-WH",
+					required_qty=100,
+					transferred_qty=0,
+					consumed_qty=0,
+				)
+			],
+			[frappe._dict(bin_reserved=100, expected_reserved=100)],
+		]
+		with patch.object(capacity_balance.frappe, "db", database):
+			credit = capacity_balance._get_proven_existing_work_order_material_credit(
+				result, requirements
+			)
+
+		self.assertEqual(credit, 100)
+
+	def test_partially_transferred_work_order_credits_raw_reservation_and_unconsumed_wip(self):
+		result = {
+			"name": "RESULT-1",
+			"planning_run": "RUN-1",
+			"company": "COMPANY-A",
+			"item_code": "FG-1",
+			"sales_order": "SO-1",
+			"sales_order_item": "SOI-1",
+			"planned_qty": 100,
+			"open_work_order_qty": 0,
+		}
+		requirements = [{"item_code": "RM-1", "warehouse": "RM-WH", "qty_per_unit": 1}]
+		database = MagicMock()
+		database.sql.side_effect = [
+			[
+				frappe._dict(
+					name="WO-1",
+					qty=100,
+					produced_qty=20,
+					skip_transfer=0,
+					wip_warehouse="WIP-WH",
+					custom_aps_result_reference="RESULT-1",
+					custom_aps_run="RUN-1",
+				)
+			],
+			[
+				frappe._dict(
+					parent="WO-1",
+					item_code="RM-1",
+					source_warehouse="RM-WH",
+					required_qty=100,
+					transferred_qty=60,
+					consumed_qty=20,
+				)
+			],
+			[frappe._dict(bin_reserved=40, expected_reserved=40)],
+			[frappe._dict(bin_actual=40, expected_wip=40)],
+		]
+		with patch.object(capacity_balance.frappe, "db", database):
+			credit = capacity_balance._get_proven_existing_work_order_material_credit(
+				result, requirements
+			)
+
+		self.assertEqual(credit, 80)
+		self.assertEqual(database.sql.call_count, 4)
+		self.assertIn("wo.wip_warehouse", database.sql.call_args_list[0].args[0])
+		self.assertIn("bin.actual_qty", database.sql.call_args_list[3].args[0])
+
+	def test_unproven_wip_is_not_credited_but_proven_raw_reservation_remains(self):
+		result = {
+			"name": "RESULT-1",
+			"planning_run": "RUN-1",
+			"company": "COMPANY-A",
+			"item_code": "FG-1",
+			"sales_order": "SO-1",
+			"sales_order_item": "SOI-1",
+			"planned_qty": 100,
+			"open_work_order_qty": 0,
+		}
+		requirements = [{"item_code": "RM-1", "warehouse": "RM-WH", "qty_per_unit": 1}]
+		database = MagicMock()
+		database.sql.side_effect = [
+			[
+				frappe._dict(
+					name="WO-1",
+					qty=100,
+					produced_qty=20,
+					skip_transfer=0,
+					wip_warehouse="WIP-WH",
+					custom_aps_result_reference="RESULT-1",
+					custom_aps_run="RUN-1",
+				)
+			],
+			[
+				frappe._dict(
+					parent="WO-1",
+					item_code="RM-1",
+					source_warehouse="RM-WH",
+					required_qty=100,
+					transferred_qty=60,
+					consumed_qty=20,
+				)
+			],
+			[frappe._dict(bin_reserved=40, expected_reserved=40)],
+			[frappe._dict(bin_actual=10, expected_wip=40)],
+		]
+		with patch.object(capacity_balance.frappe, "db", database):
+			credit = capacity_balance._get_proven_existing_work_order_material_credit(
+				result, requirements
+			)
+
+		self.assertEqual(credit, 40)
+
+	def test_multiple_exact_work_orders_use_per_wo_required_item_proof_and_conserve_frozen_credit(self):
+		result = {
+			"company": "COMPANY-A",
+			"item_code": "FG-1",
+			"sales_order": "SO-1",
+			"sales_order_item": "SOI-1",
+			"open_work_order_qty": 100,
+		}
+		requirements = [{"item_code": "RM-1", "warehouse": "RM-WH", "qty_per_unit": 1}]
+		database = MagicMock()
+		database.sql.side_effect = [
+			[
+				frappe._dict(name="WO-1", qty=60, produced_qty=0, skip_transfer=0),
+				frappe._dict(name="WO-2", qty=40, produced_qty=0, skip_transfer=0),
+			],
+			[
+				frappe._dict(parent="WO-1", item_code="RM-1", source_warehouse="RM-WH", required_qty=60, transferred_qty=0, consumed_qty=0),
+				frappe._dict(parent="WO-2", item_code="RM-1", source_warehouse="RM-WH", required_qty=40, transferred_qty=0, consumed_qty=0),
+			],
+			[frappe._dict(bin_reserved=100, expected_reserved=100)],
+		]
+		with patch.object(capacity_balance.frappe, "db", database):
+			credit = capacity_balance._get_proven_existing_work_order_material_credit(
+				result, requirements
+			)
+
+		self.assertEqual(credit, 100)
+		item_query = database.sql.call_args_list[1].args[0]
+		self.assertIn("select parent, item_code", item_query)
+		self.assertIn("where parent in %s", item_query)
+
+	def test_multiple_linked_delta_work_orders_credit_only_the_current_result_boundary(self):
+		result = {
+			"name": "RESULT-1",
+			"planning_run": "RUN-1",
+			"company": "COMPANY-A",
+			"item_code": "FG-1",
+			"sales_order": "SO-1",
+			"sales_order_item": "SOI-1",
+			"planned_qty": 100,
+			"open_work_order_qty": 0,
+		}
+		requirements = [{"item_code": "RM-1", "warehouse": "RM-WH", "qty_per_unit": 1}]
+		database = MagicMock()
+		database.sql.side_effect = [
+			[
+				frappe._dict(name="WO-BASE", qty=60, produced_qty=0, skip_transfer=0, custom_aps_result_reference="RESULT-1", custom_aps_run="RUN-1"),
+				frappe._dict(name="WO-DELTA", qty=40, produced_qty=0, skip_transfer=0, custom_aps_result_reference="RESULT-1", custom_aps_run="RUN-1"),
+				frappe._dict(name="WO-OTHER", qty=100, produced_qty=0, skip_transfer=0, custom_aps_result_reference="RESULT-OTHER", custom_aps_run="RUN-2"),
+			],
+			[
+				frappe._dict(parent="WO-BASE", item_code="RM-1", source_warehouse="RM-WH", required_qty=60, transferred_qty=0, consumed_qty=0),
+				frappe._dict(parent="WO-DELTA", item_code="RM-1", source_warehouse="RM-WH", required_qty=40, transferred_qty=0, consumed_qty=0),
+			],
+			[frappe._dict(bin_reserved=200, expected_reserved=200)],
+		]
+		with patch.object(capacity_balance.frappe, "db", database):
+			credit = capacity_balance._get_proven_existing_work_order_material_credit(
+				result, requirements
+			)
+
+		self.assertEqual(credit, 100)
+		self.assertEqual(database.sql.call_args_list[1].args[1], (("WO-BASE", "WO-DELTA"),))
+
+	def test_wrong_aps_owner_is_not_reinterpreted_as_legacy_material_credit(self):
+		result = {
+			"name": "RESULT-1",
+			"planning_run": "RUN-1",
+			"company": "COMPANY-A",
+			"item_code": "FG-1",
+			"sales_order": "SO-1",
+			"sales_order_item": "SOI-1",
+			"planned_qty": 100,
+			"open_work_order_qty": 100,
+		}
+		database = MagicMock()
+		database.sql.return_value = [
+			frappe._dict(
+				name="WO-OTHER",
+				qty=100,
+				produced_qty=0,
+				skip_transfer=0,
+				custom_aps_result_reference="RESULT-OTHER",
+				custom_aps_run="RUN-OTHER",
+			)
+		]
+		with patch.object(capacity_balance.frappe, "db", database):
+			credit = capacity_balance._get_proven_existing_work_order_material_credit(
+				result,
+				[{"item_code": "RM-1", "warehouse": "RM-WH", "qty_per_unit": 1}],
+			)
+
+		self.assertEqual(credit, 0)
+		self.assertEqual(database.sql.call_count, 1)
 
 	def test_closed_linked_work_order_does_not_freeze_segment(self):
 		segments = [

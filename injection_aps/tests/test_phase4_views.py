@@ -13,19 +13,27 @@ from injection_aps.services import availability, consistency, planning
 
 
 class TestReleaseCenterQueries(FrappeTestCase):
-	def test_review_counts_use_structured_count_field(self):
+	def test_review_counts_use_version_neutral_allowlisted_sql(self):
 		rows = [frappe._dict(name="BATCH-1")]
-		captured = {}
-
-		def fake_get_all(_doctype, **kwargs):
-			captured["fields"] = kwargs.get("fields")
-			return [frappe._dict(parent="BATCH-1", review_status="Pending", count=2)]
-
-		with patch.object(app.frappe, "get_all", side_effect=fake_get_all):
+		with patch.object(
+			app.frappe.db,
+			"sql",
+			return_value=[frappe._dict(parent="BATCH-1", review_status="Pending", count=2)],
+		) as sql:
 			app._attach_review_counts(rows, "APS Work Order Proposal Item")
 
-		self.assertIn({"COUNT": "name", "as": "count"}, captured["fields"])
+		query, params = sql.call_args.args
+		self.assertIn("from `tabAPS Work Order Proposal Item`", query)
+		self.assertEqual(params, (("BATCH-1",),))
+		self.assertTrue(sql.call_args.kwargs["as_dict"])
 		self.assertEqual(rows[0].pending_count, 2)
+
+	def test_review_counts_reject_unknown_doctype_instead_of_interpolating_it(self):
+		with self.assertRaises(frappe.ValidationError):
+			app._attach_review_counts(
+				[frappe._dict(name="BATCH-1")],
+				"APS Work Order Proposal Item`; drop table tabUser; --",
+			)
 
 
 class TestPhase4ViewConsistency(FrappeTestCase):

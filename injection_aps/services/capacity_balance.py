@@ -3291,6 +3291,7 @@ def _get_run_balance_rows(
 		filters={"planning_run": run_name},
 		fields=[
 			"name",
+			"planning_run",
 			"company",
 			"plant_floor",
 			"net_requirement",
@@ -3421,6 +3422,7 @@ def _get_locked_run_balance_rows(
 	result_query = """
 		select
 			res.name,
+			res.planning_run,
 			res.company,
 			res.plant_floor,
 			res.net_requirement,
@@ -3689,7 +3691,7 @@ def _get_cross_run_applied_commitments(run_doc, *, lock_rows: bool = False):
 			and (
 				ifnull(seg.linked_work_order, '') = ''
 				or wo.name is null
-				or ifnull(wo.status, '') not in ('Completed', 'Closed', 'Cancelled')
+				or ifnull(wo.status, '') not in ('Stopped', 'Completed', 'Closed', 'Cancelled')
 			)
 		order by seg.start_time asc, run.name asc, seg.name asc
 		"""
@@ -3809,8 +3811,14 @@ def _get_proven_existing_work_order_material_credit(
 	that is deliberately conservative and forces the free-material check to cover
 	the whole plan instead of silently reusing another Work Order's reservation.
 	"""
-	coverage_qty = max(flt(result.get("open_work_order_qty")), 0)
-	if coverage_qty <= CAPACITY_TOLERANCE or not material_requirements:
+	baseline_coverage_qty = max(flt(result.get("open_work_order_qty")), 0)
+	result_name = result.get("name")
+	result_run = result.get("planning_run") or result.get("reservation_run")
+	# Before release, the immutable Net Requirement boundary is the only safe
+	# credit.  After release, APS-created WOs carry the exact Result/Run lineage;
+	# their submitted reservation is equally authoritative even when the original
+	# Net Requirement had ``open_work_order_qty = 0``.
+	if not material_requirements or (baseline_coverage_qty <= CAPACITY_TOLERANCE and not result_name):
 		return 0.0
 	company = result.get("company")
 	item_code = result.get("item_code")
@@ -3831,77 +3839,128 @@ def _get_proven_existing_work_order_material_credit(
 	else:
 		return 0.0
 	query = f"""
-		select wo.name, wo.qty, wo.skip_transfer
+		select
+			wo.name,
+			wo.qty,
+			wo.produced_qty,
+			wo.skip_transfer,
+			wo.wip_warehouse,
+			wo.custom_aps_result_reference,
+			wo.custom_aps_run
 		from `tabWork Order` wo
 		where wo.company = %(company)s
 			and wo.production_item = %(item_code)s
 			and wo.docstatus = 1
-			and ifnull(wo.status, '') in ('Submitted', 'Not Started')
-			and ifnull(wo.produced_qty, 0) = 0
-			and ifnull(wo.material_transferred_for_manufacturing, 0) = 0
+			and ifnull(wo.status, '') not in ('Stopped', 'Completed', 'Closed', 'Cancelled')
+			and ifnull(wo.qty, 0) > ifnull(wo.produced_qty, 0)
 			and {lineage_condition}
 		order by wo.name
 	"""
 	if lock_rows:
 		query += " for update"
 	candidates = frappe.db.sql(query, params, as_dict=True)
-	if len(candidates) != 1:
+	linked_candidates = [
+		row
+		for row in candidates
+		if result_name
+		and (row.get("custom_aps_result_reference") or "") == result_name
+		and bool(result_run)
+		and (row.get("custom_aps_run") or "") == result_run
+	]
+	if linked_candidates:
+		candidates = linked_candidates
+		coverage_qty = max(flt(result.get("planned_qty")), baseline_coverage_qty, 0)
+	else:
+		# Legacy/external WOs have no APS owner until the reviewed reconciliation is
+		# applied.  Their aggregate credit is capped by the quantity frozen into this
+		# Result, so several exact WOs can be consumed without the old ``len == 1``
+		# ambiguity or silently increasing the plan boundary.
+		candidates = [
+			row
+			for row in candidates
+			if not row.get("custom_aps_result_reference") and not row.get("custom_aps_run")
+		]
+		coverage_qty = baseline_coverage_qty
+	if not candidates or coverage_qty <= CAPACITY_TOLERANCE:
 		return 0.0
-	work_order = candidates[0]
+	work_order_names = tuple(row.get("name") for row in candidates if row.get("name"))
+	if not work_order_names:
+		return 0.0
 	item_query = """
-		select item_code, source_warehouse, required_qty, transferred_qty, consumed_qty
+		select parent, item_code, source_warehouse, required_qty, transferred_qty, consumed_qty
 		from `tabWork Order Item`
-		where parent = %s
-		order by item_code, source_warehouse, idx
+		where parent in %s
+		order by parent, item_code, source_warehouse, idx
 	"""
 	if lock_rows:
 		item_query += " for update"
 	required_items = [
 		dict(row)
-		for row in frappe.db.sql(item_query, work_order.get("name"), as_dict=True)
+		for row in frappe.db.sql(item_query, (work_order_names,), as_dict=True)
 	]
 	if not required_items:
 		return 0.0
-	by_item_warehouse: dict[tuple[str, str], dict[str, float]] = defaultdict(
-		lambda: {"required": 0.0, "reserved": 0.0}
+	by_work_order_item_warehouse: dict[tuple[str, str, str], dict[str, Any]] = defaultdict(
+		lambda: {
+			"raw_reserved": 0.0,
+			"wip_unconsumed": 0.0,
+			"wip_warehouse": "",
+		}
 	)
+	work_order_by_name = {row.get("name"): row for row in candidates}
 	for row in required_items:
 		warehouse = row.get("source_warehouse") or ""
 		if not warehouse:
 			return 0.0
-		key = (row.get("item_code") or "", warehouse)
-		by_item_warehouse[key]["required"] += max(flt(row.get("required_qty")), 0)
-		remaining = (
-			flt(row.get("required_qty")) - flt(row.get("transferred_qty"))
-			if not cint(work_order.get("skip_transfer"))
-			else flt(row.get("required_qty")) - flt(row.get("consumed_qty"))
-		)
-		by_item_warehouse[key]["reserved"] += max(remaining, 0)
+		work_order = work_order_by_name.get(row.get("parent")) or {}
+		key = (row.get("parent") or "", row.get("item_code") or "", warehouse)
+		required_qty = max(flt(row.get("required_qty")), 0)
+		transferred_qty = max(flt(row.get("transferred_qty")), 0)
+		consumed_qty = max(flt(row.get("consumed_qty")), 0)
+		if cint(work_order.get("skip_transfer")):
+			raw_reserved = max(required_qty - consumed_qty, 0)
+			wip_unconsumed = 0.0
+		else:
+			# Consumption and transfer are separate ERPNext movements.  Count source
+			# reservation and unconsumed WIP independently; this prevents both the old
+			# all-or-nothing loss after a transfer and double credit after consumption.
+			raw_reserved = max(required_qty - max(transferred_qty, consumed_qty), 0)
+			wip_unconsumed = max(min(transferred_qty, required_qty) - consumed_qty, 0)
+		values = by_work_order_item_warehouse[key]
+		values["raw_reserved"] += raw_reserved
+		values["wip_unconsumed"] += wip_unconsumed
+		values["wip_warehouse"] = work_order.get("wip_warehouse") or ""
 
-	# The current BOM must be fully represented by the exact WO.  Use only the
-	# warehouse-scoped copy because every component also has a company-wide key.
+	qty_per_unit_by_component: dict[tuple[str, str], float] = defaultdict(float)
 	for requirement in material_requirements:
-		warehouse = requirement.get("warehouse")
-		if not warehouse:
-			continue
-		key = (requirement.get("item_code") or "", warehouse)
-		needed = coverage_qty * max(flt(requirement.get("qty_per_unit")), 0)
-		if by_item_warehouse.get(key, {}).get("required", 0) + CAPACITY_TOLERANCE < needed:
-			return 0.0
+		component = requirement.get("item_code") or ""
+		warehouse = requirement.get("warehouse") or ""
+		qty_per_unit = max(flt(requirement.get("qty_per_unit")), 0)
+		if component and warehouse and qty_per_unit > CAPACITY_TOLERANCE:
+			qty_per_unit_by_component[(component, warehouse)] += qty_per_unit
+	if not qty_per_unit_by_component:
+		return 0.0
 
 	# Verify ERPNext's aggregate reservation is not stale.  The comparison uses
 	# every active WO for the same Bin so another WO's reservation cannot be
 	# misattributed to this result.
-	for (component, warehouse), values in by_item_warehouse.items():
-		if values["reserved"] <= CAPACITY_TOLERANCE:
+	reservation_by_bin: dict[tuple[str, str], float] = defaultdict(float)
+	for (_work_order_name, component, warehouse), values in by_work_order_item_warehouse.items():
+		reservation_by_bin[(component, warehouse)] += values["raw_reserved"]
+	verified_raw_bins: set[tuple[str, str]] = set()
+	for (component, warehouse), reserved_qty in reservation_by_bin.items():
+		if reserved_qty <= CAPACITY_TOLERANCE:
 			continue
 		proof = frappe.db.sql(
 			"""
 			select
-				greatest(ifnull(bin.reserved_qty_for_production, 0), 0) as bin_reserved,
+				coalesce(max(greatest(ifnull(bin.reserved_qty_for_production, 0), 0)), 0) as bin_reserved,
 				coalesce(sum(greatest(
 					case when ifnull(active_wo.skip_transfer, 0) = 0
-						then ifnull(active_item.required_qty, 0) - ifnull(active_item.transferred_qty, 0)
+						then ifnull(active_item.required_qty, 0) - greatest(
+							ifnull(active_item.transferred_qty, 0),
+							ifnull(active_item.consumed_qty, 0)
+						)
 						else ifnull(active_item.required_qty, 0) - ifnull(active_item.consumed_qty, 0)
 					end,
 					0
@@ -3919,11 +3978,72 @@ def _get_proven_existing_work_order_material_credit(
 			{"item_code": component, "warehouse": warehouse},
 			as_dict=True,
 		)
-		if not proof or flt(proof[0].get("bin_reserved")) + CAPACITY_TOLERANCE < flt(
+		if proof and flt(proof[0].get("bin_reserved")) + CAPACITY_TOLERANCE >= flt(
 			proof[0].get("expected_reserved")
 		):
-			return 0.0
-	return coverage_qty
+			verified_raw_bins.add((component, warehouse))
+
+	wip_by_bin: dict[tuple[str, str], float] = defaultdict(float)
+	for (_work_order_name, component, _warehouse), values in by_work_order_item_warehouse.items():
+		if values["wip_unconsumed"] > CAPACITY_TOLERANCE and values["wip_warehouse"]:
+			wip_by_bin[(component, values["wip_warehouse"])] += values["wip_unconsumed"]
+	verified_wip_bins: set[tuple[str, str]] = set()
+	for (component, wip_warehouse), wip_qty in wip_by_bin.items():
+		if wip_qty <= CAPACITY_TOLERANCE:
+			continue
+		proof = frappe.db.sql(
+			"""
+			select
+				coalesce(max(greatest(ifnull(bin.actual_qty, 0), 0)), 0) as bin_actual,
+				coalesce(sum(greatest(
+					least(
+						ifnull(active_item.transferred_qty, 0),
+						ifnull(active_item.required_qty, 0)
+					) - ifnull(active_item.consumed_qty, 0),
+					0
+				)), 0) as expected_wip
+			from `tabWork Order Item` active_item
+			inner join `tabWork Order` active_wo on active_wo.name = active_item.parent
+			left join `tabBin` bin
+				on bin.item_code = active_item.item_code
+				and bin.warehouse = active_wo.wip_warehouse
+			where active_item.item_code = %(item_code)s
+				and active_wo.wip_warehouse = %(warehouse)s
+				and ifnull(active_wo.skip_transfer, 0) = 0
+				and active_wo.docstatus = 1
+				and ifnull(active_wo.status, '') not in ('Stopped', 'Completed', 'Closed', 'Cancelled')
+			""" + (" for update" if lock_rows else ""),
+			{"item_code": component, "warehouse": wip_warehouse},
+			as_dict=True,
+		)
+		if proof and flt(proof[0].get("bin_actual")) + CAPACITY_TOLERANCE >= flt(
+			proof[0].get("expected_wip")
+		):
+			verified_wip_bins.add((component, wip_warehouse))
+
+	proven_output_qty = 0.0
+	for work_order in candidates:
+		work_order_name = work_order.get("name")
+		candidate_output_qty = max(
+			flt(work_order.get("qty")) - flt(work_order.get("produced_qty")),
+			0,
+		)
+		for (component, warehouse), qty_per_unit in qty_per_unit_by_component.items():
+			values = by_work_order_item_warehouse.get(
+				(work_order_name, component, warehouse), {}
+			)
+			protected_qty = (
+				flt(values.get("raw_reserved"))
+				if (component, warehouse) in verified_raw_bins
+				else 0.0
+			)
+			wip_warehouse = values.get("wip_warehouse") or ""
+			if (component, wip_warehouse) in verified_wip_bins:
+				protected_qty += flt(values.get("wip_unconsumed"))
+			candidate_output_qty = min(candidate_output_qty, protected_qty / qty_per_unit)
+		if candidate_output_qty > CAPACITY_TOLERANCE:
+			proven_output_qty += candidate_output_qty
+	return min(coverage_qty, proven_output_qty)
 
 
 def _build_cross_run_reservation_demand(

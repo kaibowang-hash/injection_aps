@@ -11,10 +11,124 @@ import frappe
 
 from injection_aps import install
 from injection_aps.api import app
+from injection_aps.patches.v0_0_2 import migrate_aps_food_grade_field
 from injection_aps.services import planning
+from injection_aps.setup.resources import STANDARD_CUSTOM_FIELDS, get_standard_custom_field_names
 
 
 class TestImportAndTransactionGuards(unittest.TestCase):
+	def test_non_rewritable_work_order_never_generates_an_unapplicable_update(self):
+		existing = frappe._dict(
+			name="WO-LOCKED",
+			qty=100,
+			produced_qty=20,
+			has_execution=True,
+			can_update_existing=False,
+		)
+		self.assertEqual(
+			planning._classify_work_order_action(existing, 120, prefer_update_existing=True),
+			"Create Delta",
+		)
+		with (
+			patch.object(planning, "_", side_effect=lambda message, **_kwargs: message),
+			self.assertRaisesRegex(frappe.ValidationError, "cannot be reduced automatically"),
+		):
+			planning._classify_work_order_action(existing, 80, prefer_update_existing=True)
+
+	def test_stopped_work_order_is_never_reused_even_at_the_same_quantity(self):
+		existing = frappe._dict(
+			name="WO-STOPPED",
+			status="Stopped",
+			qty=100,
+			produced_qty=0,
+			has_execution=False,
+			can_update_existing=False,
+		)
+		with (
+			patch.object(planning, "_", side_effect=lambda message, **_kwargs: message),
+			self.assertRaisesRegex(frappe.ValidationError, "cannot be reused"),
+		):
+			planning._classify_work_order_action(existing, 100)
+
+	def test_formal_shift_wos_lookup_is_isolated_by_planning_run(self):
+		database = MagicMock()
+		database.get_value.return_value = None
+		doc = frappe._dict(remarks="")
+		with (
+			patch.object(planning.frappe, "db", database),
+			patch.object(planning.frappe, "get_doc", return_value=doc),
+		):
+			result = planning._get_or_create_formal_shift_scheduling_doc(
+				"COMPANY-1",
+				"FLOOR-1",
+				"2026-08-12",
+				"Day",
+				"RUN-B",
+				"SHIFT-BATCH-1",
+			)
+
+		filters = database.get_value.call_args.args[1]
+		self.assertEqual(filters["custom_aps_run"], "RUN-B")
+		self.assertEqual(result.custom_aps_run, "RUN-B")
+
+	def test_destructive_work_order_actions_require_matching_erp_permission_before_writes(self):
+		for action, permission_type in (("Cancel Unstarted", "cancel"), ("Close Residual", "write")):
+			with (
+				self.subTest(action=action),
+				patch.object(planning.frappe, "has_permission", return_value=False) as has_permission,
+				patch.object(planning, "_", side_effect=lambda message, **_kwargs: message),
+				self.assertRaisesRegex(frappe.PermissionError, "before applying APS action"),
+			):
+				planning._assert_destructive_work_order_action_permission(
+					frappe._dict(action=action, existing_work_order="WO-1")
+				)
+			has_permission.assert_called_once_with(
+				"Work Order", permission_type, doc="WO-1"
+			)
+
+	def test_item_food_grade_field_is_namespaced_and_owned_for_safe_uninstall(self):
+		item_fields = {row["fieldname"] for row in STANDARD_CUSTOM_FIELDS["Item"]}
+		self.assertIn("custom_aps_food_grade", item_fields)
+		self.assertNotIn("custom_food_grade", item_fields)
+		owned_names = set(get_standard_custom_field_names())
+		self.assertIn("Item-custom_aps_food_grade", owned_names)
+		self.assertNotIn("Item-custom_food_grade", owned_names)
+
+	def test_food_grade_migration_copies_only_blank_targets_and_keeps_legacy_field(self):
+		database = MagicMock()
+		database.exists.return_value = True
+		database.get_single_value.return_value = "custom_food_grade"
+		database.has_column.return_value = True
+		with (
+			patch.object(migrate_aps_food_grade_field.frappe, "db", database),
+			patch.object(migrate_aps_food_grade_field, "create_custom_fields") as create_fields,
+		):
+			migrate_aps_food_grade_field.execute()
+
+		create_fields.assert_called_once()
+		field = create_fields.call_args.args[0]["Item"][0]
+		self.assertEqual(field["fieldname"], "custom_aps_food_grade")
+		query = database.sql.call_args.args[0]
+		self.assertIn("set `custom_aps_food_grade` = `custom_food_grade`", query)
+		self.assertIn("ifnull(`custom_aps_food_grade`, '') = ''", query)
+		self.assertNotIn("delete", query.lower())
+		database.set_single_value.assert_called_once_with(
+			"APS Settings", "item_food_grade_field", "custom_aps_food_grade"
+		)
+
+	def test_food_grade_migration_preserves_explicit_site_field_configuration(self):
+		database = MagicMock()
+		database.exists.return_value = True
+		database.get_single_value.return_value = "custom_customer_food_class"
+		with (
+			patch.object(migrate_aps_food_grade_field.frappe, "db", database),
+			patch.object(migrate_aps_food_grade_field, "create_custom_fields"),
+		):
+			migrate_aps_food_grade_field.execute()
+
+		database.sql.assert_not_called()
+		database.set_single_value.assert_not_called()
+
 	def test_roles_are_created_before_workspace_on_install_and_migrate(self):
 		for hook in (install.after_install, install.after_migrate):
 			calls = []
@@ -651,10 +765,16 @@ class TestImportAndTransactionGuards(unittest.TestCase):
 		]
 		with (
 			patch.object(planning.frappe.db, "exists", return_value=True),
-			patch.object(planning, "_get_work_order_reconciliation_snapshot", return_value={"name": "WO-1", "scheduling_rows": []}),
+			patch.object(
+				planning,
+				"_get_work_order_reconciliation_snapshot",
+				return_value={"name": "WO-1", "qty": 100, "produced_qty": 0, "scheduling_rows": []},
+			),
 			patch.object(planning, "_work_order_proposal_state_token", return_value="WO-TOKEN"),
 			patch.object(planning, "_get_formal_scheduling_reconciliation_rows", return_value=[]),
 			patch.object(planning, "_get_primary_segments_for_result", return_value=[segment]),
+			patch.object(planning, "_get_shift_scheduling_qty_precision", return_value=6),
+			patch.object(planning, "_item_quantity_requires_integer", return_value=False),
 		):
 			items = planning._build_shift_schedule_proposal_items(
 				wo_batch,
@@ -665,6 +785,196 @@ class TestImportAndTransactionGuards(unittest.TestCase):
 		self.assertEqual(len(items), 1)
 		self.assertEqual(items[0]["segment_state_token"], planning._segment_proposal_state_token(segment))
 		self.assertTrue(items[0]["segment_state_token"])
+
+	def test_create_delta_shift_proposal_splits_result_across_existing_and_delta_work_orders(self):
+		segment = {
+			"name": "SEG-DELTA",
+			"parent": "RESULT-1",
+			"workstation": "MACHINE-1",
+			"plant_floor": "FLOOR-1",
+			"start_time": "2026-08-11 08:00:00",
+			"end_time": "2026-08-11 18:00:00",
+			"planned_qty": 100,
+			"actual_completed_qty": 0,
+			"mould_reference": "MOLD-1",
+			"campaign_key": "ITEM-1|MOLD-1|MACHINE-1",
+			"segment_status": "Work Order Proposed",
+		}
+		wo_batch = MagicMock()
+		wo_batch.items = [
+			frappe._dict(
+				review_status="Applied",
+				action="Create Delta",
+				existing_work_order="WO-BASE",
+				target_work_order="WO-DELTA",
+				result_reference="RESULT-1",
+				item_code="ITEM-1",
+			)
+		]
+		snapshots = {
+			"WO-BASE": {"name": "WO-BASE", "qty": 60, "produced_qty": 0, "scheduling_rows": []},
+			"WO-DELTA": {"name": "WO-DELTA", "qty": 40, "produced_qty": 0, "scheduling_rows": []},
+		}
+		with (
+			patch.object(planning.frappe.db, "exists", return_value=True),
+			patch.object(
+				planning,
+				"_get_work_order_reconciliation_snapshot",
+				side_effect=lambda name: snapshots[name],
+			),
+			patch.object(planning, "_get_formal_scheduling_reconciliation_rows", return_value=[]),
+			patch.object(planning, "_get_primary_segments_for_result", return_value=[segment]),
+			patch.object(planning, "_get_shift_scheduling_qty_precision", return_value=6),
+			patch.object(planning, "_item_quantity_requires_integer", return_value=False),
+		):
+			items = planning._build_shift_schedule_proposal_items(
+				wo_batch,
+				release_from=frappe.utils.getdate("2026-08-11"),
+				release_to=frappe.utils.getdate("2026-08-11"),
+			)
+
+		self.assertEqual([(row["work_order"], row["planned_qty"]) for row in items], [
+			("WO-BASE", 60),
+			("WO-DELTA", 40),
+		])
+		self.assertEqual(sum(row["planned_qty"] for row in items), 100)
+		self.assertEqual(items[0]["planned_end_time"], items[1]["planned_start_time"])
+		self.assertTrue(all("separately auditable" in row["review_note"] for row in items))
+
+	def test_future_fixed_wos_consumes_its_own_shift_not_the_current_release_slice(self):
+		slices = [
+			{
+				"name": "SEG-1",
+				"posting_date": frappe.utils.getdate("2026-08-11"),
+				"shift_type": "白班",
+				"start_time": frappe.utils.get_datetime("2026-08-11 08:00:00"),
+				"end_time": frappe.utils.get_datetime("2026-08-11 12:00:00"),
+				"planned_qty": 50,
+			},
+			{
+				"name": "SEG-1",
+				"posting_date": frappe.utils.getdate("2026-08-12"),
+				"shift_type": "白班",
+				"start_time": frappe.utils.get_datetime("2026-08-12 08:00:00"),
+				"end_time": frappe.utils.get_datetime("2026-08-12 12:00:00"),
+				"planned_qty": 50,
+			},
+		]
+		remaining = planning._consume_segment_committed_quantities(
+			slices,
+			[
+				{
+					"name": "SI-FUTURE",
+					"posting_date": frappe.utils.getdate("2026-08-12"),
+					"shift_type": "白班",
+					"planned_start_date": frappe.utils.get_datetime("2026-08-12 08:00:00"),
+					"scheduling_qty": 50,
+				}
+			],
+			actual_completed_qty=0,
+		)
+
+		self.assertEqual(len(remaining), 1)
+		self.assertEqual(remaining[0]["posting_date"], frappe.utils.getdate("2026-08-11"))
+		self.assertEqual(remaining[0]["planned_qty"], 50)
+
+	def test_fixed_wos_and_unattributed_direct_production_are_both_consumed(self):
+		slices = [{"name": "SEG-1", "planned_qty": 100}]
+		remaining = planning._consume_segment_committed_quantities(
+			slices,
+			[{"name": "SI-1", "scheduling_qty": 30, "completed_qty": 0, "defect_qty": 0}],
+			actual_completed_qty=20,
+		)
+
+		self.assertEqual([row["planned_qty"] for row in remaining], [50])
+
+	def test_fixed_wos_actual_is_deduplicated_only_with_same_item_evidence(self):
+		slices = [{"name": "SEG-1", "planned_qty": 100}]
+		remaining = planning._consume_segment_committed_quantities(
+			slices,
+			[{"name": "SI-1", "scheduling_qty": 30, "completed_qty": 20, "defect_qty": 0}],
+			actual_completed_qty=20,
+		)
+
+		self.assertEqual([row["planned_qty"] for row in remaining], [70])
+
+	def test_shift_total_guard_counts_unattributed_direct_production(self):
+		approved = [
+			frappe._dict(
+				work_order="WO-1",
+				action="Create New",
+				planned_qty=70,
+				existing_scheduling_item=None,
+			)
+		]
+		with (
+			patch.object(
+				planning.frappe.db,
+				"get_value",
+				return_value=frappe._dict(qty=100, produced_qty=20),
+			),
+			patch.object(
+				planning,
+				"_get_formal_scheduling_reconciliation_rows",
+				return_value=[
+					{
+						"name": "SI-FIXED",
+						"scheduling_qty": 30,
+						"completed_qty": 0,
+						"defect_qty": 0,
+					}
+				],
+			),
+			patch.object(planning, "_", side_effect=lambda message, **_kwargs: message),
+			patch.object(
+				planning.frappe,
+				"throw",
+				side_effect=lambda message, *_args, **_kwargs: (_ for _ in ()).throw(
+					frappe.ValidationError(message)
+				),
+			),
+		):
+			with self.assertRaisesRegex(frappe.ValidationError, "non-overlapping production"):
+				planning._validate_shift_proposal_work_order_totals(frappe._dict(), approved)
+
+	def test_shift_total_guard_does_not_treat_defect_as_good_wo_production_overlap(self):
+		approved = [
+			frappe._dict(
+				work_order="WO-1",
+				action="Create New",
+				planned_qty=60,
+				existing_scheduling_item=None,
+			)
+		]
+		with (
+			patch.object(
+				planning.frappe.db,
+				"get_value",
+				return_value=frappe._dict(qty=100, produced_qty=20),
+			),
+			patch.object(
+				planning,
+				"_get_formal_scheduling_reconciliation_rows",
+				return_value=[
+					{
+						"name": "SI-FIXED",
+						"scheduling_qty": 30,
+						"completed_qty": 0,
+						"defect_qty": 10,
+					}
+				],
+			),
+			patch.object(planning, "_", side_effect=lambda message, **_kwargs: message),
+			patch.object(
+				planning.frappe,
+				"throw",
+				side_effect=lambda message, *_args, **_kwargs: (_ for _ in ()).throw(
+					frappe.ValidationError(message)
+				),
+			),
+		):
+			with self.assertRaisesRegex(frappe.ValidationError, "non-overlapping production"):
+				planning._validate_shift_proposal_work_order_totals(frappe._dict(), approved)
 
 	def test_create_delta_blocks_when_current_open_quantity_changed(self):
 		result_doc = frappe._dict(

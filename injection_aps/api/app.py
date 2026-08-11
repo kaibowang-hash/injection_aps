@@ -1358,11 +1358,29 @@ def _attach_review_counts(rows, child_doctype):
 	names = [row.get("name") for row in rows if row.get("name")]
 	if not names:
 		return rows
-	count_rows = frappe.get_all(
-		child_doctype,
-		filters={"parent": ("in", names)},
-		fields=["parent", "review_status", {"COUNT": "name", "as": "count"}],
-		group_by="parent, review_status",
+	# Frappe 15 expects string fields in ``get_all`` while Frappe 16's query
+	# builder rejects the legacy ``count(name) as count`` string.  Keep this tiny
+	# aggregate version-neutral and, importantly, never interpolate a caller-
+	# supplied DocType into SQL.
+	table_by_doctype = {
+		"APS Work Order Proposal Item": "tabAPS Work Order Proposal Item",
+		"APS Shift Schedule Proposal Item": "tabAPS Shift Schedule Proposal Item",
+	}
+	table_name = table_by_doctype.get(child_doctype)
+	if not table_name:
+		frappe.throw(
+			_("Unsupported APS proposal child DocType: {0}.").format(child_doctype or "-"),
+			frappe.ValidationError,
+		)
+	count_rows = frappe.db.sql(
+		f"""
+		select parent, review_status, count(name) as count
+		from `{table_name}`
+		where parent in %s
+		group by parent, review_status
+		""",
+		(tuple(names),),
+		as_dict=True,
 	)
 	count_map = defaultdict(dict)
 	for item in count_rows:

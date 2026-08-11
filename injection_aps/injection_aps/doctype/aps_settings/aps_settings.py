@@ -15,7 +15,8 @@ class APSSettings(Document):
 		self.default_setup_minutes = self.default_setup_minutes or 30
 		self.default_first_article_minutes = self.default_first_article_minutes or 45
 		self.default_hourly_capacity_qty = self.default_hourly_capacity_qty or 120
-		self.item_food_grade_field = self.item_food_grade_field or "custom_food_grade"
+		if not self.item_food_grade_field or self.item_food_grade_field == "custom_food_grade":
+			self.item_food_grade_field = "custom_aps_food_grade"
 		self.item_first_article_field = self.item_first_article_field or "custom_is_first_article"
 		self.item_color_field = self.item_color_field or "color"
 		self.item_material_field = self.item_material_field or "material"

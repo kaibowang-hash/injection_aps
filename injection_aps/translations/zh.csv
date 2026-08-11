@@ -353,6 +353,13 @@ Increased,增加
 Item Color Field,物料颜色字段
 Item First Article Field,物料首件字段
 Item Food Grade Field,物料食品级字段
+APS Food Grade,APS 食品级,Item
+Unsupported APS proposal child DocType: {0}.,不支持的 APS 建议明细类型：{0}。
+Create Delta result {0} must retain both the existing and delta Work Orders.,差额建单结果 {0} 必须同时保留原工单和差额工单。
+"APS segment {0} has {1} unscheduled quantity after applying the exact Work Order boundaries. Regenerate the Work Order proposal.","APS 排程段 {0} 按工单数量边界分配后仍有 {1} 未排数量。请重新生成工单建议。",Injection APS
+Work Order {0} is no longer available for shift proposal generation.,工单 {0} 已不可用于生成班次排产建议。
+"APS allocated this segment quantity to Work Order {0}; split Work Orders remain quantity-conserving and separately auditable.","APS 已将该排程段数量分配至工单 {0}；拆分工单数量守恒且可分别追溯。",Injection APS
+Shift proposal quantities for APS result {0} do not conserve the visible segment total.,APS 结果 {0} 的班次排产建议数量与当前窗口内的排程段总量不一致。
 Item Material Field,物料材料字段
 Item Max Stock Field,物料最大库存字段
 Item Min Batch Field,物料最小批量字段
@@ -3172,3 +3179,64 @@ Penalty Score,惩罚分值,APS Color Transition Rule
 Setup Minutes,准备时间(分钟),APS Color Transition Rule
 Blocking,阻断,APS Color Transition Rule
 Notes,便签,APS Color Transition Rule
+"Customer delivery dates must be changed through Schedule Import & Diff first, then applied from its Demand Delta.",客户交货日期必须先通过“排期导入与差异”进行版本化变更，再从对应需求差异执行调整。
+Source Demand Delta {0} no longer belongs to the active customer schedule. Re-import and analyze the latest delta.,来源需求差异 {0} 已不属于当前生效的客户排期。请重新导入并分析最新差异。
+Source Demand Delta {0} has inconsistent customer schedule ownership.,来源需求差异 {0} 的客户排期归属不一致。
+Customer schedule targets changed after import: {0}. Analyze the latest Demand Delta.,导入后客户排期目标已发生变化：{0}。请分析最新需求差异。
+Customer schedule target {0} is no longer active. Analyze the latest Demand Delta.,客户排期目标 {0} 已不再生效。请分析最新需求差异。
+Customer schedule target {0} no longer matches APS result {1}.,客户排期目标 {0} 已不再匹配 APS 结果 {1}。
+Source Demand Delta {0} matches multiple customer schedule rows. Resolve the duplicate source identity before Apply.,来源需求差异 {0} 匹配到多条客户排期行。执行前请先解决来源标识重复问题。
+Source Demand Delta {0} has no exact active schedule row.,来源需求差异 {0} 没有对应的精确生效排期行。
+Imported customer Demand Delta cannot be applied to a non-customer APS result.,导入的客户需求差异不能应用到非客户需求的 APS 结果。
+Demand Delta proposal lineage is inconsistent. Analyze the request again.,需求差异建议的钩稽关系不一致。请重新分析该变更请求。
+The active customer schedule changed after analysis. Analyze the latest Demand Delta before Apply.,分析后生效客户排期已发生变化。执行前请先分析最新需求差异。
+Customer {0} was not found.,未找到客户 {0}。,Injection APS
+"WOS proposals and non-overlapping production for Work Order {0} would commit {1}, exceeding Work Order qty {2}.",工单 {0} 的排产建议与未重叠的已生产数量合计为 {1}，超过工单数量 {2}。,Injection APS
+Work Order {0} APS owner Run/Result does not match planning run {1} and result {2}.,工单 {0} 的 APS 归属计划或结果与计划 {1}、结果 {2} 不一致。
+Source Demand Delta {0} must identify an exact Sales Order and Item before it can be applied.,来源需求差异 {0} 必须明确关联销售订单和物料后才能执行。
+Source Demand Delta {0} Sales Order {1} and Item {2} do not resolve to exactly one Sales Order Item.,来源需求差异 {0} 的销售订单 {1} 与物料 {2} 无法唯一确定一条销售订单明细。
+Source Demand Delta {0} Sales Order lineage does not match target result {1}.,来源需求差异 {0} 的销售订单钩稽与目标结果 {1} 不一致。
+Demand Delta Sales Order lineage changed after analysis. Analyze the request again.,分析后需求差异的销售订单钩稽已变化。请重新分析该变更请求。
+Customer schedule target {0} Sales Order does not match APS result {1}.,客户排期目标 {0} 的销售订单与 APS 结果 {1} 不一致。
+Customer schedule target {0} quantity {1} is below the authoritative delivered/produced/allocated lower bound {2}.,客户排期目标 {0} 的数量 {1} 低于权威的已交付、已生产或已分配下限 {2}。
+Demand Delta {0} belongs to cross-target minimum-batch or safety-stock coverage. Rebuild the complete Planning Run instead of applying an incremental change.,需求差异 {0} 涉及跨目标最小批量覆盖或安全库存覆盖。请重算完整计划，不能增量执行此变更。
+Imported Demand Delta requires its exact APS Net Requirement. Rebuild the Planning Run.,导入的需求差异必须关联其准确的 APS 净需求。请重算该计划。
+This Result combines customer schedule and Sales Order backlog sources. Rebuild the complete Planning Run instead of applying an incremental Demand Delta.,此结果同时包含客户排期和销售订单欠交来源。请重算完整计划，不能增量执行需求差异。
+This Result has mixed demand sources that cannot be updated incrementally. Rebuild the complete Planning Run.,此结果包含无法增量更新的混合需求来源。请重算完整计划。
+Demand source snapshot has duplicate customer schedule targets: {0}. Rebuild the complete Planning Run.,需求来源快照存在重复的客户排期目标：{0}。请重算完整计划。
+Accepted customer schedule targets do not conserve the Demand Delta quantity.,接受的客户排期目标数量与需求差异数量不守恒。
+Demand Delta formula evidence changed after analysis. Analyze the request again.,分析后需求差异的公式证据已变化。请重新分析该变更请求。
+Customer schedule target {0} date does not match the exact Demand Delta date {1}.,客户排期目标 {0} 的日期与需求差异的准确日期 {1} 不一致。
+Source Demand Delta {0} current date must exactly match the Change Request date.,来源需求差异 {0} 的当前日期必须与变更请求日期完全一致。
+Source Demand Delta {0} previous date does not match target result {1}.,来源需求差异 {0} 的原日期与目标结果 {1} 不一致。
+Source Demand Delta {0} date does not match target result {1}. Rebuild the Planning Run instead of merging dates.,来源需求差异 {0} 的日期与目标结果 {1} 不一致。请重算计划，不能合并不同日期的需求。
+APS Result and Net Requirement formula evidence differ at {0}. Rebuild the complete Planning Run.,APS 结果与净需求在 {0} 的公式证据不一致。请重算完整计划。
+APS Result and Net Requirement Work Order policy differ. Rebuild the complete Planning Run.,APS 结果与净需求的工单策略不一致。请重算完整计划。
+Customer Demand Delta target has no exact APS Net Requirement. Rebuild the Planning Run.,客户需求差异目标没有准确关联 APS 净需求。请重算计划。
+Customer Demand Delta target Net Requirement {0} was not found.,未找到客户需求差异目标对应的净需求 {0}。
+Net Requirement {0} does not match the exact Company/Customer/Sales Order/Item lineage of APS result {1}.,净需求 {0} 与 APS 结果 {1} 的公司、客户、销售订单及物料精确钩稽不一致。
+Net Requirement Work Order evidence is invalid. Rebuild the complete Planning Run.,净需求的工单证据无效。请重算完整计划。
+Demand Delta proposal has no exact accepted schedule date. Analyze the request again.,需求差异建议缺少准确的验收排期日期。请重新分析该变更请求。
+Customer schedule target {0} frozen {1} lineage differs from the accepted Demand Delta. Rebuild the complete Planning Run.,客户排期目标 {0} 冻结的 {1} 钩稽与已验收需求差异不一致。请重算完整计划。
+Customer schedule target {0} accepted quantity cannot be reconciled with its original delivery offset. Rebuild the complete Planning Run.,客户排期目标 {0} 的验收数量无法与原始交货偏移量对账。请重算完整计划。
+Customer schedule target {0} accepted open quantity is not conserved. Rebuild the complete Planning Run.,客户排期目标 {0} 的验收未交数量不守恒。请重算完整计划。
+Customer schedule target {0} has no complete accepted demand epoch. Rebuild the complete Planning Run.,客户排期目标 {0} 缺少完整的已验收需求基线。请重算完整计划。
+Customer schedule target {0} has no complete original fulfillment offsets ({1}). Rebuild the complete Planning Run.,客户排期目标 {0} 缺少完整的原始履约偏移量（{1}）。请重算完整计划。
+Customer schedule target {0} has invalid negative original fulfillment offsets. Rebuild the complete Planning Run.,客户排期目标 {0} 存在无效的负数原始履约偏移量。请重算完整计划。
+"Customer schedule target {0} original gross, delivered and source-open quantities are not conserved. Rebuild the complete Planning Run.",客户排期目标 {0} 的原始毛需求、已交数量与来源未交数量不守恒。请重算完整计划。
+Customer schedule target {0} has a return crossing its original delivery offset. Rebuild the complete Planning Run.,客户排期目标 {0} 存在跨越原始交货偏移量的退货。请重算完整计划。
+APS Result has no complete version-4 Net Requirement evidence ({0}). Rebuild the complete Planning Run.,APS 结果缺少完整的第 4 版净需求证据（{0}）。请重算完整计划。
+Customer schedule target {0} delivery was returned below its frozen opening quantity; rebuild the complete Planning Run.,客户排期目标 {0} 的退货使已交数量低于冻结的期初数量；请重算完整计划。
+You need {0} permission on Work Order {1} before applying APS action {2}.,应用 APS 操作 {2} 前，您需要对工单 {1} 具有 {0} 权限。,Injection APS
+Work Order {0} is {1} and cannot be reused by APS.,工单 {0} 当前状态为 {1}，APS 不能复用该工单。,Injection APS
+"Work Order {0} has execution, transferred material, or fixed scheduling and cannot be reduced automatically. Resolve its residual quantity before regenerating APS proposals.",工单 {0} 已有执行、转料或固定排产，不能自动减量。请先处理其剩余数量，再重新生成 APS 建议。,Injection APS
+{0} {1} is outside the locked Apply scope.,{0} {1} 不在已锁定的应用范围内。,Injection APS
+Source Demand Delta {0} Sales Order and Item do not resolve to exactly one locked Sales Order Item.,来源需求差异 {0} 的销售订单与物料无法唯一解析为已锁定的销售订单明细。,Injection APS
+Segment {0} is outside the locked Apply scope.,排产段 {0} 不在已锁定的应用范围内。,Injection APS
+The transaction snapshot differs from the locked current plan. Retry Apply in a new request.,事务快照与已锁定的当前计划不一致。请在新请求中重试应用。,Injection APS
+Delivery source {0} is not fully represented by the locked APS delivery ledger. Run delivery synchronization and retry.,交货来源 {0} 未被已锁定的 APS 交货账本完整记录。请运行交货同步后重试。,Injection APS
+Delivery source {0} changed after allocation synchronization. Retry after synchronization.,交货来源 {0} 在分配同步后发生变化。请同步后重试。,Injection APS
+APS delivery allocation has no submitted locked Delivery Note source.,APS 交货分配没有已提交且已锁定的交货单来源。,Injection APS
+Manufacture source {0} is not fully represented by the locked APS production ledger. Run production synchronization and retry.,生产来源 {0} 未被已锁定的 APS 生产账本完整记录。请运行生产同步后重试。,Injection APS
+Manufacture source {0} changed after production synchronization.,生产来源 {0} 在生产同步后发生变化。,Injection APS
+APS production allocation has no submitted locked Stock Entry source.,APS 生产分配没有已提交且已锁定的库存凭证来源。,Injection APS
