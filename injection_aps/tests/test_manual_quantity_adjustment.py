@@ -162,8 +162,10 @@ class TestManualQuantityAdjustment(TestCase):
 				manual_note="Approved",
 			)
 
-		self.assertEqual(preview.call_args.kwargs["target_qty"], 12.5)
-		self.assertEqual(preview.call_args.kwargs["allow_overproduction"], 0)
+		self.assertEqual(preview.call_args_list[0].kwargs["target_qty"], 12.5)
+		self.assertEqual(preview.call_args_list[0].kwargs["allow_overproduction"], 0)
+		self.assertEqual(preview.call_args_list[1].kwargs["target_qty"], 13.5)
+		self.assertEqual(preview.call_args_list[1].kwargs["allow_overproduction"], 1)
 		self.assertEqual(apply.call_args.kwargs["target_qty"], 13.5)
 		self.assertEqual(apply.call_args.kwargs["allow_overproduction"], 1)
 		self.assertEqual(apply.call_args.kwargs["manual_note"], "Approved")

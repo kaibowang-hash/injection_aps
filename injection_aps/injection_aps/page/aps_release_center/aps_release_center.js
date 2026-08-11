@@ -21,26 +21,26 @@ class InjectionAPSReleaseCenter {
 		this.releaseDrawerState = null;
 		this.page = frappe.ui.make_app_page({
 			parent: wrapper,
-			title: __("Execution"),
+			title: __("Execution", null, "Injection APS"),
 			single_column: true,
 		});
 		this.runField = this.page.add_field({
 			fieldtype: "Link",
 			fieldname: "run_name",
 			options: "APS Planning Run",
-			label: __("APS Run"),
+			label: __("APS Run", null, "Injection APS"),
 			default: injection_aps.ui.get_query_param("run_name") || undefined,
 			change: () => this.refresh(),
 		});
 		if (injection_aps.ui.can_run_action("sync_execution")) {
-			this.page.set_primary_action(__("Sync"), () => this.syncExecution());
+			this.page.set_primary_action(__("Sync", null, "Injection APS"), () => this.syncExecution());
 		}
 		this.page.set_secondary_action(__("Insert Order Impact"), () => this.openImpactDialog());
 
 		this.page.main.html(`
 				<div class="ia-page">
 				<div class="ia-banner">
-					<h3>${__("Execution")}</h3>
+					<h3>${__("Execution", null, "Injection APS")}</h3>
 					<p>${__("This page handles proposal review, formal apply, execution feedback, and exception handling after an APS run. Select an APS run first before working here.")}</p>
 				</div>
 				<div class="ia-empty-state-host"></div>
@@ -49,6 +49,7 @@ class InjectionAPSReleaseCenter {
 				<div class="ia-status-host"></div>
 				<div class="ia-action-host"></div>
 				<div class="ia-card-grid ia-summary"></div>
+				<div class="ia-fulfillment-warnings"></div>
 				<div class="ia-feedback"></div>
 				<div class="ia-grid-2">
 					<div class="ia-panel">
@@ -82,6 +83,7 @@ class InjectionAPSReleaseCenter {
 		this.runBody = this.page.main.find(".ia-run-body")[0];
 		this.runContextHost = this.page.main.find(".ia-run-context-host")[0];
 		this.summary = this.page.main.find(".ia-summary")[0];
+		this.fulfillmentWarnings = this.page.main.find(".ia-fulfillment-warnings")[0];
 		this.feedback = this.page.main.find(".ia-feedback")[0];
 		this.statusHost = this.page.main.find(".ia-status-host")[0];
 		this.actionHost = this.page.main.find(".ia-action-host")[0];
@@ -108,7 +110,7 @@ class InjectionAPSReleaseCenter {
 		};
 		const html = `
 			<div class="ia-list-preview" id="${listId}" data-collapsed="1">${renderPreview(true)}</div>
-			${rows.length > settings.previewCount ? `<button type="button" class="ia-inline-toggle" id="${toggleId}">${__("Expand All")} (+${rows.length - settings.previewCount})</button>` : ""}
+			${rows.length > settings.previewCount ? `<button type="button" class="ia-inline-toggle" id="${toggleId}">${__("Expand All", null, "Injection APS")} (+${rows.length - settings.previewCount})</button>` : ""}
 		`;
 		const bind = () => {
 			if (rows.length <= settings.previewCount) {
@@ -123,7 +125,7 @@ class InjectionAPSReleaseCenter {
 				const collapsed = listNode.dataset.collapsed !== "0";
 				listNode.innerHTML = renderPreview(!collapsed);
 				listNode.dataset.collapsed = collapsed ? "0" : "1";
-				toggleNode.textContent = collapsed ? __("Collapse") : `${__("Expand All")} (+${rows.length - settings.previewCount})`;
+				toggleNode.textContent = collapsed ? __("Collapse", null, "Injection APS") : `${__("Expand All", null, "Injection APS")} (+${rows.length - settings.previewCount})`;
 			});
 		};
 		return { html, bind };
@@ -169,21 +171,29 @@ class InjectionAPSReleaseCenter {
 			const executionHealth = data.execution_health || {};
 			const quantities = data.quantity_summary || {};
 			const fulfillment = data.fulfillment_summary || {};
+			injection_aps.ui.render_warnings(
+				this.fulfillmentWarnings,
+				{
+					warning_count: data.fulfillment_warning_count || 0,
+					warnings: data.fulfillment_warnings || [],
+				},
+				__("Fulfillment Data Warnings")
+			);
 			const exceptions = data.exceptions || [];
 			const blocking = exceptions.filter((row) => Number(row.is_blocking || 0)).length;
 			injection_aps.ui.render_cards(this.summary, [
-				{ label: __("Planned Qty"), value: injection_aps.ui.format_number(quantities.planned_qty || 0) },
-				{ label: __("Machine Scheduled Qty"), value: injection_aps.ui.format_number(quantities.machine_scheduled_qty || 0) },
-				{ label: __("Demand Covered Qty"), value: injection_aps.ui.format_number(quantities.demand_covered_qty || 0) },
-				{ label: __("Overproduction Qty"), value: injection_aps.ui.format_number(quantities.overproduction_qty || 0) },
+				{ label: __("Planned Qty", null, "Injection APS"), value: injection_aps.ui.format_number(quantities.planned_qty || 0) },
+				{ label: __("Machine Scheduled Qty", null, "Injection APS"), value: injection_aps.ui.format_number(quantities.machine_scheduled_qty || 0) },
+				{ label: __("Demand Covered Qty", null, "Injection APS"), value: injection_aps.ui.format_number(quantities.demand_covered_qty || 0) },
+				{ label: __("Overproduction Qty", null, "Injection APS"), value: injection_aps.ui.format_number(quantities.overproduction_qty || 0) },
 				{ label: __("Unscheduled Qty"), value: injection_aps.ui.format_number(quantities.unscheduled_qty || 0) },
-				{ label: __("Produced Qty"), value: injection_aps.ui.format_number(quantities.produced_qty || 0) },
-				{ label: __("Delivered Qty"), value: injection_aps.ui.format_number(quantities.delivered_qty || 0) },
-				{ label: __("Prebuild / JIT"), value: `${injection_aps.ui.format_number(fulfillment.prebuild_qty || 0)} / ${injection_aps.ui.format_number(fulfillment.jit_qty || 0)}` },
-				{ label: __("Current Deliverable"), value: injection_aps.ui.format_number(fulfillment.current_deliverable_qty || 0) },
-				{ label: __("Prebuild Inventory"), value: injection_aps.ui.format_number(fulfillment.prebuild_inventory_qty || 0) },
-				{ label: __("Cancel Stock Risk"), value: injection_aps.ui.format_number(fulfillment.cancellation_inventory_risk_qty || 0) },
-				{ label: __("Consistency"), value: injection_aps.ui.translate(quantities.consistency_status || "Unchecked") },
+				{ label: __("Produced Qty", null, "Injection APS"), value: injection_aps.ui.format_number(quantities.produced_qty || 0) },
+				{ label: __("Delivered Qty", null, "Injection APS"), value: injection_aps.ui.format_number(quantities.delivered_qty || 0) },
+				{ label: __("Prebuild / JIT", null, "Injection APS"), value: `${injection_aps.ui.format_number(fulfillment.prebuild_qty || 0)} / ${injection_aps.ui.format_number(fulfillment.jit_qty || 0)}` },
+				{ label: __("Current Deliverable", null, "Injection APS"), value: injection_aps.ui.format_number(fulfillment.current_deliverable_qty || 0) },
+				{ label: __("Prebuild Inventory", null, "Injection APS"), value: injection_aps.ui.format_number(fulfillment.prebuild_inventory_qty || 0) },
+				{ label: __("Cancel Stock Risk", null, "Injection APS"), value: injection_aps.ui.format_number(fulfillment.cancellation_inventory_risk_qty || 0) },
+				{ label: __("Consistency", null, "Injection APS"), value: injection_aps.ui.translate(quantities.consistency_status || "Unchecked") },
 				{ label: __("Delayed", null, "Injection APS"), value: executionHealth.delayed_segments || 0 },
 				{ label: __("Blocking"), value: blocking, note: __("Manual handling is required before formal apply.") },
 			]);
@@ -251,20 +261,20 @@ class InjectionAPSReleaseCenter {
 					</div>
 					<div class="row">
 						<div class="col-sm-6">
-							<label class="control-label">${__("Release Date")}</label>
+							<label class="control-label">${__("Release Date", null, "Injection APS Execution")}</label>
 							<input type="date" class="form-control input-sm" data-wos-release-date value="${injection_aps.ui.escape(defaultDate)}">
 						</div>
 						<div class="col-sm-6">
-							<label class="control-label">${__("Shift Type")}</label>
+							<label class="control-label">${__("Shift Type", null, "Injection APS")}</label>
 							<select class="form-control input-sm" data-wos-shift-type>
 								<option value="All">${__("Both Shifts")}</option>
-								<option value="白班">${__("白班")}</option>
-								<option value="晚班">${__("晚班")}</option>
+								<option value="白班">${__("白班", null, "Injection APS")}</option>
+								<option value="晚班">${__("晚班", null, "Injection APS")}</option>
 							</select>
 						</div>
 					</div>
 					<div class="ia-toolbar" style="margin-top: 10px;">
-						<button type="button" class="btn btn-sm btn-default" data-preview-wos-release>${__("Preview")}</button>
+						<button type="button" class="btn btn-sm btn-default" data-preview-wos-release>${__("Preview", null, "Injection APS")}</button>
 						<button type="button" class="btn btn-sm btn-primary" data-generate-wos-release>${__("Generate Proposal Batch")}</button>
 					</div>
 				</div>
@@ -294,7 +304,7 @@ class InjectionAPSReleaseCenter {
 		const values = this.getWOSReleaseDrawerValues(drawer);
 		const feedback = drawer.querySelector("[data-wos-release-feedback]");
 		if (!values.run_name || !values.release_from_date) {
-			injection_aps.ui.set_feedback(feedback, __("Select a release date first."), "warning");
+			injection_aps.ui.set_feedback(feedback, __("Select a release date first.", null, "Injection APS"), "warning");
 			return null;
 		}
 		const preview = await injection_aps.ui.xcall(
@@ -323,27 +333,27 @@ class InjectionAPSReleaseCenter {
 		const actionCounts = preview.action_counts || {};
 		injection_aps.ui.render_cards(summaryTarget, [
 			{ label: __("Rows"), value: preview.proposal_count || 0 },
-			{ label: __("New"), value: actionCounts.New || 0 },
+			{ label: __("New", null, "Injection APS Execution"), value: actionCounts.New || 0 },
 			{ label: __("Update"), value: (actionCounts["Update Existing"] || 0) + (actionCounts["Move Existing"] || 0) },
 			{ label: __("Cancel"), value: actionCounts["Cancel Existing"] || 0 },
 			{ label: __("Qty"), value: injection_aps.ui.format_number(preview.total_planned_qty || 0) },
-			{ label: __("Shift Type"), value: preview.shift_type || "All" },
+			{ label: __("Shift Type", null, "Injection APS"), value: preview.shift_type || "All" },
 		]);
 		const pending = preview.pending_batches || [];
 		warningTarget.innerHTML = pending.length
-			? `<div class="ia-alert warning">${__("There are existing un-applied proposal batches for this date/shift.")} ${pending
+			? `<div class="ia-alert warning">${__("There are existing un-applied proposal batches for this date/shift.", null, "Injection APS")} ${pending
 					.map((row) => injection_aps.ui.doc_link("APS Shift Schedule Proposal Batch", row.name, `${row.name} (${row.matching_count})`))
 					.join(" ")}</div>`
 			: "";
 		injection_aps.ui.render_table(
 			tableTarget,
 			[
-				{ label: __("Action"), fieldname: "action" },
+				{ label: __("Action", null, "Injection APS"), fieldname: "action" },
 				{ label: __("WOS Date"), fieldname: "posting_date" },
-				{ label: __("Shift Type"), fieldname: "shift_type" },
-				{ label: __("Work Order"), fieldname: "work_order" },
-				{ label: __("Item"), fieldname: "item_code" },
-				{ label: __("Workstation"), fieldname: "workstation" },
+				{ label: __("Shift Type", null, "Injection APS"), fieldname: "shift_type" },
+				{ label: __("Work Order", null, "Injection APS"), fieldname: "work_order" },
+				{ label: __("Item", null, "Injection APS"), fieldname: "item_code" },
+				{ label: __("Workstation", null, "Injection APS"), fieldname: "workstation" },
 				{ label: __("Qty"), fieldname: "planned_qty", fieldtype: "Float" },
 				{ label: __("Existing WOS"), fieldname: "existing_scheduling" },
 			],
@@ -409,11 +419,11 @@ class InjectionAPSReleaseCenter {
 		}
 		const response = await injection_aps.ui.xcall(
 			{
-				message: __("Generating WOS proposal batch..."),
-				success_message: __("WOS proposal batch generated."),
+				message: __("Generating WOS proposal batch...", null, "Injection APS"),
+				success_message: __("WOS proposal batch generated.", null, "Injection APS"),
 				busy_key: `wos-release-generate:${values.run_name}:${values.release_from_date}:${values.shift_type}`,
 				feedback_target: drawer.querySelector("[data-wos-release-feedback]"),
-				success_feedback: __("WOS proposal batch generated."),
+				success_feedback: __("WOS proposal batch generated.", null, "Injection APS"),
 			},
 			"injection_aps.api.app.generate_shift_schedule_proposals",
 			values
@@ -430,13 +440,13 @@ class InjectionAPSReleaseCenter {
 		injection_aps.ui.render_table(
 			this.woProposalTable,
 			[
-				{ label: __("Batch"), fieldname: "name" },
-				{ label: __("APS Run"), fieldname: "planning_run" },
-				{ label: __("Status"), fieldname: "status" },
-				{ label: __("Approval"), fieldname: "approval_state" },
+				{ label: __("Batch", null, "Injection APS"), fieldname: "name" },
+				{ label: __("APS Run", null, "Injection APS"), fieldname: "planning_run" },
+				{ label: __("Status", null, "Injection APS"), fieldname: "status" },
+				{ label: __("Approval", null, "Injection APS"), fieldname: "approval_state" },
 				{ label: __("Rows"), fieldname: "proposal_count" },
 				{ label: __("Applied", null, "Injection APS"), fieldname: "applied_count" },
-				{ label: __("Actions"), fieldname: "actions_html" },
+				{ label: __("Actions", null, "Injection APS"), fieldname: "actions_html" },
 			],
 			rows,
 			(column, value, row) => {
@@ -556,14 +566,14 @@ class InjectionAPSReleaseCenter {
 		injection_aps.ui.render_table(
 			this.shiftProposalTable,
 			[
-				{ label: __("Batch"), fieldname: "name" },
-				{ label: __("APS Run"), fieldname: "planning_run" },
-				{ label: __("Status"), fieldname: "status" },
-				{ label: __("Approval"), fieldname: "approval_state" },
+				{ label: __("Batch", null, "Injection APS"), fieldname: "name" },
+				{ label: __("APS Run", null, "Injection APS"), fieldname: "planning_run" },
+				{ label: __("Status", null, "Injection APS"), fieldname: "status" },
+				{ label: __("Approval", null, "Injection APS"), fieldname: "approval_state" },
 				{ label: __("WO Proposal Batch"), fieldname: "work_order_proposal_batch" },
 				{ label: __("Rows"), fieldname: "proposal_count" },
 				{ label: __("Applied", null, "Injection APS"), fieldname: "applied_count" },
-				{ label: __("Actions"), fieldname: "actions_html" },
+				{ label: __("Actions", null, "Injection APS"), fieldname: "actions_html" },
 			],
 			rows,
 			(column, value, row) => {
@@ -686,9 +696,9 @@ class InjectionAPSReleaseCenter {
 		injection_aps.ui.render_table(
 			this.releaseTable,
 			[
-				{ label: __("Batch"), fieldname: "name" },
-				{ label: __("APS Run"), fieldname: "planning_run" },
-				{ label: __("Status"), fieldname: "status" },
+				{ label: __("Batch", null, "Injection APS"), fieldname: "name" },
+				{ label: __("APS Run", null, "Injection APS"), fieldname: "planning_run" },
+				{ label: __("Status", null, "Injection APS"), fieldname: "status" },
 				{ label: __("From", null, "Injection APS"), fieldname: "release_from_date" },
 				{ label: __("To", null, "Injection APS"), fieldname: "release_to_date" },
 				{ label: __("Work Orders", null, "Injection APS"), fieldname: "generated_work_orders" },
@@ -748,7 +758,7 @@ class InjectionAPSReleaseCenter {
 		return `
 			<div class="ia-list-preview">${renderLinks(wosRows.slice(0, previewCount))}<span class="ia-chip">+${wosRows.length - previewCount}</span></div>
 			<details class="ia-list-preview">
-				<summary>${__("Expand All")} (${wosRows.length})</summary>
+				<summary>${__("Expand All", null, "Injection APS")} (${wosRows.length})</summary>
 				<div class="ia-list-preview">${renderLinks(wosRows.slice(previewCount))}</div>
 			</details>
 	`;
@@ -764,12 +774,12 @@ class InjectionAPSReleaseCenter {
 		injection_aps.ui.render_table(
 			this.exceptionTable,
 			[
-				{ label: __("Severity"), fieldname: "severity" },
-				{ label: __("Type"), fieldname: "exception_type" },
-				{ label: __("Item"), fieldname: "item_code" },
+				{ label: __("Severity", null, "Injection APS"), fieldname: "severity" },
+				{ label: __("Type", null, "Injection APS"), fieldname: "exception_type" },
+				{ label: __("Item", null, "Injection APS"), fieldname: "item_code" },
 				{ label: __("Machine", null, "Injection APS"), fieldname: "workstation" },
 				{ label: __("Message", null, "Injection APS"), fieldname: "message" },
-				{ label: __("Actions"), fieldname: "actions_html" },
+				{ label: __("Actions", null, "Injection APS"), fieldname: "actions_html" },
 			],
 			rows,
 			(column, value, row) => {
@@ -797,7 +807,7 @@ class InjectionAPSReleaseCenter {
 			{
 				exportable: true,
 				export_title: __("APS Exception Review"),
-				export_sheet_name: __("Exceptions"),
+				export_sheet_name: __("Exceptions", null, "Injection APS"),
 				export_file_name: "aps_exceptions",
 				export_subtitle: __("Blocking and warning exceptions waiting for manual review."),
 			}
@@ -865,13 +875,13 @@ class InjectionAPSReleaseCenter {
 		const html = `
 			<div class="ia-page">
 				<div class="ia-status-line">
-					<div class="ia-status-cell"><span class="ia-status-label">${__("Severity")}</span><div class="ia-status-value">${injection_aps.ui.escape(detail.severity || "-")}</div></div>
-					<div class="ia-status-cell"><span class="ia-status-label">${__("Type")}</span><div class="ia-status-value">${injection_aps.ui.escape(translatedExceptionType || "-")}</div></div>
+					<div class="ia-status-cell"><span class="ia-status-label">${__("Severity", null, "Injection APS")}</span><div class="ia-status-value">${injection_aps.ui.escape(detail.severity || "-")}</div></div>
+					<div class="ia-status-cell"><span class="ia-status-label">${__("Type", null, "Injection APS")}</span><div class="ia-status-value">${injection_aps.ui.escape(translatedExceptionType || "-")}</div></div>
 					<div class="ia-status-cell ia-status-cell-wide"><span class="ia-status-label">${__("Message", null, "Injection APS")}</span><div class="ia-status-value">${injection_aps.ui.escape(translatedMessage || "-")}</div></div>
 				</div>
 				<div class="ia-mini-grid">
 					<div class="ia-panel">
-						<h4>${__("Root Cause")}</h4>
+						<h4>${__("Root Cause", null, "Injection APS")}</h4>
 						<div class="ia-muted">${injection_aps.ui.escape(translatedRootCause)}</div>
 					</div>
 					<div class="ia-panel">
@@ -907,7 +917,7 @@ class InjectionAPSReleaseCenter {
 	renderImpact() {
 		if (!this.lastImpact) {
 			injection_aps.ui.render_cards(this.impactSummary, [
-				{ label: __("Insert Order Impact"), value: __("None"), note: __("Use the page-level insert order impact tool when needed. It is no longer mixed into exception handling.") },
+				{ label: __("Insert Order Impact"), value: __("None", null, "Injection APS"), note: __("Use the page-level insert order impact tool when needed. It is no longer mixed into exception handling.") },
 			]);
 			injection_aps.ui.render_table(this.impactTable, [{ label: __("Message", null, "Injection APS"), fieldname: "message" }], []);
 			return;
@@ -923,7 +933,7 @@ class InjectionAPSReleaseCenter {
 			this.impactTable,
 			[
 				{ label: __("Lane"), fieldname: "lane_key" },
-				{ label: __("Mold"), fieldname: "mould_reference" },
+				{ label: __("Mold", null, "Injection APS"), fieldname: "mould_reference" },
 				{ label: __("Machine", null, "Injection APS"), fieldname: "workstation" },
 				{ label: __("Qty"), fieldname: "planned_qty" },
 				{ label: __("Start", null, "Injection APS"), fieldname: "start_time" },
@@ -984,7 +994,7 @@ class InjectionAPSReleaseCenter {
 		const dialog = new frappe.ui.Dialog({
 			title: __("Insert Order Impact Analysis"),
 			fields: [
-				{ fieldname: "company", fieldtype: "Link", options: "Company", label: __("Company"), reqd: 1, default: frappe.defaults.get_user_default("Company") },
+				{ fieldname: "company", fieldtype: "Link", options: "Company", label: __("Company", null, "Injection APS"), reqd: 1, default: frappe.defaults.get_user_default("Company") },
 				{
 					fieldname: "plant_floor_rows",
 					fieldtype: "Table",
@@ -996,16 +1006,16 @@ class InjectionAPSReleaseCenter {
 							fieldname: "plant_floor",
 							fieldtype: "Link",
 							options: "Plant Floor",
-							label: __("Plant Floor"),
+							label: __("Plant Floor", null, "Injection APS"),
 							in_list_view: 1,
 							reqd: 1,
 						},
 					],
 				},
-				{ fieldname: "item_code", fieldtype: "Link", options: "Item", label: __("Item"), reqd: 1, default: prefillItemCode || undefined },
+				{ fieldname: "item_code", fieldtype: "Link", options: "Item", label: __("Item", null, "Injection APS"), reqd: 1, default: prefillItemCode || undefined },
 				{ fieldname: "qty", fieldtype: "Float", label: __("Qty"), reqd: 1 },
-				{ fieldname: "required_date", fieldtype: "Date", label: __("Required Date"), reqd: 1 },
-				{ fieldname: "customer", fieldtype: "Link", options: "Customer", label: __("Customer") },
+				{ fieldname: "required_date", fieldtype: "Date", label: __("Required Date", null, "Injection APS"), reqd: 1 },
+				{ fieldname: "customer", fieldtype: "Link", options: "Customer", label: __("Customer", null, "Injection APS") },
 			],
 			primary_action_label: __("Analyze"),
 			primary_action: async (values) => {

@@ -7,6 +7,8 @@
  "field_order": [
   "company",
   "customer",
+  "sales_order",
+  "sales_order_item",
   "item_code",
   "demand_date",
   "demand_qty",
@@ -25,6 +27,8 @@
   "planning_qty",
   "net_requirement_qty",
   "reason_text",
+  "demand_source_snapshot_json",
+  "fulfillment_baseline_json",
   "is_system_generated"
  ],
  "fields": [
@@ -45,6 +49,21 @@
    "options": "Customer",
    "read_only": 1,
    "search_index": 1
+  },
+  {
+   "fieldname": "sales_order",
+   "fieldtype": "Link",
+   "label": "Sales Order",
+   "options": "Sales Order",
+   "read_only": 1,
+   "search_index": 1
+  },
+  {
+   "fieldname": "sales_order_item",
+   "fieldtype": "Data",
+   "hidden": 1,
+   "label": "Sales Order Item",
+   "read_only": 1
   },
   {
    "fieldname": "item_code",
@@ -168,6 +187,20 @@
    "fieldname": "reason_text",
    "fieldtype": "Small Text",
    "label": "Reason Text",
+   "read_only": 1
+  },
+  {
+   "fieldname": "demand_source_snapshot_json",
+   "fieldtype": "Long Text",
+   "hidden": 1,
+   "label": "Demand Source Snapshot JSON",
+   "read_only": 1
+  },
+  {
+   "fieldname": "fulfillment_baseline_json",
+   "fieldtype": "Long Text",
+   "hidden": 1,
+   "label": "Fulfillment Baseline JSON",
    "read_only": 1
   },
   {

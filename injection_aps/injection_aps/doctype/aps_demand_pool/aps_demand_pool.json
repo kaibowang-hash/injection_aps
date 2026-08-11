@@ -8,6 +8,7 @@
   "company",
   "customer",
   "sales_order",
+  "sales_order_item",
   "item_code",
   "customer_part_no",
   "demand_source",
@@ -27,6 +28,7 @@
   "is_first_article",
   "source_doctype",
   "source_name",
+  "source_detail_name",
   "remark",
   "is_system_generated"
  ],
@@ -54,6 +56,13 @@
    "fieldtype": "Link",
    "label": "Sales Order",
    "options": "Sales Order",
+   "read_only": 1
+  },
+  {
+   "fieldname": "sales_order_item",
+   "fieldtype": "Data",
+   "hidden": 1,
+   "label": "Sales Order Item",
    "read_only": 1
   },
   {
@@ -189,6 +198,13 @@
    "fieldtype": "Dynamic Link",
    "label": "Source Name",
    "options": "source_doctype",
+   "read_only": 1
+  },
+  {
+   "fieldname": "source_detail_name",
+   "fieldtype": "Data",
+   "hidden": 1,
+   "label": "Source Detail Name",
    "read_only": 1
   },
   {

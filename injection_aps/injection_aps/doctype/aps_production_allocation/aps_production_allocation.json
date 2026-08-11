@@ -226,6 +226,7 @@
    "role": "Manufacturing Manager"
   }
  ],
+ "read_only": 1,
  "sort_field": "source_posting_time",
  "sort_order": "DESC",
  "track_changes": 1

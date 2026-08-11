@@ -26,7 +26,7 @@ class InjectionAPSRunConsole {
 			fieldtype: "Link",
 			fieldname: "company",
 			options: "Company",
-			label: __("Company"),
+			label: __("Company", null, "Injection APS"),
 			default: frappe.defaults.get_user_default("Company"),
 			change: () => this.refresh(),
 		});
@@ -34,7 +34,7 @@ class InjectionAPSRunConsole {
 			fieldtype: "Link",
 			fieldname: "plant_floor",
 			options: "Plant Floor",
-			label: __("Plant Floor"),
+			label: __("Plant Floor", null, "Injection APS"),
 			change: () => this.refresh(),
 		});
 		if (injection_aps.ui.can_run_action("run_trial")) {
@@ -75,7 +75,7 @@ class InjectionAPSRunConsole {
 
 	renderRuns(rows) {
 		if (!rows.length) {
-			injection_aps.ui.render_table(this.table, [{ label: __("Info"), fieldname: "message" }], []);
+			injection_aps.ui.render_table(this.table, [{ label: __("Info", null, "Injection APS"), fieldname: "message" }], []);
 			return;
 		}
 
@@ -83,21 +83,21 @@ class InjectionAPSRunConsole {
 			{ label: __("Run", null, "Injection APS"), fieldname: "name" },
 			{ label: __("Plant Floors"), fieldname: "selected_plant_floor_summary" },
 			{ label: __("Planning Date"), fieldname: "planning_date" },
-			{ label: __("Status"), fieldname: "status" },
-			{ label: __("Approval"), fieldname: "approval_state" },
+			{ label: __("Status", null, "Injection APS"), fieldname: "status" },
+			{ label: __("Approval", null, "Injection APS"), fieldname: "approval_state" },
 			{ label: __("Existing WO Policy"), fieldname: "existing_work_order_policy" },
-			{ label: __("Plan Qty"), fieldname: "total_net_requirement_qty" },
-			{ label: __("Machine Scheduled"), fieldname: "total_machine_scheduled_qty" },
-			{ label: __("Demand Covered"), fieldname: "total_demand_covered_qty" },
-			{ label: __("Overproduction"), fieldname: "total_overproduction_qty" },
-			{ label: __("Unscheduled"), fieldname: "total_unscheduled_qty" },
-			{ label: __("Produced"), fieldname: "total_produced_qty" },
-			{ label: __("Delivered"), fieldname: "total_delivered_qty" },
-			{ label: __("Consistency"), fieldname: "consistency_status" },
-			{ label: __("Exceptions"), fieldname: "exception_count" },
+			{ label: __("Plan Qty", null, "Injection APS"), fieldname: "total_net_requirement_qty" },
+			{ label: __("Machine Scheduled", null, "Injection APS"), fieldname: "total_machine_scheduled_qty" },
+			{ label: __("Demand Covered", null, "Injection APS"), fieldname: "total_demand_covered_qty" },
+			{ label: __("Overproduction", null, "Injection APS"), fieldname: "total_overproduction_qty" },
+			{ label: __("Unscheduled", null, "Injection APS"), fieldname: "total_unscheduled_qty" },
+			{ label: __("Produced", null, "Injection APS"), fieldname: "total_produced_qty" },
+			{ label: __("Delivered", null, "Injection APS"), fieldname: "total_delivered_qty" },
+			{ label: __("Consistency", null, "Injection APS"), fieldname: "consistency_status" },
+			{ label: __("Exceptions", null, "Injection APS"), fieldname: "exception_count" },
 			{ label: __("Exec"), fieldname: "execution_health" },
 			{ label: __("Next Step"), fieldname: "next_step" },
-			{ label: __("Actions"), fieldname: "actions_html" },
+			{ label: __("Actions", null, "Injection APS"), fieldname: "actions_html" },
 		];
 
 		injection_aps.ui.render_table(
@@ -152,7 +152,7 @@ class InjectionAPSRunConsole {
 				}
 				if (column.fieldname === "execution_health") {
 					const health = row.execution_health || {};
-					return `${__("Run", null, "Injection APS Execution")}:${health.running || 0} / ${__("Delay")}:${health.delayed || 0} / ${__("No Update")}:${health.no_recent_update || 0}`;
+					return `${__("Run", null, "Injection APS Execution")}:${health.running || 0} / ${__("Delay", null, "Injection APS Execution")}:${health.delayed || 0} / ${__("No Update")}:${health.no_recent_update || 0}`;
 				}
 					if (column.fieldname === "actions_html") {
 						const displayActions = (injection_aps.ui.get_value(row, "next_actions.actions", []) || [])
@@ -163,7 +163,7 @@ class InjectionAPSRunConsole {
 					return `
 						<div class="ia-chip-row">
 							<button class="btn btn-xs btn-default" data-run-action="open_gantt" data-run-name="${injection_aps.ui.escape(row.name)}">${__("Board")}</button>
-							<button class="btn btn-xs btn-default" data-run-action="open_release" data-run-name="${injection_aps.ui.escape(row.name)}">${__("Execution")}</button>
+							<button class="btn btn-xs btn-default" data-run-action="open_release" data-run-name="${injection_aps.ui.escape(row.name)}">${__("Execution", null, "Injection APS")}</button>
 							${displayActions
 								.map(
 									(action, index) => `
@@ -221,7 +221,7 @@ class InjectionAPSRunConsole {
 		const dialog = new frappe.ui.Dialog({
 			title: __("Create Recalc Run"),
 			fields: [
-				{ fieldname: "company", fieldtype: "Link", options: "Company", label: __("Company"), reqd: 1, default: this.companyField.get_value() || frappe.defaults.get_user_default("Company") },
+				{ fieldname: "company", fieldtype: "Link", options: "Company", label: __("Company", null, "Injection APS"), reqd: 1, default: this.companyField.get_value() || frappe.defaults.get_user_default("Company") },
 				{
 					fieldname: "plant_floor_rows",
 					fieldtype: "Table",
@@ -234,13 +234,13 @@ class InjectionAPSRunConsole {
 							fieldname: "plant_floor",
 							fieldtype: "Link",
 							options: "Plant Floor",
-							label: __("Plant Floor"),
+							label: __("Plant Floor", null, "Injection APS"),
 							in_list_view: 1,
 							reqd: 1,
 						},
 					],
 				},
-				{ fieldname: "horizon_days", fieldtype: "Int", label: __("Horizon Days"), default: 14, reqd: 1 },
+				{ fieldname: "horizon_days", fieldtype: "Int", label: __("Horizon Days", null, "Injection APS"), default: 14, reqd: 1 },
 				injection_aps.ui.get_existing_work_order_policy_field(),
 			],
 			primary_action_label: __("Recalculate"),

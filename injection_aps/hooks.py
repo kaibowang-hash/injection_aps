@@ -32,17 +32,24 @@ doctype_js = {
 	"APS Release Batch": "public/js/aps_release_batch.js",
 }
 
+doctype_list_js = {
+	"APS Change Request": "public/js/aps_change_request_list.js",
+}
+
 doc_events = {
 	"Delivery Note": {
+		"before_submit": "injection_aps.services.delivery_sync.validate_delivery_before_submit",
 		"on_submit": "injection_aps.services.delivery_sync.queue_delivery_sync",
 		"on_cancel": "injection_aps.services.delivery_sync.queue_delivery_sync",
 	},
 	"Stock Entry": {
+		"before_submit": "injection_aps.services.execution_sync.validate_manufacture_before_submit",
 		"on_submit": "injection_aps.services.execution_sync.queue_production_sync",
 		"on_cancel": "injection_aps.services.execution_sync.queue_production_sync",
 	},
 }
 
+before_install = "injection_aps.install.before_install"
 after_install = "injection_aps.install.after_install"
 after_migrate = "injection_aps.install.after_migrate"
 before_uninstall = "injection_aps.uninstall.before_uninstall"

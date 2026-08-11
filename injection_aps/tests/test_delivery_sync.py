@@ -221,7 +221,8 @@ class TestDeliveryAllocationSync(FrappeTestCase):
 		doc.docstatus = 1
 		doc.company = self.company
 		doc.customer = customer
-		doc.posting_date = today()
+		# Controlled FIFO only auto-claims the matching daily customer schedule.
+		doc.posting_date = self.due_date_1
 		doc.posting_time = nowtime()
 		doc.is_return = cint(is_return)
 		doc.return_against = return_against

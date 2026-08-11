@@ -1,6 +1,6 @@
 {
  "actions": [],
- "allow_rename": 1,
+ "allow_rename": 0,
  "autoname": "APS-IMP-.#####",
  "doctype": "DocType",
  "engine": "InnoDB",
@@ -33,6 +33,7 @@
    "in_list_view": 1,
    "label": "Customer",
    "options": "Customer",
+   "read_only": 1,
    "reqd": 1
   },
   {
@@ -41,6 +42,7 @@
    "in_list_view": 1,
    "label": "Company",
    "options": "Company",
+   "read_only": 1,
    "reqd": 1
   },
   {
@@ -54,6 +56,7 @@
    "fieldtype": "Data",
    "in_list_view": 1,
    "label": "Version No",
+   "read_only": 1,
    "reqd": 1
   },
   {
@@ -92,12 +95,14 @@
    "fieldname": "source_type",
    "fieldtype": "Select",
    "label": "Source Type",
-   "options": "\nCustomer Delivery Schedule\nForecast\nUrgent Order"
+   "options": "\nCustomer Delivery Schedule\nForecast\nUrgent Order",
+   "read_only": 1
   },
   {
    "fieldname": "uploaded_file",
    "fieldtype": "Attach",
-   "label": "Uploaded File"
+   "label": "Uploaded File",
+   "read_only": 1
   },
   {
    "fieldname": "parser_mode",
@@ -169,39 +174,31 @@
  "name": "APS Schedule Import Batch",
  "permissions": [
   {
-   "create": 1,
-   "delete": 1,
    "email": 1,
    "export": 1,
    "print": 1,
    "read": 1,
    "report": 1,
    "role": "System Manager",
-   "share": 1,
-   "write": 1
+   "share": 1
   },
   {
-   "create": 1,
-   "delete": 1,
    "email": 1,
    "export": 1,
    "print": 1,
    "read": 1,
    "report": 1,
    "role": "Manufacturing Manager",
-   "share": 1,
-   "write": 1
+   "share": 1
   },
   {
-   "create": 1,
    "email": 1,
    "export": 1,
    "print": 1,
    "read": 1,
    "report": 1,
    "role": "Sales User",
-   "share": 1,
-   "write": 1
+   "share": 1
   }
  ],
  "sort_field": "modified",

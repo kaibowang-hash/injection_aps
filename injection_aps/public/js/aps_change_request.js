@@ -178,7 +178,7 @@ function add_change_request_actions(frm) {
 		}), null, "primary");
 	}
 	if (status === "Analyzed" && injection_aps.ui.can_run_action("confirm_change_request")) {
-		frm.add_custom_button(__("PMC Confirm"), () => confirm_change_action(frm, {
+		frm.add_custom_button(__("PMC Confirm", null, "Injection APS"), () => confirm_change_action(frm, {
 			method: "injection_aps.api.app.confirm_change_request",
 			title: __("Confirm Impact Proposal"),
 			message: __("Confirming PMC review..."),
@@ -187,7 +187,7 @@ function add_change_request_actions(frm) {
 		}), null, "primary");
 	}
 	if (status === "PMC Confirmed" && injection_aps.ui.can_run_action("approve_change_request")) {
-		frm.add_custom_button(__("Approve"), () => confirm_change_action(frm, {
+		frm.add_custom_button(__("Approve", null, "Injection APS"), () => confirm_change_action(frm, {
 			method: "injection_aps.api.app.approve_change_request",
 			title: __("Approve Plan Change"),
 			message: __("Approving plan change..."),
@@ -196,7 +196,7 @@ function add_change_request_actions(frm) {
 		}), null, "primary");
 	}
 	if (status === "Approved" && injection_aps.ui.can_run_action("apply_change_request")) {
-		frm.add_custom_button(__("Apply"), () => confirm_change_action(frm, {
+		frm.add_custom_button(__("Apply", null, "Injection APS"), () => confirm_change_action(frm, {
 			method: "injection_aps.api.app.apply_change_request",
 			title: __("Apply Plan Change"),
 			message: __("Applying plan change..."),
@@ -205,14 +205,19 @@ function add_change_request_actions(frm) {
 		}), null, "primary");
 	}
 	if (["Analyzed", "PMC Confirmed", "Approved"].includes(status) && injection_aps.ui.can_run_action("reject_change_request")) {
-		frm.add_custom_button(__("Reject"), () => reject_change_action(frm), __("Review"));
+		frm.add_custom_button(__("Reject", null, "Injection APS"), () => reject_change_action(frm), __("Review", null, "Injection APS"));
 	}
 	if (frm.doc.planning_run) {
-		frm.add_custom_button(__("Gantt"), () => injection_aps.ui.go_to(`aps-schedule-gantt?run_name=${encodeURIComponent(frm.doc.planning_run)}`), __("Open"));
+		frm.add_custom_button(__("Gantt", null, "Injection APS"), () => injection_aps.ui.go_to(`aps-schedule-gantt?run_name=${encodeURIComponent(frm.doc.planning_run)}`), __("Open", null, "Injection APS"));
 	}
 	if (frm.doc.application_log) {
-		frm.add_custom_button(__("Audit Log"), () => frappe.set_route("Form", "APS Change Application Log", frm.doc.application_log), __("Open"));
+		frm.add_custom_button(__("Audit Log", null, "Injection APS"), () => frappe.set_route("Form", "APS Change Application Log", frm.doc.application_log), __("Open", null, "Injection APS"));
 	}
+	frm.add_custom_button(
+		__("Change Impact Center", null, "Injection APS"),
+		() => frappe.set_route("aps-change-impact-center"),
+		__("Open", null, "Injection APS")
+	);
 }
 
 async function run_change_action(frm, options) {
@@ -245,8 +250,8 @@ async function confirm_change_action(frm, options) {
 function reject_change_action(frm) {
 	const dialog = new frappe.ui.Dialog({
 		title: __("Reject Plan Change"),
-		fields: [{ fieldname: "reason", fieldtype: "Small Text", label: __("Reason"), reqd: 1 }],
-		primary_action_label: __("Reject"),
+		fields: [{ fieldname: "reason", fieldtype: "Small Text", label: __("Reason", null, "Injection APS"), reqd: 1 }],
+		primary_action_label: __("Reject", null, "Injection APS"),
 		primary_action: async (values) => {
 			dialog.hide();
 			await injection_aps.ui.xcall(
@@ -267,7 +272,7 @@ function reject_change_action(frm) {
 function build_confirmation_summary(frm) {
 	return [
 		__("Change Request: {0}").replace("{0}", frm.doc.name),
-		__("Type: {0}").replace("{0}", __(frm.doc.change_type || "-")),
+		__("Type: {0}").replace("{0}", injection_aps.ui.translate(frm.doc.change_type || "-")),
 		__("Planning Run: {0}").replace("{0}", frm.doc.planning_run || "-"),
 		__("Target Qty: {0}").replace("{0}", injection_aps.ui.format_number(frm.doc.target_planned_qty || 0)),
 		__("Retained Qty: {0}").replace("{0}", injection_aps.ui.format_number(frm.doc.retained_excess_qty || 0)),
@@ -294,26 +299,26 @@ function render_change_request(frm) {
 	`;
 	wrapper.empty().append(root);
 	injection_aps.ui.render_cards(root.querySelector(".ia-change-metrics"), [
-		{ label: __("Current Plan"), value: injection_aps.ui.format_number(frm.doc.current_planned_qty || 0) },
-		{ label: __("Target Plan"), value: injection_aps.ui.format_number(frm.doc.target_planned_qty || 0) },
-		{ label: __("Machine Scheduled"), value: injection_aps.ui.format_number((proposal.quantity_protection || {}).machine_scheduled_qty || proposal.projected_machine_scheduled_qty || 0) },
-		{ label: __("Minimum Retained"), value: injection_aps.ui.format_number(frm.doc.minimum_retained_qty || 0) },
-		{ label: __("Retained Excess"), value: injection_aps.ui.format_number(frm.doc.retained_excess_qty || 0) },
-		{ label: __("Segment Actions"), value: (proposal.segment_actions || []).length },
+		{ label: __("Current Plan", null, "Injection APS"), value: injection_aps.ui.format_number(frm.doc.current_planned_qty || 0) },
+		{ label: __("Target Plan", null, "Injection APS"), value: injection_aps.ui.format_number(frm.doc.target_planned_qty || 0) },
+		{ label: __("Machine Scheduled", null, "Injection APS"), value: injection_aps.ui.format_number((proposal.quantity_protection || {}).machine_scheduled_qty || proposal.projected_machine_scheduled_qty || 0) },
+		{ label: __("Minimum Retained", null, "Injection APS"), value: injection_aps.ui.format_number(frm.doc.minimum_retained_qty || 0) },
+		{ label: __("Retained Excess", null, "Injection APS"), value: injection_aps.ui.format_number(frm.doc.retained_excess_qty || 0) },
+		{ label: __("Segment Actions", null, "Injection APS"), value: (proposal.segment_actions || []).length },
 	]);
 	const columns = [
-		{ label: __("Affected Order"), fieldname: "affected_order" },
-		{ label: __("Customer"), fieldname: "customer" },
-		{ label: __("Item"), fieldname: "item_code" },
-		{ label: __("Due Date"), fieldname: "due_date", fieldtype: "Date" },
-		{ label: __("Old Completion"), fieldname: "old_completion_time", fieldtype: "Datetime" },
-		{ label: __("New Completion"), fieldname: "new_completion_time", fieldtype: "Datetime" },
-		{ label: __("Delayed Qty"), fieldname: "delayed_qty", fieldtype: "Float" },
+		{ label: __("Affected Order", null, "Injection APS"), fieldname: "affected_order" },
+		{ label: __("Customer", null, "Injection APS"), fieldname: "customer" },
+		{ label: __("Item", null, "Injection APS"), fieldname: "item_code" },
+		{ label: __("Due Date", null, "Injection APS"), fieldname: "due_date", fieldtype: "Date" },
+		{ label: __("Old Completion", null, "Injection APS"), fieldname: "old_completion_time", fieldtype: "Datetime" },
+		{ label: __("New Completion", null, "Injection APS"), fieldname: "new_completion_time", fieldtype: "Datetime" },
+		{ label: __("Delayed Qty", null, "Injection APS"), fieldname: "delayed_qty", fieldtype: "Float" },
 		{ label: __("Delay Minutes"), fieldname: "delay_minutes", fieldtype: "Float" },
 	];
 	injection_aps.ui.render_table(root.querySelector(".ia-change-impact-orders"), columns, impact.affected_orders || [], null, {
 		exportable: true,
-		export_title: __("Plan Change Impact"),
+		export_title: __("Plan Change Impact", null, "Injection APS"),
 		export_file_name: `aps_change_${frm.doc.name}`,
 	});
 	render_secondary_impact(root.querySelector(".ia-change-secondary"), impact);
@@ -327,14 +332,14 @@ function render_secondary_impact(target, impact) {
 		.concat([impact.overtime_suggestion, impact.subcontract_suggestion].filter(Boolean));
 	target.innerHTML = `
 		<div class="ia-change-secondary-band">
-			<div><strong>${__("Affected Customers")}</strong><span>${injection_aps.ui.escape((impact.affected_customers || []).join(", ") || "-")}</span></div>
-			<div><strong>${__("Cascading Delays")}</strong><span>${Number(impact.cascading_delay_count || 0)}</span></div>
-			<div><strong>${__("Added Mold Changes")}</strong><span>${Number(impact.additional_mold_changes || 0)}</span></div>
-			<div><strong>${__("Freeze Conflicts")}</strong><span>${conflicts.length}</span></div>
+			<div><strong>${__("Affected Customers", null, "Injection APS")}</strong><span>${injection_aps.ui.escape((impact.affected_customers || []).join(", ") || "-")}</span></div>
+			<div><strong>${__("Cascading Delays", null, "Injection APS")}</strong><span>${Number(impact.cascading_delay_count || 0)}</span></div>
+			<div><strong>${__("Added Mold Changes", null, "Injection APS")}</strong><span>${Number(impact.additional_mold_changes || 0)}</span></div>
+			<div><strong>${__("Freeze Conflicts", null, "Injection APS")}</strong><span>${conflicts.length}</span></div>
 		</div>
 		${options.length ? `<div class="ia-change-option-list">${options.map((row) => `
 			<div class="ia-change-option-row">
-				<span>${row.selected ? injection_aps.ui.pill(__("Selected"), "green") : injection_aps.ui.pill(__("Alternative"), "blue")}</span>
+				<span>${row.selected ? injection_aps.ui.pill(__("Selected", null, "Injection APS"), "green") : injection_aps.ui.pill(__("Alternative", null, "Injection APS"), "blue")}</span>
 				<strong>${injection_aps.ui.escape(row.workstation || "-")}</strong>
 				<span>${injection_aps.ui.escape(row.mould_reference || "-")}</span>
 				<span>${injection_aps.ui.format_datetime(row.completion_time)}</span>

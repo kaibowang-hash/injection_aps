@@ -403,36 +403,46 @@
   {
    "fieldname": "impact_json",
    "fieldtype": "Code",
+   "hidden": 1,
    "label": "Impact JSON",
    "options": "JSON",
+   "permlevel": 1,
    "read_only": 1
   },
   {
    "fieldname": "proposal_json",
    "fieldtype": "Code",
+   "hidden": 1,
    "label": "Adjustment Proposal JSON",
    "options": "JSON",
+   "permlevel": 1,
    "read_only": 1
   },
   {
    "fieldname": "before_snapshot_json",
    "fieldtype": "Code",
+   "hidden": 1,
    "label": "Before Snapshot JSON",
    "options": "JSON",
+   "permlevel": 1,
    "read_only": 1
   },
   {
    "fieldname": "after_snapshot_json",
    "fieldtype": "Code",
+   "hidden": 1,
    "label": "After Snapshot JSON",
    "options": "JSON",
+   "permlevel": 1,
    "read_only": 1
   },
   {
    "fieldname": "application_result_json",
    "fieldtype": "Code",
+   "hidden": 1,
    "label": "Application Result JSON",
    "options": "JSON",
+   "permlevel": 1,
    "read_only": 1
   },
   {

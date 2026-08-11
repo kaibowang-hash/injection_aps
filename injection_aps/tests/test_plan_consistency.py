@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+from datetime import date, datetime
 from types import SimpleNamespace
 from unittest import TestCase
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import frappe
 
@@ -10,6 +11,98 @@ from injection_aps.services import consistency, planning
 
 
 class TestPlanConsistency(TestCase):
+	def test_date_due_boundary_matches_natural_day_capacity_cutoff(self):
+		requested_date = date(2026, 8, 11)
+		expected = datetime(2026, 8, 12, 0, 0, 0)
+
+		self.assertEqual(planning._get_due_datetime(requested_date), expected)
+		self.assertEqual(consistency._due_datetime("RESULT-1", requested_date), expected)
+
+	def test_customer_schedule_date_move_blocks_the_old_approved_result(self):
+		result = frappe._dict(
+			name="RESULT-1",
+			company="COMPANY-1",
+			customer="CUSTOMER-1",
+			sales_order="SO-1",
+			item_code="ITEM-1",
+			requested_date=date(2026, 8, 12),
+			demand_source="Customer Delivery Schedule",
+			fulfillment_baseline_json={
+				"version": 2,
+				"targets": [
+					{
+						"customer_schedule_item": "TARGET-NEW",
+						"opening_required_qty": 100,
+					}
+				],
+			},
+		)
+		active_target = frappe._dict(
+			name="TARGET-NEW",
+			company="COMPANY-1",
+			customer="CUSTOMER-1",
+			sales_order="SO-1",
+			item_code="ITEM-1",
+			schedule_date=date(2026, 8, 13),
+			qty=100,
+			item_status="Open",
+			schedule_status="Active",
+		)
+		errors = consistency._get_customer_schedule_lineage_errors(
+			[result],
+			target_rows=[active_target],
+		)
+		self.assertEqual(errors["RESULT-1"][0]["code"], "demand_lineage_changed")
+		self.assertIn("schedule_date", errors["RESULT-1"][0]["message"])
+
+	def test_retired_customer_schedule_target_blocks_release_consistency(self):
+		result = frappe._dict(
+			name="RESULT-1",
+			company="COMPANY-1",
+			customer="CUSTOMER-1",
+			item_code="ITEM-1",
+			requested_date=date(2026, 8, 12),
+			demand_source="Customer Delivery Schedule",
+			fulfillment_baseline_json={
+				"version": 2,
+				"targets": [{"customer_schedule_item": "TARGET-OLD", "retired": 1}],
+			},
+		)
+		errors = consistency._get_customer_schedule_lineage_errors([result], target_rows=[])
+		self.assertIn("retired", errors["RESULT-1"][0]["message"])
+
+	def test_matching_active_customer_schedule_lineage_remains_valid(self):
+		result = frappe._dict(
+			name="RESULT-1",
+			company="COMPANY-1",
+			customer="CUSTOMER-1",
+			sales_order="SO-1",
+			item_code="ITEM-1",
+			requested_date=date(2026, 8, 12),
+			demand_source="Customer Delivery Schedule",
+			fulfillment_baseline_json={
+				"version": 2,
+				"targets": [
+					{"customer_schedule_item": "TARGET-1", "opening_required_qty": 100}
+				],
+			},
+		)
+		active_target = frappe._dict(
+			name="TARGET-1",
+			company="COMPANY-1",
+			customer="CUSTOMER-1",
+			sales_order="SO-1",
+			item_code="ITEM-1",
+			schedule_date=date(2026, 8, 12),
+			qty=100,
+			item_status="Open",
+			schedule_status="Active",
+		)
+		self.assertEqual(
+			consistency._get_customer_schedule_lineage_errors([result], target_rows=[active_target]),
+			{},
+		)
+
 	def test_canonical_quantity_formulas_for_shortage_and_overproduction(self):
 		shortage = consistency.calculate_quantity_fields(100, 70)
 		self.assertEqual(
@@ -45,6 +138,21 @@ class TestPlanConsistency(TestCase):
 		self.assertFalse(consistency.is_effective_primary_segment({**base, "segment_status": "Blocked"}))
 		self.assertFalse(consistency.is_effective_primary_segment({**base, "planned_qty": 0}))
 		self.assertFalse(consistency.is_effective_primary_segment({**base, "workstation": None}))
+
+	def test_legacy_family_co_product_segment_fails_closed_without_exact_ledger(self):
+		segment = {
+			"name": "SEG-FAMILY-1",
+			"segment_kind": "Family Co-Product",
+			"segment_status": "Planned",
+			"planned_qty": 10,
+		}
+		message = consistency._family_co_product_allocation_error(segment)
+		self.assertIn("exact Sales Order Item", message)
+		self.assertIsNone(
+			consistency._family_co_product_allocation_error(
+				{**segment, "segment_status": "Cancelled"}
+			)
+		)
 
 	def test_risk_helpers_keep_the_worst_source(self):
 		self.assertEqual(consistency.get_worst_risk("Normal", "Critical", "Attention"), "Critical")
@@ -90,7 +198,11 @@ class TestPlanConsistency(TestCase):
 
 	def test_proposal_apply_stops_when_consistency_gate_fails(self):
 		batch = SimpleNamespace(planning_run="APS-RUN-1")
+		database = MagicMock()
+		database.sql.return_value = [("APS-WOP-1",)]
 		with (
+			patch("injection_aps.services.planning.frappe.db", database),
+			patch("injection_aps.services.planning.frappe.generate_hash", return_value="gatewo"),
 			patch(
 				"injection_aps.services.planning.frappe.get_doc",
 				side_effect=[batch, SimpleNamespace(name="APS-RUN-1")],
@@ -124,7 +236,11 @@ class TestPlanConsistency(TestCase):
 
 	def test_formal_shift_apply_stops_when_consistency_gate_fails(self):
 		batch = SimpleNamespace(planning_run="APS-RUN-1")
+		database = MagicMock()
+		database.sql.return_value = [("APS-SSP-1",)]
 		with (
+			patch("injection_aps.services.planning.frappe.db", database),
+			patch("injection_aps.services.planning.frappe.generate_hash", return_value="gateshift"),
 			patch("injection_aps.services.planning.frappe.get_doc", return_value=batch),
 			patch(
 				"injection_aps.services.planning.consistency.assert_plan_consistent",

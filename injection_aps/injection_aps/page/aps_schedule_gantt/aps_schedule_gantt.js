@@ -39,15 +39,16 @@ class InjectionAPSScheduleGantt {
 			fieldtype: "Link",
 			fieldname: "run_name",
 			options: "APS Planning Run",
-			label: __("APS Run"),
+			label: __("APS Run", null, "Injection APS"),
 			default: injection_aps.ui.get_query_param("run_name") || undefined,
 			change: () => this.refresh(),
 		});
 		this.viewField = this.page.add_field({
 			fieldtype: "Select",
 			fieldname: "view_mode",
-			label: __("View Mode"),
+			label: __("View Mode", null, "Injection APS"),
 			options: ["Machine", "Mold", "Risk", "Locked"].join("\n"),
+			context: "Injection APS",
 			default: "Machine",
 			change: () => this.refresh(),
 		});
@@ -59,6 +60,7 @@ class InjectionAPSScheduleGantt {
 					<div class="ia-run-context-host"></div>
 					<div class="ia-status-host"></div>
 					<div class="ia-card-grid ia-summary"></div>
+					<div class="ia-fulfillment-warnings"></div>
 					<div class="ia-feedback"></div>
 					<div class="ia-risk-board"></div>
 					<div class="ia-gantt-frame">
@@ -78,6 +80,7 @@ class InjectionAPSScheduleGantt {
 		this.runContextHost = this.page.main.find(".ia-run-context-host")[0];
 		this.statusHost = this.page.main.find(".ia-status-host")[0];
 		this.summary = this.page.main.find(".ia-summary")[0];
+		this.fulfillmentWarnings = this.page.main.find(".ia-fulfillment-warnings")[0];
 		this.feedback = this.page.main.find(".ia-feedback")[0];
 		this.tools = this.page.main.find(".ia-gantt-tools")[0];
 		this.riskBoard = this.page.main.find(".ia-risk-board")[0];
@@ -179,10 +182,10 @@ class InjectionAPSScheduleGantt {
 			<div class="ia-confirm-summary">
 				<div class="ia-confirm-row"><strong>${__("Affected Segments")}: ${injection_aps.ui.format_number(updates.length)}</strong></div>
 				<div class="ia-confirm-row">${__("Delivery Risks")}: ${injection_aps.ui.format_number(risks.length)}</div>
-				${blockerRows ? `<div class="ia-confirm-row"><strong>${__("Blocked")}</strong><ul>${blockerRows}</ul></div>` : ""}
+				${blockerRows ? `<div class="ia-confirm-row"><strong>${__("Blocked", null, "Injection APS")}</strong><ul>${blockerRows}</ul></div>` : ""}
 				${
 					rows
-						? `<div class="ia-table-shell"><table class="ia-table"><thead><tr><th>${__("Segment")}</th><th>${__("Item")}</th><th>${__("Workstation")}</th><th>${__("Old Start")}</th><th>${__("New Start")}</th><th>${__("WOS")}</th><th>${__("Risk")}</th></tr></thead><tbody>${rows}</tbody></table></div>`
+						? `<div class="ia-table-shell"><table class="ia-table"><thead><tr><th>${__("Segment")}</th><th>${__("Item", null, "Injection APS")}</th><th>${__("Workstation", null, "Injection APS")}</th><th>${__("Old Start")}</th><th>${__("New Start")}</th><th>${__("WOS", null, "Injection APS")}</th><th>${__("Risk")}</th></tr></thead><tbody>${rows}</tbody></table></div>`
 						: `<div class="ia-muted">${__("No downstream segment needs to move.")}</div>`
 				}
 			</div>
@@ -215,7 +218,7 @@ class InjectionAPSScheduleGantt {
 		const dialog = new frappe.ui.Dialog({
 			title: __("Schedule Impact Preview"),
 			fields: [{ fieldtype: "HTML", fieldname: "impact_html" }],
-			primary_action_label: canApply ? __("Apply Impact") : __("Close"),
+			primary_action_label: canApply ? __("Apply Impact") : __("Close", null, "Injection APS"),
 			primary_action: async () => {
 				if (!canApply) {
 					dialog.hide();
@@ -252,14 +255,14 @@ class InjectionAPSScheduleGantt {
 		const dialog = new frappe.ui.Dialog({
 			title: __("Split Segment"),
 			fields: [
-				{ fieldtype: "Select", fieldname: "split_mode", label: __("Split Mode"), options: ["Time", "Qty", "Downtime Window"].join("\n"), default: "Time", reqd: 1 },
+				{ fieldtype: "Select", fieldname: "split_mode", label: __("Split Mode"), options: ["Time", "Qty", "Downtime Window"].join("\n"), context: "Injection APS", default: "Time", reqd: 1 },
 				{ fieldtype: "Datetime", fieldname: "split_time", label: __("Split Time"), depends_on: "eval:doc.split_mode=='Time'" },
 				{ fieldtype: "Float", fieldname: "split_qty", label: __("First Segment Qty"), depends_on: "eval:doc.split_mode=='Qty'" },
 				{ fieldtype: "Link", fieldname: "downtime_window", label: __("Downtime Window"), options: "APS Downtime Window", depends_on: "eval:doc.split_mode=='Downtime Window'" },
-				{ fieldtype: "Data", fieldname: "split_reason", label: __("Reason") },
+				{ fieldtype: "Data", fieldname: "split_reason", label: __("Reason", null, "Injection APS") },
 				{ fieldtype: "HTML", fieldname: "preview_html" },
 			],
-			primary_action_label: __("Preview"),
+			primary_action_label: __("Preview", null, "Injection APS"),
 			primary_action: async () => {
 				const values = dialog.get_values();
 				if (!values) {
@@ -366,8 +369,8 @@ class InjectionAPSScheduleGantt {
 		return `
 			<div class="ia-confirm-summary">
 				${warning}
-				<div class="ia-confirm-row"><span class="ia-muted">${__("Current Qty")}</span> ${number(preview.current_qty)}</div>
-				<div class="ia-confirm-row"><span class="ia-muted">${__("Target Qty")}</span> <strong>${number(preview.target_qty)}</strong></div>
+				<div class="ia-confirm-row"><span class="ia-muted">${__("Current Qty", null, "Injection APS")}</span> ${number(preview.current_qty)}</div>
+				<div class="ia-confirm-row"><span class="ia-muted">${__("Target Qty", null, "Injection APS")}</span> <strong>${number(preview.target_qty)}</strong></div>
 				<div class="ia-confirm-row"><span class="ia-muted">${__("Start / New End")}</span> ${datetime(preview.start_time)} - ${datetime(preview.end_time)}</div>
 				<div class="ia-confirm-row"><span class="ia-muted">${__("Duration Hours")}</span> ${number(preview.duration_hours)}</div>
 				<div class="ia-confirm-row"><span class="ia-muted">${__("Workstation / Mold")}</span> ${injection_aps.ui.escape(preview.target_workstation || "-")} / ${injection_aps.ui.escape(preview.target_mould_reference || "-")}</div>
@@ -473,10 +476,10 @@ class InjectionAPSScheduleGantt {
 				return;
 			}
 			if (!this.canEditManualSchedule()) {
-				injection_aps.ui.set_feedback(this.feedback, __("Quantity preview is ready, but this user cannot apply the adjustment."), "warning");
+				injection_aps.ui.set_feedback(this.feedback, __("Quantity preview is ready, but this user cannot apply the adjustment.", null, "Injection APS"), "warning");
 				return;
 			}
-			dialog.set_primary_action(__("Apply"), applyPreview);
+			dialog.set_primary_action(__("Apply", null, "Injection APS"), applyPreview);
 		};
 
 		dialog = new frappe.ui.Dialog({
@@ -486,16 +489,16 @@ class InjectionAPSScheduleGantt {
 					fieldtype: "HTML",
 					fieldname: "current_html",
 					options: `<div class="ia-confirm-summary">
-						<div class="ia-confirm-row"><span class="ia-muted">${__("Current Qty")}</span> ${injection_aps.ui.escape(injection_aps.ui.format_number(currentQty))}</div>
+						<div class="ia-confirm-row"><span class="ia-muted">${__("Current Qty", null, "Injection APS")}</span> ${injection_aps.ui.escape(injection_aps.ui.format_number(currentQty))}</div>
 						<div class="ia-confirm-row"><span class="ia-muted">${__("Current Start / End")}</span> ${injection_aps.ui.escape(injection_aps.ui.format_datetime(this.formatServerDatetime(currentStart)))} - ${injection_aps.ui.escape(injection_aps.ui.format_datetime(this.formatServerDatetime(currentEnd)))}</div>
 						<div class="ia-confirm-row"><span class="ia-muted">${__("Workstation / Mold")}</span> ${injection_aps.ui.escape(barNode.dataset.workstation || "-")} / ${injection_aps.ui.escape(barNode.dataset.mouldReference || "-")}</div>
 					</div>`,
 				},
-				{ fieldtype: "Float", fieldname: "target_qty", label: __("Target Qty"), default: currentQty, reqd: 1 },
-				{ fieldtype: "Small Text", fieldname: "manual_note", label: __("Reason") },
+				{ fieldtype: "Float", fieldname: "target_qty", label: __("Target Qty", null, "Injection APS"), default: currentQty, reqd: 1 },
+				{ fieldtype: "Small Text", fieldname: "manual_note", label: __("Reason", null, "Injection APS") },
 				{ fieldtype: "HTML", fieldname: "preview_html" },
 			],
-			primary_action_label: __("Preview"),
+			primary_action_label: __("Preview", null, "Injection APS"),
 			primary_action: previewAdjustment,
 		});
 		dialog.show();
@@ -503,7 +506,7 @@ class InjectionAPSScheduleGantt {
 			latestPreview = null;
 			dialog.set_df_property("manual_note", "reqd", 0);
 			dialog.get_field("preview_html").$wrapper.empty();
-			dialog.set_primary_action(__("Preview"), previewAdjustment);
+			dialog.set_primary_action(__("Preview", null, "Injection APS"), previewAdjustment);
 		});
 	}
 
@@ -771,12 +774,12 @@ class InjectionAPSScheduleGantt {
 		const dialog = new frappe.ui.Dialog({
 			title: __("Add Downtime Window"),
 			fields: [
-				{ fieldtype: "Select", fieldname: "scope", label: __("Scope"), options: ["Plant Floor", "Workstation", "Company"].join("\n"), default: defaultWorkstation ? "Workstation" : "Plant Floor", reqd: 1 },
-				{ fieldtype: "Link", fieldname: "plant_floor", label: __("Plant Floor"), options: "Plant Floor", default: defaultPlantFloor },
-				{ fieldtype: "Link", fieldname: "workstation", label: __("Workstation"), options: "Workstation", default: defaultWorkstation || "" },
-				{ fieldtype: "Datetime", fieldname: "start_time", label: __("Start Time"), reqd: 1 },
-				{ fieldtype: "Datetime", fieldname: "end_time", label: __("End Time"), reqd: 1 },
-				{ fieldtype: "Data", fieldname: "reason", label: __("Reason") },
+				{ fieldtype: "Select", fieldname: "scope", label: __("Scope", null, "Injection APS"), options: ["Plant Floor", "Workstation", "Company"].join("\n"), context: "Injection APS", default: defaultWorkstation ? "Workstation" : "Plant Floor", reqd: 1 },
+				{ fieldtype: "Link", fieldname: "plant_floor", label: __("Plant Floor", null, "Injection APS"), options: "Plant Floor", default: defaultPlantFloor },
+				{ fieldtype: "Link", fieldname: "workstation", label: __("Workstation", null, "Injection APS"), options: "Workstation", default: defaultWorkstation || "" },
+				{ fieldtype: "Datetime", fieldname: "start_time", label: __("Start Time", null, "Injection APS"), reqd: 1 },
+				{ fieldtype: "Datetime", fieldname: "end_time", label: __("End Time", null, "Injection APS"), reqd: 1 },
+				{ fieldtype: "Data", fieldname: "reason", label: __("Reason", null, "Injection APS") },
 			],
 			primary_action_label: __("Create and Preview"),
 			primary_action: async () => {
@@ -842,6 +845,14 @@ class InjectionAPSScheduleGantt {
 			injection_aps.ui.render_run_context(this.runContextHost, this.data.run_context || this.data.run || null);
 			injection_aps.ui.render_status_line(this.statusHost, this.data.run_context || this.data.run || null);
 			this.renderBlockedResults(this.data.blocked_results || []);
+			injection_aps.ui.render_warnings(
+				this.fulfillmentWarnings,
+				{
+					warning_count: this.data.fulfillment_warning_count || 0,
+					warnings: this.data.fulfillment_warnings || [],
+				},
+				__("Fulfillment Data Warnings")
+			);
 			this.renderGantt(this.data.tasks || []);
 			this.bindShellZoom();
 			if (!this.segmentSearchTerm) {
@@ -887,7 +898,7 @@ class InjectionAPSScheduleGantt {
 						<div class="ia-risk-count">${rows.length}</div>
 					</div>
 					<div class="ia-panel-tools">
-						${injection_aps.ui.icon_button("download", __("Export Excel"), { id: exportId })}
+						${injection_aps.ui.icon_button("download", __("Export Excel", null, "Injection APS"), { id: exportId })}
 					</div>
 				</div>
 				<div class="ia-risk-list">
@@ -906,10 +917,10 @@ class InjectionAPSScheduleGantt {
 									</span>
 									<span class="ia-risk-side">
 										${row.requested_date ? `<span>${injection_aps.ui.escape(injection_aps.ui.format_date(row.requested_date))}</span>` : ""}
-										<span>${__("Plan")}: ${injection_aps.ui.escape(injection_aps.ui.format_number(row.planned_qty || 0))}</span>
-										<span>${__("Machine")}: ${injection_aps.ui.escape(injection_aps.ui.format_number(row.machine_scheduled_qty || 0))}</span>
-										${row.unscheduled_qty ? `<span>${__("Unscheduled")}: ${injection_aps.ui.escape(injection_aps.ui.format_number(row.unscheduled_qty))}</span>` : ""}
-										${row.overproduction_qty ? `<span>${__("Overproduction")}: ${injection_aps.ui.escape(injection_aps.ui.format_number(row.overproduction_qty))}</span>` : ""}
+										<span>${__("Plan", null, "Injection APS")}: ${injection_aps.ui.escape(injection_aps.ui.format_number(row.planned_qty || 0))}</span>
+										<span>${__("Machine", null, "Injection APS")}: ${injection_aps.ui.escape(injection_aps.ui.format_number(row.machine_scheduled_qty || 0))}</span>
+										${row.unscheduled_qty ? `<span>${__("Unscheduled", null, "Injection APS")}: ${injection_aps.ui.escape(injection_aps.ui.format_number(row.unscheduled_qty))}</span>` : ""}
+										${row.overproduction_qty ? `<span>${__("Overproduction", null, "Injection APS")}: ${injection_aps.ui.escape(injection_aps.ui.format_number(row.overproduction_qty))}</span>` : ""}
 										${(row.exception_types || []).slice(0, 1).map((flag) => `<span class="ia-risk-badge">${injection_aps.ui.escape(injection_aps.ui.translate(flag))}</span>`).join("")}
 									</span>
 								</button>
@@ -930,20 +941,20 @@ class InjectionAPSScheduleGantt {
 				"aps_blocked_risk_demands",
 				[
 					{ label: __("Result", null, "Injection APS"), fieldname: "name" },
-					{ label: __("Item"), fieldname: "item_code" },
-					{ label: __("Item Name"), fieldname: "item_name" },
-					{ label: __("Customer"), fieldname: "customer" },
+					{ label: __("Item", null, "Injection APS"), fieldname: "item_code" },
+					{ label: __("Item Name", null, "Injection APS"), fieldname: "item_name" },
+					{ label: __("Customer", null, "Injection APS"), fieldname: "customer" },
 					{ label: __("Requested Date"), fieldname: "requested_date" },
 					{ label: __("Demand Source"), fieldname: "demand_source" },
-					{ label: __("Status"), fieldname: "status" },
+					{ label: __("Status", null, "Injection APS"), fieldname: "status" },
 					{ label: __("Risk Status"), fieldname: "risk_status" },
-					{ label: __("Planned Qty"), fieldname: "planned_qty", fieldtype: "Float" },
-					{ label: __("Machine Scheduled Qty"), fieldname: "machine_scheduled_qty", fieldtype: "Float" },
-					{ label: __("Demand Covered Qty"), fieldname: "demand_covered_qty", fieldtype: "Float" },
-					{ label: __("Overproduction Qty"), fieldname: "overproduction_qty", fieldtype: "Float" },
+					{ label: __("Planned Qty", null, "Injection APS"), fieldname: "planned_qty", fieldtype: "Float" },
+					{ label: __("Machine Scheduled Qty", null, "Injection APS"), fieldname: "machine_scheduled_qty", fieldtype: "Float" },
+					{ label: __("Demand Covered Qty", null, "Injection APS"), fieldname: "demand_covered_qty", fieldtype: "Float" },
+					{ label: __("Overproduction Qty", null, "Injection APS"), fieldname: "overproduction_qty", fieldtype: "Float" },
 					{ label: __("Unscheduled Qty"), fieldname: "unscheduled_qty", fieldtype: "Float" },
-					{ label: __("Produced Qty"), fieldname: "produced_qty", fieldtype: "Float" },
-					{ label: __("Delivered Qty"), fieldname: "delivered_qty", fieldtype: "Float" },
+					{ label: __("Produced Qty", null, "Injection APS"), fieldname: "produced_qty", fieldtype: "Float" },
+					{ label: __("Delivered Qty", null, "Injection APS"), fieldname: "delivered_qty", fieldtype: "Float" },
 					{ label: __("Blocking Reason"), fieldname: "blocking_reason" },
 					{ label: __("Exception Types"), fieldname: "exception_summary" },
 				],
@@ -976,7 +987,7 @@ class InjectionAPSScheduleGantt {
 		if (mode === "Mold") {
 			return injection_aps.ui.get_value(task, "details.mould_reference", "") || __("No Mold");
 		}
-		return injection_aps.ui.get_value(task, "details.workstation", "") || __("Unknown");
+		return injection_aps.ui.get_value(task, "details.workstation", "") || __("Unknown", null, "Injection APS");
 	}
 
 	renderGantt(tasks) {
@@ -1036,12 +1047,12 @@ class InjectionAPSScheduleGantt {
 		injection_aps.ui.render_cards(this.summary, [
 			{ label: __("Segments"), value: parsedTasks.length },
 			{ label: __("Machines / Lanes"), value: laneRows.length },
-			{ label: __("Days"), value: Math.max(1, Math.round((timelineEnd - timelineStart) / 86400000)) },
+			{ label: __("Days", null, "Injection APS"), value: Math.max(1, Math.round((timelineEnd - timelineStart) / 86400000)) },
 			{ label: __("Blocking"), value: blockedCount },
-			{ label: __("Prebuild / JIT"), value: `${injection_aps.ui.format_number(fulfillment.prebuild_qty || 0)} / ${injection_aps.ui.format_number(fulfillment.jit_qty || 0)}` },
-			{ label: __("Current Deliverable"), value: injection_aps.ui.format_number(fulfillment.current_deliverable_qty || 0) },
-			{ label: __("Actual Good / Scrap"), value: `${injection_aps.ui.format_number(fulfillment.actual_good_qty || 0)} / ${injection_aps.ui.format_number(fulfillment.scrap_qty || 0)}` },
-			{ label: __("Cancel Stock Risk"), value: injection_aps.ui.format_number(fulfillment.cancellation_inventory_risk_qty || 0) },
+			{ label: __("Prebuild / JIT", null, "Injection APS"), value: `${injection_aps.ui.format_number(fulfillment.prebuild_qty || 0)} / ${injection_aps.ui.format_number(fulfillment.jit_qty || 0)}` },
+			{ label: __("Current Deliverable", null, "Injection APS"), value: injection_aps.ui.format_number(fulfillment.current_deliverable_qty || 0) },
+			{ label: __("Actual Good / Scrap", null, "Injection APS"), value: `${injection_aps.ui.format_number(fulfillment.actual_good_qty || 0)} / ${injection_aps.ui.format_number(fulfillment.scrap_qty || 0)}` },
+			{ label: __("Cancel Stock Risk", null, "Injection APS"), value: injection_aps.ui.format_number(fulfillment.cancellation_inventory_risk_qty || 0) },
 		]);
 		this.renderTimeline(timelineStart, timelineEnd, span, timelineWidth);
 		this.renderGanttTools();
@@ -1178,7 +1189,7 @@ class InjectionAPSScheduleGantt {
 			cells.push(`
 				<div class="ia-gantt-timeline-cell" style="left:${left}%; width:${width}%;">
 					<div class="ia-gantt-timeline-date">${date.toLocaleDateString()}</div>
-					<div>${__("00:00")} - ${__("24:00")}</div>
+					<div>${__("00:00", null, "Injection APS")} - ${__("24:00", null, "Injection APS")}</div>
 				</div>
 			`);
 			cursor = next;
@@ -1220,7 +1231,7 @@ class InjectionAPSScheduleGantt {
 				}
 				const left = ((startMs - timelineStart) / span) * 100;
 				const width = ((endMs - startMs) / span) * 100;
-				const title = [row.reason || __("Downtime"), injection_aps.ui.format_datetime(row.start_time), injection_aps.ui.format_datetime(row.end_time)]
+				const title = [row.reason || __("Downtime", null, "Injection APS"), injection_aps.ui.format_datetime(row.start_time), injection_aps.ui.format_datetime(row.end_time)]
 					.filter(Boolean)
 					.join(" | ");
 				return `<div class="ia-gantt-downtime" style="left:${left}%; width:${width}%;" title="${injection_aps.ui.escape(title)}"></div>`;
@@ -1254,7 +1265,7 @@ class InjectionAPSScheduleGantt {
 		}
 		const taskMap = {};
 		(tasks || []).forEach((task) => {
-			const key = injection_aps.ui.get_value(task, "details.workstation", "") || __("Unknown");
+			const key = injection_aps.ui.get_value(task, "details.workstation", "") || __("Unknown", null, "Injection APS");
 			if (!taskMap[key]) {
 				taskMap[key] = [];
 			}
@@ -1327,12 +1338,12 @@ class InjectionAPSScheduleGantt {
 		this.tools.innerHTML = `
 			<div class="ia-gantt-tools-main">
 				<div class="ia-chip-row ia-legend">
-					<span class="ia-chip">${__("Blue")}: ${__("Normal")}</span>
-					<span class="ia-chip">${__("Yellow")}: ${__("Attention")}</span>
-					<span class="ia-chip">${__("Red")}: ${__("Critical / Blocking")}</span>
-					<span class="ia-chip">${__("B")}: ${__("Copy Mold Parallelized")}</span>
+					<span class="ia-chip">${__("Blue", null, "Injection APS")}: ${__("Normal", null, "Injection APS")}</span>
+					<span class="ia-chip">${__("Yellow", null, "Injection APS")}: ${__("Attention")}</span>
+					<span class="ia-chip">${__("Red", null, "Injection APS")}: ${__("Critical / Blocking")}</span>
+					<span class="ia-chip">${__("B", null, "Injection APS")}: ${__("Copy Mold Parallelized")}</span>
 					<span class="ia-chip">${__("F")}: ${__("Family Mold Co-Production")}</span>
-					<span class="ia-chip">${__("L")}: ${__("Locked")}</span>
+					<span class="ia-chip">${__("L", null, "Injection APS")}: ${__("Locked", null, "Injection APS")}</span>
 					<span class="ia-chip red">${__("FDA")}: ${__("Risk / Override")}</span>
 					<span class="ia-chip">${__("Drag on the timeline to focus a day or date range")}</span>
 				</div>
@@ -1341,7 +1352,7 @@ class InjectionAPSScheduleGantt {
 				<div class="ia-gantt-search">
 					<input type="text" class="form-control input-xs" data-segment-search="1" placeholder="${injection_aps.ui.escape(__("Search Segment"))}" value="${injection_aps.ui.escape(this.segmentSearchTerm || "")}">
 					<button class="btn btn-xs btn-default" data-run-segment-search="1">${__("Find")}</button>
-					${this.segmentSearchTerm ? `<button class="btn btn-xs btn-default" data-clear-segment-search="1">${__("Clear")}</button>` : ""}
+					${this.segmentSearchTerm ? `<button class="btn btn-xs btn-default" data-clear-segment-search="1">${__("Clear", null, "Injection APS")}</button>` : ""}
 				</div>
 				<button class="btn btn-xs btn-default" data-zoom-out="1">-</button>
 				<span class="ia-chip blue">${zoomPercent}%</span>
@@ -1797,7 +1808,7 @@ class InjectionAPSScheduleGantt {
 					},
 				},
 				{
-					label: __("Execution"),
+					label: __("Execution", null, "Injection APS"),
 					icon: "settings",
 					handler: async () => {
 						if (runName) {
@@ -2353,11 +2364,11 @@ class InjectionAPSScheduleGantt {
 					<table class="ia-table">
 						<thead>
 							<tr>
-								<th>${__("Source")}</th>
+								<th>${__("Source", null, "Injection APS")}</th>
 								<th>${__("Demand", null, "Injection APS")}</th>
 								<th>${__("Qty")}</th>
 								<th>${__("Customer Ref")}</th>
-								<th>${__("Remark")}</th>
+								<th>${__("Remark", null, "Injection APS")}</th>
 							</tr>
 						</thead>
 						<tbody>
@@ -2385,10 +2396,10 @@ class InjectionAPSScheduleGantt {
 					<table class="ia-table">
 						<thead>
 							<tr>
-								<th>${__("Mold")}</th>
-								<th>${__("Status")}</th>
+								<th>${__("Mold", null, "Injection APS")}</th>
+								<th>${__("Status", null, "Injection APS")}</th>
 								<th>${__("Tonnage")}</th>
-								<th>${__("Cavity")}</th>
+								<th>${__("Cavity", null, "Injection APS")}</th>
 								<th>${__("Output/Cycle")}</th>
 							</tr>
 						</thead>
@@ -2417,8 +2428,8 @@ class InjectionAPSScheduleGantt {
 					<table class="ia-table">
 						<thead>
 							<tr>
-								<th>${__("Severity")}</th>
-								<th>${__("Type")}</th>
+								<th>${__("Severity", null, "Injection APS")}</th>
+								<th>${__("Type", null, "Injection APS")}</th>
 								<th>${__("Reason / Message")}</th>
 							</tr>
 						</thead>
@@ -2441,7 +2452,7 @@ class InjectionAPSScheduleGantt {
 			: `<div class="ia-muted">${__("No open exception rows were found for this result.")}</div>`;
 		const executionTraceRows = [
 			...productionAllocations.map((row) => ({
-				type: row.output_type || __("Production"),
+				type: row.output_type || __("Production", null, "Injection APS"),
 				source: row.source_stock_entry,
 				source_route: row.source_route,
 				detail: row.source_stock_entry_detail,
@@ -2451,7 +2462,7 @@ class InjectionAPSScheduleGantt {
 				time: row.source_posting_time,
 			})),
 			...deliveryAllocations.map((row) => ({
-				type: row.is_return ? __("Return") : __("Delivery", null, "Injection APS"),
+				type: row.is_return ? __("Return", null, "Injection APS") : __("Delivery", null, "Injection APS"),
 				source: row.source_delivery_note,
 				source_route: row.source_route,
 				detail: row.source_delivery_note_item,
@@ -2462,63 +2473,63 @@ class InjectionAPSScheduleGantt {
 			})),
 		];
 		const executionTraceTable = executionTraceRows.length
-			? `<div class="ia-table-shell"><table class="ia-table"><thead><tr><th>${__("Type")}</th><th>${__("Source")}</th><th>${__("Detail")}</th><th>${__("Method")}</th><th>${__("Qty")}</th><th>${__("Time")}</th></tr></thead><tbody>${executionTraceRows
-					.map((row) => `<tr><td>${injection_aps.ui.escape(injection_aps.ui.translate(row.type || ""))}</td><td>${link(row.source_route, row.source || "-")}</td><td>${injection_aps.ui.escape(row.detail || "")}</td><td>${injection_aps.ui.escape(injection_aps.ui.translate(row.method || ""))}</td><td>${injection_aps.ui.escape(injection_aps.ui.format_number(row.qty || 0))}${row.effective ? "" : ` / ${__("Reversed")}`}</td><td>${injection_aps.ui.escape(injection_aps.ui.format_datetime(row.time))}</td></tr>`)
+			? `<div class="ia-table-shell"><table class="ia-table"><thead><tr><th>${__("Type", null, "Injection APS")}</th><th>${__("Source", null, "Injection APS")}</th><th>${__("Detail", null, "Injection APS")}</th><th>${__("Method", null, "Injection APS")}</th><th>${__("Qty")}</th><th>${__("Time", null, "Injection APS")}</th></tr></thead><tbody>${executionTraceRows
+					.map((row) => `<tr><td>${injection_aps.ui.escape(injection_aps.ui.translate(row.type || ""))}</td><td>${link(row.source_route, row.source || "-")}</td><td>${injection_aps.ui.escape(row.detail || "")}</td><td>${injection_aps.ui.escape(injection_aps.ui.translate(row.method || ""))}</td><td>${injection_aps.ui.escape(injection_aps.ui.format_number(row.qty || 0))}${row.effective ? "" : ` / ${__("Reversed", null, "Injection APS")}`}</td><td>${injection_aps.ui.escape(injection_aps.ui.format_datetime(row.time))}</td></tr>`)
 					.join("")}</tbody></table></div>`
 			: `<div class="ia-muted">${__("No formal production or delivery source rows are linked.")}</div>`;
 		const html = `
 			<div class="ia-page">
 				<div class="ia-mini-grid">
 					<div class="ia-panel">
-						<h4>${__("Item")}</h4>
+						<h4>${__("Item", null, "Injection APS")}</h4>
 						<div class="ia-kv">
-							<div class="ia-kv-row"><div class="ia-kv-key">${__("Code")}</div><div class="ia-kv-value">${link(itemDetail.item_route, itemDetail.item_code || result.item_code || "-")}</div></div>
-							<div class="ia-kv-row"><div class="ia-kv-key">${__("Name")}</div><div class="ia-kv-value">${injection_aps.ui.escape(itemDetail.item_name || "")}</div></div>
+							<div class="ia-kv-row"><div class="ia-kv-key">${__("Code", null, "Injection APS")}</div><div class="ia-kv-value">${link(itemDetail.item_route, itemDetail.item_code || result.item_code || "-")}</div></div>
+							<div class="ia-kv-row"><div class="ia-kv-key">${__("Name", null, "Injection APS")}</div><div class="ia-kv-value">${injection_aps.ui.escape(itemDetail.item_name || "")}</div></div>
 							<div class="ia-kv-row"><div class="ia-kv-key">${__("Customer Ref")}</div><div class="ia-kv-value">${injection_aps.ui.escape(itemDetail.customer_reference || ((sourceRows[0] && sourceRows[0].customer_part_no) || ""))}</div></div>
 							<div class="ia-kv-row"><div class="ia-kv-key">${__("Drawing")}</div><div class="ia-kv-value">${injection_aps.ui.escape(itemDetail.drawing_file || "")}</div></div>
 						</div>
 					</div>
 					<div class="ia-panel">
-						<h4>${__("Planning")}</h4>
+						<h4>${__("Planning", null, "Injection APS")}</h4>
 						<div class="ia-kv">
 							<div class="ia-kv-row"><div class="ia-kv-key">${__("Requested", null, "Injection APS")}</div><div class="ia-kv-value">${injection_aps.ui.escape(result.requested_date || "")}</div></div>
-							<div class="ia-kv-row"><div class="ia-kv-key">${__("Source")}</div><div class="ia-kv-value">${injection_aps.ui.escape(injection_aps.ui.translate(result.demand_source || ""))}</div></div>
+							<div class="ia-kv-row"><div class="ia-kv-key">${__("Source", null, "Injection APS")}</div><div class="ia-kv-value">${injection_aps.ui.escape(injection_aps.ui.translate(result.demand_source || ""))}</div></div>
 							<div class="ia-kv-row"><div class="ia-kv-key">${__("Run", null, "Injection APS")}</div><div class="ia-kv-value">${link(routeLinks.planning_run, result.planning_run || "")}</div></div>
 							<div class="ia-kv-row"><div class="ia-kv-key">${__("Net Req")}</div><div class="ia-kv-value">${link(routeLinks.net_requirement, result.net_requirement || "")}</div></div>
-							<div class="ia-kv-row"><div class="ia-kv-key">${__("Planned Qty")}</div><div class="ia-kv-value">${injection_aps.ui.escape(injection_aps.ui.format_number(result.planned_qty || 0))}</div></div>
-							<div class="ia-kv-row"><div class="ia-kv-key">${__("Machine Scheduled Qty")}</div><div class="ia-kv-value">${injection_aps.ui.escape(injection_aps.ui.format_number(result.machine_scheduled_qty || 0))}</div></div>
-							<div class="ia-kv-row"><div class="ia-kv-key">${__("Demand Covered Qty")}</div><div class="ia-kv-value">${injection_aps.ui.escape(injection_aps.ui.format_number(result.demand_covered_qty || 0))}</div></div>
-							<div class="ia-kv-row"><div class="ia-kv-key">${__("Overproduction Qty")}</div><div class="ia-kv-value">${injection_aps.ui.escape(injection_aps.ui.format_number(result.overproduction_qty || 0))}</div></div>
+							<div class="ia-kv-row"><div class="ia-kv-key">${__("Planned Qty", null, "Injection APS")}</div><div class="ia-kv-value">${injection_aps.ui.escape(injection_aps.ui.format_number(result.planned_qty || 0))}</div></div>
+							<div class="ia-kv-row"><div class="ia-kv-key">${__("Machine Scheduled Qty", null, "Injection APS")}</div><div class="ia-kv-value">${injection_aps.ui.escape(injection_aps.ui.format_number(result.machine_scheduled_qty || 0))}</div></div>
+							<div class="ia-kv-row"><div class="ia-kv-key">${__("Demand Covered Qty", null, "Injection APS")}</div><div class="ia-kv-value">${injection_aps.ui.escape(injection_aps.ui.format_number(result.demand_covered_qty || 0))}</div></div>
+							<div class="ia-kv-row"><div class="ia-kv-key">${__("Overproduction Qty", null, "Injection APS")}</div><div class="ia-kv-value">${injection_aps.ui.escape(injection_aps.ui.format_number(result.overproduction_qty || 0))}</div></div>
 							<div class="ia-kv-row"><div class="ia-kv-key">${__("Unscheduled Qty")}</div><div class="ia-kv-value">${injection_aps.ui.escape(injection_aps.ui.format_number(result.unscheduled_qty || 0))}</div></div>
 						</div>
 					</div>
 				</div>
 				<div class="ia-mini-grid">
 					<div class="ia-panel">
-						<h4>${__("Execution")}</h4>
+						<h4>${__("Execution", null, "Injection APS")}</h4>
 						<div class="ia-kv">
-							<div class="ia-kv-row"><div class="ia-kv-key">${__("Strategy")}</div><div class="ia-kv-value">${injection_aps.ui.escape(injection_aps.ui.translate(fulfillment.production_strategy || result.production_strategy || "Auto Balance"))}</div></div>
-							<div class="ia-kv-row"><div class="ia-kv-key">${__("Prebuild / JIT")}</div><div class="ia-kv-value">${injection_aps.ui.escape(injection_aps.ui.format_number(fulfillment.prebuild_qty || 0))} / ${injection_aps.ui.escape(injection_aps.ui.format_number(fulfillment.jit_qty || 0))}</div></div>
-							<div class="ia-kv-row"><div class="ia-kv-key">${__("Early Days")}</div><div class="ia-kv-value">${injection_aps.ui.escape(injection_aps.ui.format_number(fulfillment.early_days || 0, 2))}</div></div>
+							<div class="ia-kv-row"><div class="ia-kv-key">${__("Strategy", null, "Injection APS")}</div><div class="ia-kv-value">${injection_aps.ui.escape(injection_aps.ui.translate(fulfillment.production_strategy || result.production_strategy || "Auto Balance"))}</div></div>
+							<div class="ia-kv-row"><div class="ia-kv-key">${__("Prebuild / JIT", null, "Injection APS")}</div><div class="ia-kv-value">${injection_aps.ui.escape(injection_aps.ui.format_number(fulfillment.prebuild_qty || 0))} / ${injection_aps.ui.escape(injection_aps.ui.format_number(fulfillment.jit_qty || 0))}</div></div>
+							<div class="ia-kv-row"><div class="ia-kv-key">${__("Early Days", null, "Injection APS")}</div><div class="ia-kv-value">${injection_aps.ui.escape(injection_aps.ui.format_number(fulfillment.early_days || 0, 2))}</div></div>
 							<div class="ia-kv-row"><div class="ia-kv-key">${__("Actual Status")}</div><div class="ia-kv-value">${injection_aps.ui.escape(injection_aps.ui.translate(selectedSegment.actual_status || result.actual_status || ""))}</div></div>
-							<div class="ia-kv-row"><div class="ia-kv-key">${__("Actual Good / Scrap")}</div><div class="ia-kv-value">${injection_aps.ui.escape(injection_aps.ui.format_number(fulfillment.actual_good_qty || result.good_produced_qty || 0))} / ${injection_aps.ui.escape(injection_aps.ui.format_number(fulfillment.scrap_qty || result.scrap_qty || 0))}</div></div>
-							<div class="ia-kv-row"><div class="ia-kv-key">${__("Current Deliverable")}</div><div class="ia-kv-value">${injection_aps.ui.escape(injection_aps.ui.format_number(fulfillment.current_deliverable_qty || 0))}</div></div>
-							<div class="ia-kv-row"><div class="ia-kv-key">${__("Delivered Qty")}</div><div class="ia-kv-value">${injection_aps.ui.escape(injection_aps.ui.format_number(result.delivered_qty || 0))}</div></div>
-							<div class="ia-kv-row"><div class="ia-kv-key">${__("Peak / Prebuild Inventory")}</div><div class="ia-kv-value">${injection_aps.ui.escape(injection_aps.ui.format_number(fulfillment.projected_peak_inventory_qty || 0))} / ${injection_aps.ui.escape(injection_aps.ui.format_number(fulfillment.prebuild_inventory_qty || 0))}</div></div>
-							<div class="ia-kv-row"><div class="ia-kv-key">${__("Late Before / After")}</div><div class="ia-kv-value">${injection_aps.ui.escape(injection_aps.ui.format_number(fulfillment.late_qty_before_balance || 0))} / ${injection_aps.ui.escape(injection_aps.ui.format_number(fulfillment.late_qty_after_balance || 0))}</div></div>
-							<div class="ia-kv-row"><div class="ia-kv-key">${__("Cancel Stock Risk")}</div><div class="ia-kv-value">${injection_aps.ui.escape(injection_aps.ui.format_number(fulfillment.cancellation_inventory_risk_qty || 0))}</div></div>
-							<div class="ia-kv-row"><div class="ia-kv-key">${__("Last Report")}</div><div class="ia-kv-value">${injection_aps.ui.escape(injection_aps.ui.format_datetime(fulfillment.last_actual_report_time))}</div></div>
-							<div class="ia-kv-row"><div class="ia-kv-key">${__("Mode / Load")}</div><div class="ia-kv-value">${injection_aps.ui.escape(injection_aps.ui.translate(selectedSegment.production_mode || ""))} / ${injection_aps.ui.escape(injection_aps.ui.format_number(selectedSegment.load_percent || 0, 2))}%</div></div>
+							<div class="ia-kv-row"><div class="ia-kv-key">${__("Actual Good / Scrap", null, "Injection APS")}</div><div class="ia-kv-value">${injection_aps.ui.escape(injection_aps.ui.format_number(fulfillment.actual_good_qty || result.good_produced_qty || 0))} / ${injection_aps.ui.escape(injection_aps.ui.format_number(fulfillment.scrap_qty || result.scrap_qty || 0))}</div></div>
+							<div class="ia-kv-row"><div class="ia-kv-key">${__("Current Deliverable", null, "Injection APS")}</div><div class="ia-kv-value">${injection_aps.ui.escape(injection_aps.ui.format_number(fulfillment.current_deliverable_qty || 0))}</div></div>
+							<div class="ia-kv-row"><div class="ia-kv-key">${__("Delivered Qty", null, "Injection APS")}</div><div class="ia-kv-value">${injection_aps.ui.escape(injection_aps.ui.format_number(result.delivered_qty || 0))}</div></div>
+							<div class="ia-kv-row"><div class="ia-kv-key">${__("Peak / Prebuild Inventory", null, "Injection APS")}</div><div class="ia-kv-value">${injection_aps.ui.escape(injection_aps.ui.format_number(fulfillment.projected_peak_inventory_qty || 0))} / ${injection_aps.ui.escape(injection_aps.ui.format_number(fulfillment.prebuild_inventory_qty || 0))}</div></div>
+							<div class="ia-kv-row"><div class="ia-kv-key">${__("Late Before / After", null, "Injection APS")}</div><div class="ia-kv-value">${injection_aps.ui.escape(injection_aps.ui.format_number(fulfillment.late_qty_before_balance || 0))} / ${injection_aps.ui.escape(injection_aps.ui.format_number(fulfillment.late_qty_after_balance || 0))}</div></div>
+							<div class="ia-kv-row"><div class="ia-kv-key">${__("Cancel Stock Risk", null, "Injection APS")}</div><div class="ia-kv-value">${injection_aps.ui.escape(injection_aps.ui.format_number(fulfillment.cancellation_inventory_risk_qty || 0))}</div></div>
+							<div class="ia-kv-row"><div class="ia-kv-key">${__("Last Report", null, "Injection APS")}</div><div class="ia-kv-value">${injection_aps.ui.escape(injection_aps.ui.format_datetime(fulfillment.last_actual_report_time))}</div></div>
+							<div class="ia-kv-row"><div class="ia-kv-key">${__("Mode / Load", null, "Injection APS")}</div><div class="ia-kv-value">${injection_aps.ui.escape(injection_aps.ui.translate(selectedSegment.production_mode || ""))} / ${injection_aps.ui.escape(injection_aps.ui.format_number(selectedSegment.load_percent || 0, 2))}%</div></div>
 							<div class="ia-kv-row"><div class="ia-kv-key">${__("Hourly Capacity")}</div><div class="ia-kv-value">${injection_aps.ui.escape(injection_aps.ui.format_number(selectedSegment.hourly_capacity_qty || 0))}</div></div>
 							<div class="ia-kv-row"><div class="ia-kv-key">${__("Daily Capacity")}</div><div class="ia-kv-value">${injection_aps.ui.escape(injection_aps.ui.format_number(selectedSegment.daily_capacity_qty || 0))}</div></div>
 							<div class="ia-kv-row"><div class="ia-kv-key">${__("Capacity Source")}</div><div class="ia-kv-value">${injection_aps.ui.escape(injection_aps.ui.translate(selectedSegment.capacity_source_label || selectedSegment.capacity_source || ""))}</div></div>
-							<div class="ia-kv-row"><div class="ia-kv-key">${__("Work Order")}</div><div class="ia-kv-value">${link(selectedSegment.work_order_route, selectedSegment.linked_work_order || "")}</div></div>
+							<div class="ia-kv-row"><div class="ia-kv-key">${__("Work Order", null, "Injection APS")}</div><div class="ia-kv-value">${link(selectedSegment.work_order_route, selectedSegment.linked_work_order || "")}</div></div>
 							<div class="ia-kv-row"><div class="ia-kv-key">${__("Scheduling", null, "Injection APS")}</div><div class="ia-kv-value">${link(selectedSegment.work_order_scheduling_route, selectedSegment.linked_work_order_scheduling || "")}</div></div>
 							<div class="ia-kv-row"><div class="ia-kv-key">${__("Manufacture Entry")}</div><div class="ia-kv-value">${link(selectedSegment.latest_stock_entry_route, selectedSegment.latest_stock_entry || "")}</div></div>
 						</div>
 					</div>
 						<div class="ia-panel">
-						<h4>${__("Notes")}</h4>
+						<h4>${__("Notes", null, "Injection APS")}</h4>
 						<div class="ia-kv-row" style="display:block; margin-bottom:8px;">
 							<div class="ia-kv-key">${__("Result Note")}</div>
 							<textarea id="${resultNoteId}" class="form-control" rows="3" ${canEditNotes ? "" : "readonly"}>${injection_aps.ui.escape(result.notes || "")}</textarea>
@@ -2537,23 +2548,23 @@ class InjectionAPSScheduleGantt {
 				</div>
 				<div class="ia-status-line">
 					<div class="ia-status-cell"><span class="ia-status-label">${__("Flow")}</span><div class="ia-status-value">${injection_aps.ui.escape(injection_aps.ui.translate(result.flow_step || ""))}</div></div>
-					<div class="ia-status-cell"><span class="ia-status-label">${__("Next")}</span><div class="ia-status-value">${injection_aps.ui.escape(injection_aps.ui.translate(result.next_step_hint || ""))}</div></div>
-					<div class="ia-status-cell"><span class="ia-status-label">${__("Blocking")}</span><div class="ia-status-value">${injection_aps.ui.escape(injection_aps.ui.translate(result.blocking_reason || __("None")))}</div></div>
+					<div class="ia-status-cell"><span class="ia-status-label">${__("Next", null, "Injection APS")}</span><div class="ia-status-value">${injection_aps.ui.escape(injection_aps.ui.translate(result.next_step_hint || ""))}</div></div>
+					<div class="ia-status-cell"><span class="ia-status-label">${__("Blocking")}</span><div class="ia-status-value">${injection_aps.ui.escape(injection_aps.ui.translate(result.blocking_reason || __("None", null, "Injection APS")))}</div></div>
 				</div>
 				<div class="ia-panel">
-					<h4>${__("Explanation")}</h4>
+					<h4>${__("Explanation", null, "Injection APS")}</h4>
 					<div class="ia-muted">${injection_aps.ui.escape(injection_aps.ui.translate(result.schedule_explanation || result.family_output_summary || ""))}</div>
 				</div>
 				<div id="${actionHostId}"></div>
 				<div class="ia-panel">
-					<div class="ia-panel-head"><h4>${__("Execution Sources")}</h4></div>
+					<div class="ia-panel-head"><h4>${__("Execution Sources", null, "Injection APS")}</h4></div>
 					${executionTraceTable}
 				</div>
 				<div class="ia-panel">
 					<div class="ia-panel-head">
 						<h4>${__("Demand Sources")}</h4>
 						<div class="ia-panel-tools">
-							${injection_aps.ui.icon_button("download", __("Export Excel"), { id: sourceExportId })}
+							${injection_aps.ui.icon_button("download", __("Export Excel", null, "Injection APS"), { id: sourceExportId })}
 						</div>
 					</div>
 					${sourceTable}
@@ -2562,7 +2573,7 @@ class InjectionAPSScheduleGantt {
 					<div class="ia-panel-head">
 						<h4>${__("Mold Basis")}</h4>
 						<div class="ia-panel-tools">
-							${injection_aps.ui.icon_button("download", __("Export Excel"), { id: moldExportId })}
+							${injection_aps.ui.icon_button("download", __("Export Excel", null, "Injection APS"), { id: moldExportId })}
 						</div>
 					</div>
 					${moldTable}
@@ -2571,7 +2582,7 @@ class InjectionAPSScheduleGantt {
 					<div class="ia-panel-head">
 						<h4>${__("Risk Flags")}</h4>
 						<div class="ia-panel-tools">
-							${injection_aps.ui.icon_button("download", __("Export Excel"), { id: exceptionExportId })}
+							${injection_aps.ui.icon_button("download", __("Export Excel", null, "Injection APS"), { id: exceptionExportId })}
 						</div>
 					</div>
 					${exceptionTable}
@@ -2580,7 +2591,7 @@ class InjectionAPSScheduleGantt {
 					<div class="ia-panel-head">
 						<h4>${__("Segments")}</h4>
 						<div class="ia-panel-tools">
-							${injection_aps.ui.icon_button("download", __("Export Excel"), { id: segmentExportId })}
+							${injection_aps.ui.icon_button("download", __("Export Excel", null, "Injection APS"), { id: segmentExportId })}
 						</div>
 					</div>
 					<div class="ia-table-shell">
@@ -2588,11 +2599,11 @@ class InjectionAPSScheduleGantt {
 							<thead>
 								<tr>
 									<th>${__("Segment")}</th>
-									<th>${__("Workstation")}</th>
-									<th>${__("Mold")}</th>
+									<th>${__("Workstation", null, "Injection APS")}</th>
+									<th>${__("Mold", null, "Injection APS")}</th>
 									<th>${__("Qty")}</th>
-									<th>${__("Mode / Load")}</th>
-									<th>${__("Actual")}</th>
+									<th>${__("Mode / Load", null, "Injection APS")}</th>
+									<th>${__("Actual", null, "Injection APS")}</th>
 									<th>${__("Risk")}</th>
 									<th>${__("Window")}</th>
 								</tr>
@@ -2667,13 +2678,13 @@ class InjectionAPSScheduleGantt {
 				`aps_demand_sources_${resultName}`,
 				[
 					{ label: __("Source Doctype"), fieldname: "source_doctype" },
-					{ label: __("Source Name"), fieldname: "source_name" },
+					{ label: __("Source Name", null, "Injection APS"), fieldname: "source_name" },
 					{ label: __("Demand Source"), fieldname: "demand_source" },
 					{ label: __("Demand Date"), fieldname: "demand_date" },
 					{ label: __("Qty"), fieldname: "qty", fieldtype: "Float" },
 					{ label: __("Customer Ref"), fieldname: "customer_part_no" },
-					{ label: __("Sales Order"), fieldname: "sales_order" },
-					{ label: __("Remark"), fieldname: "remark" },
+					{ label: __("Sales Order", null, "Injection APS"), fieldname: "sales_order" },
+					{ label: __("Remark", null, "Injection APS"), fieldname: "remark" },
 				],
 				sourceRows,
 				`${result.item_code || ""} / ${result.customer || ""}`
@@ -2684,14 +2695,14 @@ class InjectionAPSScheduleGantt {
 				__("Mold Basis"),
 				`aps_mold_basis_${resultName}`,
 				[
-					{ label: __("Mold"), fieldname: "mold" },
-					{ label: __("Mold Name"), fieldname: "mold_name" },
-					{ label: __("Status"), fieldname: "mold_status" },
-					{ label: __("Machine Tonnage"), fieldname: "machine_tonnage", fieldtype: "Float" },
-					{ label: __("Cavity"), fieldname: "cavity_count", fieldtype: "Float" },
+					{ label: __("Mold", null, "Injection APS"), fieldname: "mold" },
+					{ label: __("Mold Name", null, "Injection APS"), fieldname: "mold_name" },
+					{ label: __("Status", null, "Injection APS"), fieldname: "mold_status" },
+					{ label: __("Machine Tonnage", null, "Injection APS"), fieldname: "machine_tonnage", fieldtype: "Float" },
+					{ label: __("Cavity", null, "Injection APS"), fieldname: "cavity_count", fieldtype: "Float" },
 					{ label: __("Effective Output Qty"), fieldname: "effective_output_qty", fieldtype: "Float" },
 					{ label: __("Cycle Time Seconds"), fieldname: "cycle_time_seconds", fieldtype: "Float" },
-					{ label: __("Family Mold"), fieldname: "is_family_mold", fieldtype: "Check" },
+					{ label: __("Family Mold", null, "Injection APS"), fieldname: "is_family_mold", fieldtype: "Check" },
 				],
 				moldRows,
 				`${result.item_code || ""} / ${result.customer || ""}`
@@ -2702,13 +2713,13 @@ class InjectionAPSScheduleGantt {
 				__("Risk Flags"),
 				`aps_risk_flags_${resultName}`,
 				[
-					{ label: __("Severity"), fieldname: "severity" },
-					{ label: __("Type"), fieldname: "exception_type" },
+					{ label: __("Severity", null, "Injection APS"), fieldname: "severity" },
+					{ label: __("Type", null, "Injection APS"), fieldname: "exception_type" },
 					{ label: __("Message", null, "Injection APS"), fieldname: "message" },
 					{ label: __("Blocking"), fieldname: "is_blocking", fieldtype: "Check" },
 					{ label: __("Machine", null, "Injection APS"), fieldname: "workstation" },
 					{ label: __("Source Doctype"), fieldname: "source_doctype" },
-					{ label: __("Source Name"), fieldname: "source_name" },
+					{ label: __("Source Name", null, "Injection APS"), fieldname: "source_name" },
 				],
 				exceptionRows,
 				`${result.item_code || ""} / ${result.customer || ""}`
@@ -2720,15 +2731,15 @@ class InjectionAPSScheduleGantt {
 				`aps_segments_${resultName}`,
 				[
 					{ label: __("Segment"), fieldname: "segment_kind" },
-					{ label: __("Workstation"), fieldname: "workstation" },
-					{ label: __("Mold"), fieldname: "mould_reference" },
+					{ label: __("Workstation", null, "Injection APS"), fieldname: "workstation" },
+					{ label: __("Mold", null, "Injection APS"), fieldname: "mould_reference" },
 					{ label: __("Qty"), fieldname: "planned_qty", fieldtype: "Float" },
 					{ label: __("Actual Status"), fieldname: "actual_status" },
-					{ label: __("Actual Qty"), fieldname: "actual_completed_qty", fieldtype: "Float" },
+					{ label: __("Actual Qty", null, "Injection APS"), fieldname: "actual_completed_qty", fieldtype: "Float" },
 					{ label: __("Risk"), fieldname: "risk_flags" },
 					{ label: __("Start", null, "Injection APS"), fieldname: "start_time" },
 					{ label: __("End", null, "Injection APS"), fieldname: "end_time" },
-					{ label: __("Work Order"), fieldname: "linked_work_order" },
+					{ label: __("Work Order", null, "Injection APS"), fieldname: "linked_work_order" },
 					{ label: __("Scheduling", null, "Injection APS"), fieldname: "linked_work_order_scheduling" },
 				],
 				segments,

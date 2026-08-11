@@ -182,7 +182,7 @@ class TestProductionExecutionSync(FrappeTestCase):
 		)
 		frappe.db.set_value("Stock Entry", stock_entry, "docstatus", 2, update_modified=False)
 
-	def test_direct_overproduction_keeps_full_source_quantity_with_one_idempotency_key(self):
+	def test_direct_overproduction_preserves_source_without_overstating_customer_demand(self):
 		result_row = frappe.db.get_value(
 			"APS Schedule Result",
 			self.fixture["result"],
@@ -226,13 +226,19 @@ class TestProductionExecutionSync(FrappeTestCase):
 			filters={"source_stock_entry": stock_entry},
 			fields=["customer_schedule_item", "good_qty", "effective_qty"],
 		)
-		self.assertEqual(len(allocations), 1)
-		self.assertEqual(allocations[0].customer_schedule_item, target)
-		self.assertEqual(allocations[0].good_qty, 30)
-		self.assertEqual(allocations[0].effective_qty, 30)
+		self.assertEqual(len(allocations), 2)
+		qty_by_target = {row.customer_schedule_item: row.good_qty for row in allocations}
+		self.assertEqual(qty_by_target, {target: 20, None: 10})
+		self.assertEqual(sum(row.effective_qty for row in allocations), 30)
 		self.assertEqual(
 			frappe.db.get_value("Customer Delivery Schedule Item", target, "produced_qty"),
-			30,
+			20,
+		)
+		replay = execution_sync.sync_production_for_run(self.fixture["run"])
+		self.assertEqual(replay["ledger"]["created"], 0)
+		self.assertEqual(
+			frappe.db.count("APS Production Allocation", {"source_stock_entry": stock_entry}),
+			2,
 		)
 
 	def _create_plan_fixture(self):
@@ -458,7 +464,8 @@ class TestProductionExecutionSync(FrappeTestCase):
 		detail.item_code = self.work_order.production_item
 		detail.qty = qty
 		detail.transfer_qty = qty
-		detail.is_finished_item = 1
+		detail.is_finished_item = 0 if output_type == "Scrap" else 1
+		detail.is_scrap_item = 1 if output_type == "Scrap" else 0
 		detail.t_warehouse = self.work_order.scrap_warehouse if output_type == "Scrap" else None
 		detail.db_insert()
 		return doc.name

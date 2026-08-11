@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import frappe
+from frappe import _
 from frappe.model.document import Document
 
 
 class APSShiftScheduleProposalBatch(Document):
 	def validate(self):
+		self._protect_system_review_statuses()
 		items = list(self.get("items") or [])
 		statuses = [row.review_status for row in items if row.review_status]
 		self.proposal_count = len(items)
@@ -28,3 +31,19 @@ class APSShiftScheduleProposalBatch(Document):
 			return
 		self.status = "Reviewed"
 		self.approval_state = "Rejected" if all(status == "Rejected" for status in statuses) else "Approved"
+
+	def on_trash(self):
+		if self.flags.get("allow_proposal_engine_delete") or getattr(frappe.flags, "in_uninstall", False):
+			return
+		self._protect_system_review_statuses()
+
+	def _protect_system_review_statuses(self):
+		if self.flags.get("proposal_engine_transition"):
+			return
+		frappe.throw(
+			_(
+				"Shift schedule proposal batches are maintained by APS review and release actions.",
+				context="Injection APS",
+			),
+			frappe.PermissionError,
+		)

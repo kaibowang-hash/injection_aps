@@ -12,4 +12,8 @@ class APSDeliveryAllocation(Document):
 			frappe.throw(_("Delivery allocation key is required."))
 		for fieldname in ("source_qty", "allocated_qty", "reversed_qty"):
 			if flt(self.get(fieldname)) < 0:
-				frappe.throw(_("{0} cannot be negative.").format(self.meta.get_label(fieldname)))
+				frappe.throw(
+					_("{0} cannot be negative.", context="APS Delivery Allocation").format(
+						self.meta.get_label(fieldname)
+					)
+				)

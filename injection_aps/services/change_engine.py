@@ -196,7 +196,7 @@ def analyze_change_request(change_request: str) -> dict[str, Any]:
 def confirm_change_request(change_request: str) -> dict[str, Any]:
 	doc = _get_locked_change_request(change_request)
 	_assert_status(doc, "Analyzed", _("Only an analyzed change request can be confirmed by PMC."))
-	proposal = _load_json_object(doc.proposal_json, _("Adjustment proposal"))
+	proposal = _load_json_object(doc.proposal_json, _("Adjustment proposal", context="Injection APS"))
 	if not cint(proposal.get("allowed", 1)):
 		frappe.throw(_("This change has blocking impacts and cannot be confirmed."), frappe.ValidationError)
 	_validate_retained_disposition(doc, proposal)
@@ -213,7 +213,7 @@ def confirm_change_request(change_request: str) -> dict[str, Any]:
 def approve_change_request(change_request: str) -> dict[str, Any]:
 	doc = _get_locked_change_request(change_request)
 	_assert_status(doc, "PMC Confirmed", _("PMC confirmation is required before approval."))
-	proposal = _load_json_object(doc.proposal_json, _("Adjustment proposal"))
+	proposal = _load_json_object(doc.proposal_json, _("Adjustment proposal", context="Injection APS"))
 	_assert_snapshot_current(doc, proposal)
 	doc.status = "Approved"
 	doc.approval_state = "Approved"
@@ -231,7 +231,14 @@ def reject_change_request(change_request: str, reason: str | None = None) -> dic
 	doc.status = "Rejected"
 	doc.approval_state = "Rejected"
 	if (reason or "").strip():
-		doc.notes = "\n".join(part for part in [doc.notes, _("Rejected: {0}").format(reason.strip())] if part)
+		doc.notes = "\n".join(
+			part
+			for part in [
+				doc.notes,
+				_("Rejected: {0}", context="Injection APS").format(reason.strip()),
+			]
+			if part
+		)
 	doc.flags.change_engine_transition = True
 	doc.save(ignore_permissions=True)
 	return _workflow_response(doc)
@@ -241,9 +248,13 @@ def apply_change_request(change_request: str) -> dict[str, Any]:
 	save_point = "aps_change_apply_{0}".format(frappe.generate_hash(length=10))
 	frappe.db.savepoint(save_point)
 	try:
-		doc = _get_locked_change_request(change_request)
+		doc = _get_application_scope_locked_change_request(change_request)
 		if doc.status == "Applied":
-			result = _load_json_object(doc.application_result_json, _("Application result"), allow_empty=True)
+			result = _load_json_object(
+				doc.application_result_json,
+				_("Application result", context="Injection APS"),
+				allow_empty=True,
+			)
 			frappe.db.release_savepoint(save_point)
 			return {
 				**result,
@@ -262,7 +273,7 @@ def apply_change_request(change_request: str) -> dict[str, Any]:
 		)
 		if existing_log:
 			frappe.throw(_("Application fingerprint already belongs to audit log {0}.").format(existing_log))
-		proposal = _load_json_object(doc.proposal_json, _("Adjustment proposal"))
+		proposal = _load_json_object(doc.proposal_json, _("Adjustment proposal", context="Injection APS"))
 		_validate_retained_disposition(doc, proposal)
 		before_snapshot = _assert_snapshot_current(doc, proposal)
 		mutation = _dispatch_apply(doc, proposal)
@@ -345,6 +356,72 @@ def _get_locked_change_request(change_request: str):
 	return frappe.get_doc("APS Change Request", change_request)
 
 
+def _get_application_scope_locked_change_request(change_request: str):
+	"""Serialize plan mutations with one deterministic Run -> Result -> Segment lock order."""
+	scope = frappe.db.get_value(
+		"APS Change Request",
+		change_request,
+		["planning_run", "target_result"],
+		as_dict=True,
+	)
+	if not scope:
+		frappe.throw(
+			_("APS Change Request {0} was not found.").format(change_request),
+			frappe.DoesNotExistError,
+		)
+	run_name = scope.get("planning_run")
+	if not run_name:
+		frappe.throw(_("A valid Planning Run is required."), frappe.ValidationError)
+	locked_run = frappe.db.sql(
+		"select name from `tabAPS Planning Run` where name = %s for update",
+		(run_name,),
+	)
+	if not locked_run:
+		frappe.throw(_("Planning Run {0} was not found.").format(run_name), frappe.DoesNotExistError)
+	result_rows = frappe.db.sql(
+		"""
+		select name
+		from `tabAPS Schedule Result`
+		where planning_run = %s
+		order by name
+		for update
+		""",
+		(run_name,),
+	)
+	result_names = [row[0] for row in result_rows]
+	if result_names:
+		frappe.db.sql(
+			"""
+			select name
+			from `tabAPS Schedule Segment`
+			where parenttype = 'APS Schedule Result'
+				and parent in %(result_names)s
+			order by parent, name
+			for update
+			""",
+			{"result_names": tuple(result_names)},
+		)
+	locked_request = frappe.db.sql(
+		"select name from `tabAPS Change Request` where name = %s for update",
+		(change_request,),
+	)
+	if not locked_request:
+		frappe.throw(
+			_("APS Change Request {0} was not found.").format(change_request),
+			frappe.DoesNotExistError,
+		)
+	doc = frappe.get_doc("APS Change Request", change_request)
+	if doc.planning_run != run_name or doc.target_result != scope.get("target_result"):
+		frappe.throw(
+			_(
+				"Change Request scope changed while Apply was starting. Retry after refreshing the request.",
+				context="Injection APS",
+			),
+			frappe.ValidationError,
+		)
+	return doc
+
+
 def _dispatch_analysis(doc, before_snapshot: dict[str, Any]) -> dict[str, Any]:
 	dispatch = {
 		"Increase Qty": _analyze_increase,
@@ -373,7 +450,7 @@ def _dispatch_apply(doc, proposal: dict[str, Any]) -> dict[str, Any]:
 
 def _validate_request_inputs(doc):
 	if doc.change_type not in CHANGE_TYPES:
-		frappe.throw(_("Select a supported change type."), frappe.ValidationError)
+		frappe.throw(_("Select a supported change type.", context="Injection APS"), frappe.ValidationError)
 	if not doc.planning_run or not frappe.db.exists("APS Planning Run", doc.planning_run):
 		frappe.throw(_("A valid Planning Run is required."), frappe.ValidationError)
 	if doc.change_type in TARGET_CHANGE_TYPES:
@@ -1403,7 +1480,7 @@ def _build_urgent_machine_option(
 	affected_orders.insert(
 		0,
 		{
-			"affected_order": _("New Urgent Order"),
+			"affected_order": _("New Urgent Order", context="Injection APS"),
 			"result_name": None,
 			"item_code": doc.item_code,
 			"customer": doc.customer,
@@ -1765,7 +1842,9 @@ def _apply_segment_actions(
 				}
 			)
 		else:
-			frappe.throw(_("Unsupported segment action: {0}.").format(action_name))
+			frappe.throw(
+				_("Unsupported segment action: {0}.", context="Injection APS").format(action_name)
+			)
 		frappe.db.set_value("APS Schedule Segment", segment.get("name"), values)
 		_apply_family_segment_action(segment, action_name, values, action)
 		frappe.db.set_value(
@@ -1924,6 +2003,8 @@ def _update_target_net_requirement(result_doc, proposal: dict[str, Any]):
 
 
 def _reset_run_approval(run_name: str):
+	from injection_aps.services import capacity_balance
+
 	values = {"status": "Planned", "approval_state": "Pending"}
 	meta = frappe.get_meta("APS Planning Run")
 	if meta.has_field("approved_by"):
@@ -1931,6 +2012,7 @@ def _reset_run_approval(run_name: str):
 	if meta.has_field("approved_on"):
 		values["approved_on"] = None
 	frappe.db.set_value("APS Planning Run", run_name, values)
+	capacity_balance.invalidate_capacity_balance(run_name)
 
 
 def _validate_changed_schedule(doc, proposal: dict[str, Any]):
@@ -2052,7 +2134,10 @@ def _validate_retained_disposition(doc, proposal: dict[str, Any]):
 
 def _assert_status(doc, expected_status: str, message: str):
 	if doc.status != expected_status:
-		frappe.throw(_("{0} Current status: {1}.").format(message, doc.status), frappe.ValidationError)
+		frappe.throw(
+			_("{0} Current status: {1}.", context="Injection APS").format(message, doc.status),
+			frappe.ValidationError,
+		)
 
 
 def _workflow_response(doc) -> dict[str, Any]:
@@ -2120,9 +2205,15 @@ def _load_json_object(value: str | None, label: str, allow_empty: bool = False) 
 	try:
 		parsed = json.loads(value)
 	except (TypeError, ValueError) as exc:
-		frappe.throw(_("{0} is invalid JSON: {1}").format(label, exc), frappe.ValidationError)
+		frappe.throw(
+			_("{0} is invalid JSON: {1}", context="Injection APS").format(label, exc),
+			frappe.ValidationError,
+		)
 	if not isinstance(parsed, dict):
-		frappe.throw(_("{0} must be a JSON object.").format(label), frappe.ValidationError)
+		frappe.throw(
+			_("{0} must be a JSON object.", context="Injection APS").format(label),
+			frappe.ValidationError,
+		)
 	return parsed
 
 

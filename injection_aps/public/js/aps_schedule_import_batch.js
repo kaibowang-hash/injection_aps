@@ -1,10 +1,11 @@
-frappe.require("/assets/injection_aps/js/injection_aps_shared.js");
+const SCHEDULE_IMPORT_BATCH_SHARED_READY = frappe.require("/assets/injection_aps/js/injection_aps_shared.js");
 
 frappe.ui.form.on("APS Schedule Import Batch", {
 	async refresh(frm) {
-			if (frm.is_new()) {
-				return;
-			}
+		if (frm.is_new()) {
+			return;
+		}
+			await SCHEDULE_IMPORT_BATCH_SHARED_READY;
 			injection_aps.ui.ensure_styles();
 			frm.clear_custom_buttons();
 			if (frm.doc.status === "Imported" && injection_aps.ui.can_run_action("promote_import")) {

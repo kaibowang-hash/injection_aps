@@ -46,7 +46,7 @@ class TestScheduleImportSafety(FrappeTestCase):
 		self.assertEqual(summed["effective_schedule_rows"][0]["source_excel_rows"], "7, 11")
 
 	def test_zero_quantity_is_an_explicit_cancellation_with_execution_impact(self):
-		self._create_active_schedule([self._row(500, produced_qty=120, delivered_qty=40)])
+		self._create_active_schedule([self._row(500, produced_qty=120, delivered_qty=0)])
 		frozen_key = (self.item, str(self.schedule_date))
 		preview = self._preview(
 			[self._row(0, source_excel_row=9)],
@@ -61,10 +61,10 @@ class TestScheduleImportSafety(FrappeTestCase):
 		self.assertEqual(row["delta_qty"], -500)
 		self.assertEqual(row["change_type"], "Cancelled")
 		self.assertEqual(row["produced_qty"], 120)
-		self.assertEqual(row["delivered_qty"], 40)
+		self.assertEqual(row["delivered_qty"], 0)
 		self.assertEqual(row["frozen_qty"], 80)
 		self.assertTrue(row["affects_produced"])
-		self.assertTrue(row["affects_delivered"])
+		self.assertFalse(row["affects_delivered"])
 		self.assertTrue(row["affects_frozen"])
 
 		result = self._import([self._row(0, source_excel_row=9)], import_strategy="Partial Update")
@@ -76,8 +76,20 @@ class TestScheduleImportSafety(FrappeTestCase):
 		)
 		self.assertEqual(item.qty, 0)
 		self.assertEqual(item.produced_qty, 120)
-		self.assertEqual(item.delivered_qty, 40)
+		self.assertEqual(item.delivered_qty, 0)
 		self.assertEqual(item.status, "Cancelled")
+
+	def test_quantity_cannot_be_reduced_below_delivered_lower_bound(self):
+		self._create_active_schedule([self._row(500, produced_qty=120, delivered_qty=40)])
+		preview = self._preview(
+			[self._row(0, source_excel_row=9)],
+			import_strategy="Partial Update",
+		)
+
+		self.assertFalse(preview["can_import"])
+		lower_bound = next(check for check in preview["checks"] if check["title"] == "Delivered quantity lower bound")
+		self.assertTrue(lower_bound["blocking"])
+		self.assertEqual(lower_bound["status"], "failed")
 
 	def test_append_shows_post_total_and_reimport_is_idempotent(self):
 		self._create_active_schedule([self._row(100)])
@@ -185,6 +197,7 @@ class TestScheduleImportSafety(FrappeTestCase):
 
 		with (
 			patch("injection_aps.api.app._require_demand_access") as require_demand,
+			patch("injection_aps.api.app._require_scope_access") as require_scope,
 			patch("injection_aps.api.app._require_plan_access") as require_plan,
 			patch("injection_aps.api.app.planning.import_customer_delivery_schedule", return_value={}) as service,
 		):
@@ -197,6 +210,7 @@ class TestScheduleImportSafety(FrappeTestCase):
 			)
 
 		require_demand.assert_called_once_with()
+		require_scope.assert_called_once_with(company=self.company, customer=self.customer)
 		require_plan.assert_called_once_with()
 		self.assertEqual(service.call_args.kwargs["rebuild"], 1)
 		self.assertEqual(service.call_args.kwargs["existing_work_order_policy"], "Exclude")

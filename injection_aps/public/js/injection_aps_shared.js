@@ -27,11 +27,13 @@ frappe.provide("injection_aps.ui");
 		generate_shift_schedule_proposals: ["System Manager", "GMC", "Manufacturing Manager"],
 		apply_work_order_proposals: ["System Manager", "GMC", "Manufacturing Manager"],
 		apply_shift_schedule_proposals: ["System Manager", "GMC", "Manufacturing Manager"],
+		review_work_order_proposals: ["System Manager", "GMC", "Manufacturing Manager"],
+		review_shift_schedule_proposals: ["System Manager", "GMC", "Manufacturing Manager"],
 		reject_work_order_proposals: ["System Manager", "GMC", "Manufacturing Manager"],
 		reject_shift_schedule_proposals: ["System Manager", "GMC", "Manufacturing Manager"],
 		preview_manual_schedule_adjustment: ["System Manager", "GMC", "PMC", "Manufacturing Manager"],
 		apply_manual_schedule_adjustment: ["System Manager", "GMC", "Manufacturing Manager"],
-		preview_segment_split: ["System Manager", "GMC", "PMC", "Manufacturing Manager", "Manufacturing User"],
+		preview_segment_split: ["System Manager", "GMC", "PMC", "Manufacturing Manager"],
 		apply_segment_split: ["System Manager", "GMC", "Manufacturing Manager"],
 		create_or_update_downtime_window: ["System Manager", "GMC", "Manufacturing Manager"],
 		preview_schedule_impact: ["System Manager", "GMC", "PMC", "Manufacturing Manager"],
@@ -42,10 +44,14 @@ frappe.provide("injection_aps.ui");
 		edit_net_requirement: ["System Manager", "GMC", "PMC", "Manufacturing Manager"],
 		delete_net_requirement: ["System Manager", "GMC", "PMC", "Manufacturing Manager"],
 		analyze_change_request: ["System Manager", "GMC", "PMC", "Sales Manager", "Sales User", "Manufacturing Manager"],
+		batch_analyze_change_requests: ["System Manager", "GMC", "PMC", "Sales Manager", "Sales User", "Manufacturing Manager"],
 		confirm_change_request: ["System Manager", "GMC", "PMC", "Manufacturing Manager"],
 		approve_change_request: ["System Manager", "GMC", "Manufacturing Manager"],
 		reject_change_request: ["System Manager", "GMC", "Manufacturing Manager"],
 		apply_change_request: ["System Manager", "GMC", "Manufacturing Manager"],
+		analyze_capacity_balance: ["System Manager", "GMC", "PMC", "Manufacturing Manager"],
+		confirm_capacity_balance: ["System Manager", "GMC", "PMC", "Manufacturing Manager"],
+		apply_capacity_balance: ["System Manager", "GMC", "PMC", "Manufacturing Manager"],
 	};
 
 	injection_aps.ui.ensure_styles = function () {
@@ -372,7 +378,7 @@ frappe.provide("injection_aps.ui");
 						fieldname: "policy_summary_html",
 					},
 				],
-				primary_action_label: injection_aps.ui.translate(settings.primary_action_label || (action && action.confirm_label) || __("Confirm")),
+				primary_action_label: injection_aps.ui.translate(settings.primary_action_label || (action && action.confirm_label) || __("Confirm", null, "Injection APS")),
 				primary_action() {
 					const policy = dialog.get_value("existing_work_order_policy") || "";
 					if (!["Include", "Exclude"].includes(policy)) {
@@ -420,7 +426,7 @@ frappe.provide("injection_aps.ui");
 						fieldname: "summary_html",
 					},
 				],
-				primary_action_label: injection_aps.ui.translate(settings.primary_action_label || (action && action.confirm_label) || __("Confirm")),
+				primary_action_label: injection_aps.ui.translate(settings.primary_action_label || (action && action.confirm_label) || __("Confirm", null, "Injection APS")),
 				primary_action() {
 					dialog.hide();
 					finish(true);
@@ -565,7 +571,7 @@ frappe.provide("injection_aps.ui");
 		);
 
 		return {
-			title: settings.title || settings.sheet_name || __("Export Excel"),
+			title: settings.title || settings.sheet_name || __("Export Excel", null, "Injection APS"),
 			subtitle: settings.subtitle || "",
 			sheet_name: injection_aps.ui.make_file_name(settings.sheet_name || settings.title || "APS").slice(0, 28),
 			file_name: `${injection_aps.ui.make_file_name(settings.file_name || settings.title || "aps_export")}.xlsx`,
@@ -596,13 +602,13 @@ frappe.provide("injection_aps.ui");
 		const settings = Object.assign({}, options || {});
 		const rows = settings.rows || [];
 		if (!rows.length) {
-			frappe.show_alert({ message: __("No rows available to export."), indicator: "orange" });
+			frappe.show_alert({ message: __("No rows available to export.", null, "Injection APS"), indicator: "orange" });
 			return;
 		}
 
 		const payload = injection_aps.ui.build_export_payload(settings);
 		if (!payload.columns.length) {
-			frappe.show_alert({ message: __("No rows available to export."), indicator: "orange" });
+			frappe.show_alert({ message: __("No rows available to export.", null, "Injection APS"), indicator: "orange" });
 			return;
 		}
 
@@ -746,7 +752,7 @@ frappe.provide("injection_aps.ui");
 						${settings.toolbar_html || ""}
 						${
 							settings.exportable && rows && rows.length
-								? injection_aps.ui.icon_button("download", __("Export Excel"), { "data-ia-export-table": "1" })
+								? injection_aps.ui.icon_button("download", __("Export Excel", null, "Injection APS"), { "data-ia-export-table": "1" })
 								: ""
 						}
 					</div>
@@ -759,7 +765,7 @@ frappe.provide("injection_aps.ui");
 				${emptyToolbar}
 				<div class="ia-table-empty">
 					<div class="ia-empty-title">${__("No rows found")}</div>
-					<div class="ia-muted">${settings.empty_message || __("Try changing the filters or refreshing the data.")}</div>
+					<div class="ia-muted">${settings.empty_message || __("Try changing the filters or refreshing the data.", null, "Injection APS")}</div>
 				</div>
 			`;
 			if (settings.after_render) {
@@ -806,9 +812,9 @@ frappe.provide("injection_aps.ui");
 			if (exportButton) {
 				exportButton.addEventListener("click", () => {
 					injection_aps.ui.export_rows_to_excel({
-						title: settings.export_title || settings.export_sheet_name || __("Export Excel"),
+						title: settings.export_title || settings.export_sheet_name || __("Export Excel", null, "Injection APS"),
 						subtitle: settings.export_subtitle || "",
-						sheet_name: settings.export_sheet_name || settings.export_title || __("Export Excel"),
+						sheet_name: settings.export_sheet_name || settings.export_title || __("Export Excel", null, "Injection APS"),
 						file_name: settings.export_file_name || settings.export_title || "aps_export",
 						columns,
 						rows,
@@ -856,7 +862,7 @@ frappe.provide("injection_aps.ui");
 				</div>
 				<div class="ia-status-cell ia-status-cell-wide">
 					<span class="ia-status-label">${__("Blocking Reason")}</span>
-					<div class="ia-status-value ${context.blocking_reason ? "ia-risk-text" : "ia-muted"}">${injection_aps.ui.escape(injection_aps.ui.translate(context.blocking_reason || __("None")))}</div>
+					<div class="ia-status-value ${context.blocking_reason ? "ia-risk-text" : "ia-muted"}">${injection_aps.ui.escape(injection_aps.ui.translate(context.blocking_reason || __("None", null, "Injection APS")))}</div>
 				</div>
 			</div>
 		`;
@@ -875,13 +881,13 @@ frappe.provide("injection_aps.ui");
 			<div class="ia-run-context">
 				<div class="ia-run-context-title">${__("Current APS Run")}</div>
 				<div class="ia-run-context-grid">
-					<div class="ia-run-context-cell"><span class="ia-status-label">${__("ID")}</span><div class="ia-run-context-value">${injection_aps.ui.escape(context.docname || "")}</div></div>
-					<div class="ia-run-context-cell ia-run-context-cell-wide"><span class="ia-status-label">${__("Company")}</span><div class="ia-run-context-value">${injection_aps.ui.escape(context.company || "-")}</div></div>
+					<div class="ia-run-context-cell"><span class="ia-status-label">${__("ID", null, "Injection APS")}</span><div class="ia-run-context-value">${injection_aps.ui.escape(context.docname || "")}</div></div>
+					<div class="ia-run-context-cell ia-run-context-cell-wide"><span class="ia-status-label">${__("Company", null, "Injection APS")}</span><div class="ia-run-context-value">${injection_aps.ui.escape(context.company || "-")}</div></div>
 					<div class="ia-run-context-cell ia-run-context-cell-wide"><span class="ia-status-label">${__("Plant Floors")}</span><div class="ia-run-context-value">${injection_aps.ui.escape(plantFloors || "-")}</div></div>
-					<div class="ia-run-context-cell"><span class="ia-status-label">${__("Horizon")}</span><div class="ia-run-context-value">${injection_aps.ui.escape((context.horizon_days || 0) ? `${context.horizon_days} ${__("Days")}` : "-")}</div></div>
-					<div class="ia-run-context-cell"><span class="ia-status-label">${__("Status")}</span><div class="ia-run-context-value">${injection_aps.ui.escape(injection_aps.ui.translate(context.status_label || context.current_step || "-"))}</div></div>
-					<div class="ia-run-context-cell"><span class="ia-status-label">${__("Approval")}</span><div class="ia-run-context-value">${injection_aps.ui.escape(injection_aps.ui.translate(context.approval_state_label || "-"))}</div></div>
-					<div class="ia-run-context-cell"><span class="ia-status-label">${__("Exceptions")}</span><div class="ia-run-context-value">${injection_aps.ui.escape(String(context.exception_count || 0))}</div></div>
+					<div class="ia-run-context-cell"><span class="ia-status-label">${__("Horizon")}</span><div class="ia-run-context-value">${injection_aps.ui.escape((context.horizon_days || 0) ? `${context.horizon_days} ${__("Days", null, "Injection APS")}` : "-")}</div></div>
+					<div class="ia-run-context-cell"><span class="ia-status-label">${__("Status", null, "Injection APS")}</span><div class="ia-run-context-value">${injection_aps.ui.escape(injection_aps.ui.translate(context.status_label || context.current_step || "-"))}</div></div>
+					<div class="ia-run-context-cell"><span class="ia-status-label">${__("Approval", null, "Injection APS")}</span><div class="ia-run-context-value">${injection_aps.ui.escape(injection_aps.ui.translate(context.approval_state_label || "-"))}</div></div>
+					<div class="ia-run-context-cell"><span class="ia-status-label">${__("Exceptions", null, "Injection APS")}</span><div class="ia-run-context-value">${injection_aps.ui.escape(String(context.exception_count || 0))}</div></div>
 					<div class="ia-run-context-cell ia-run-context-cell-wide"><span class="ia-status-label">${__("Updated On")}</span><div class="ia-run-context-value">${injection_aps.ui.escape(injection_aps.ui.format_datetime(context.modified || ""))}</div></div>
 				</div>
 			</div>
@@ -914,7 +920,7 @@ frappe.provide("injection_aps.ui");
 											</span>
 											<span class="ia-run-empty-side">
 												<span>${injection_aps.ui.escape(injection_aps.ui.translate(row.status_label || row.status || ""))}</span>
-												<span>${__("Exceptions")} ${injection_aps.ui.escape(String(row.exception_count || 0))}</span>
+												<span>${__("Exceptions", null, "Injection APS")} ${injection_aps.ui.escape(String(row.exception_count || 0))}</span>
 											</span>
 										</a>
 									`
@@ -1026,12 +1032,37 @@ frappe.provide("injection_aps.ui");
 		frappe.msgprint({
 			title: title || __("APS Warnings"),
 			message: `
-				<div>${__("Warnings")}: <b>${count}</b></div>
+				<div>${__("Warnings", null, "Injection APS")}: <b>${count}</b></div>
 				<ul style="margin-top:8px; padding-left:18px;">${rows}</ul>
 				${extraCount ? `<div class="text-muted" style="margin-top:8px;">${__("Additional warnings")}: ${extraCount}</div>` : ""}
 			`,
 			wide: true,
 		});
+	};
+
+	injection_aps.ui.render_warnings = function (target, result, title, warningKey) {
+		if (!target) {
+			return;
+		}
+		const key = warningKey || "warning_count";
+		const count = Number((result && result[key]) || 0);
+		const rowsKey = key === "preflight_warning_count" ? "preflight_warnings" : "warnings";
+		const warnings = (result && result[rowsKey]) || [];
+		if (!count) {
+			target.innerHTML = "";
+			return;
+		}
+		const rows = warnings
+			.map((row) => `<li>${injection_aps.ui.escape(row.message || row.code || "")}</li>`)
+			.join("");
+		const extraCount = Math.max(count - warnings.length, 0);
+		target.innerHTML = `
+			<div class="ia-alert warning">
+				<strong>${injection_aps.ui.escape(title || __("APS Warnings"))}: ${count}</strong>
+				<ul style="margin: 6px 0 0; padding-left: 18px;">${rows}</ul>
+				${extraCount ? `<div class="text-muted">${__("Additional warnings")}: ${extraCount}</div>` : ""}
+			</div>
+		`;
 	};
 
 	injection_aps.ui.ensure_drawer = function () {
@@ -1042,15 +1073,16 @@ frappe.provide("injection_aps.ui");
 		drawer = document.createElement("div");
 		drawer.id = "injection-aps-drawer";
 		drawer.className = "ia-drawer";
+		drawer.setAttribute("aria-hidden", "true");
 		drawer.innerHTML = `
 			<div class="ia-drawer-mask" data-ia-close="1"></div>
-			<div class="ia-drawer-panel">
+			<div class="ia-drawer-panel" role="dialog" aria-modal="true" aria-labelledby="injection-aps-drawer-title" tabindex="-1">
 				<div class="ia-drawer-header">
 					<div>
-						<div class="ia-drawer-title"></div>
+						<div class="ia-drawer-title" id="injection-aps-drawer-title"></div>
 						<div class="ia-drawer-subtitle"></div>
 					</div>
-					${injection_aps.ui.icon_button("x", __("Close"), { "data-ia-close": "1" })}
+					${injection_aps.ui.icon_button("x", __("Close", null, "Injection APS"), { "data-ia-close": "1" })}
 				</div>
 				<div class="ia-drawer-body"></div>
 			</div>
@@ -1059,21 +1091,38 @@ frappe.provide("injection_aps.ui");
 		drawer.querySelectorAll("[data-ia-close='1']").forEach((node) => {
 			node.addEventListener("click", () => injection_aps.ui.close_drawer());
 		});
+		document.addEventListener("keydown", (event) => {
+			if (event.key === "Escape" && drawer.classList.contains("open")) {
+				injection_aps.ui.close_drawer();
+			}
+		});
 		return drawer;
 	};
 
 	injection_aps.ui.open_drawer = function (title, subtitle, html) {
 		const drawer = injection_aps.ui.ensure_drawer();
+		drawer.iaReturnFocus = document.activeElement;
 		drawer.querySelector(".ia-drawer-title").textContent = title || "";
 		drawer.querySelector(".ia-drawer-subtitle").textContent = subtitle || "";
 		drawer.querySelector(".ia-drawer-body").innerHTML = html || "";
+		drawer.setAttribute("aria-hidden", "false");
 		drawer.classList.add("open");
+		const panel = drawer.querySelector(".ia-drawer-panel");
+		if (panel) {
+			panel.focus();
+		}
 	};
 
 	injection_aps.ui.close_drawer = function () {
 		const drawer = document.getElementById("injection-aps-drawer");
 		if (drawer) {
 			drawer.classList.remove("open");
+			drawer.setAttribute("aria-hidden", "true");
+			const returnFocus = drawer.iaReturnFocus;
+			drawer.iaReturnFocus = null;
+			if (returnFocus && document.contains(returnFocus) && typeof returnFocus.focus === "function") {
+				returnFocus.focus();
+			}
 		}
 	};
 

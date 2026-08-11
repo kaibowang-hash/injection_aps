@@ -187,6 +187,7 @@ class TestChangeEngineCalculations(TestCase):
 		with (
 			patch("injection_aps.api.app._require_plan_access") as plan_access,
 			patch("injection_aps.api.app._require_approve_access") as approve_access,
+			patch("injection_aps.api.app._require_change_request_access") as document_access,
 			patch("injection_aps.api.app.planning.confirm_change_request", return_value={}),
 			patch("injection_aps.api.app.planning.approve_change_request", return_value={}),
 			patch("injection_aps.api.app.planning.apply_change_request", return_value={}),
@@ -196,6 +197,7 @@ class TestChangeEngineCalculations(TestCase):
 			app.apply_change_request("CR-1")
 		plan_access.assert_called_once()
 		self.assertEqual(approve_access.call_count, 2)
+		self.assertEqual(document_access.call_count, 3)
 
 	@staticmethod
 	def _segment(name, qty, start, **overrides):

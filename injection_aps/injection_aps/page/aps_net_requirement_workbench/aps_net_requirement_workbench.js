@@ -30,7 +30,7 @@ class InjectionAPSNetRequirementWorkbench {
 			fieldtype: "Link",
 			fieldname: "company",
 			options: "Company",
-			label: __("Company"),
+			label: __("Company", null, "Injection APS"),
 			default: frappe.defaults.get_user_default("Company"),
 			change: () => this.refreshFromFilter(),
 		});
@@ -38,21 +38,21 @@ class InjectionAPSNetRequirementWorkbench {
 			fieldtype: "Link",
 			fieldname: "customer",
 			options: "Customer",
-			label: __("Customer"),
+			label: __("Customer", null, "Injection APS"),
 			change: () => this.refreshFromFilter(),
 		});
 		this.itemField = this.page.add_field({
 			fieldtype: "Link",
 			fieldname: "item_code",
 			options: "Item",
-			label: __("Item"),
+			label: __("Item", null, "Injection APS"),
 			change: () => this.refreshFromFilter(),
 		});
 		this.plantFloorField = this.page.add_field({
 			fieldtype: "Link",
 			fieldname: "plant_floor",
 			options: "Plant Floor",
-			label: __("Plant Floor"),
+			label: __("Plant Floor", null, "Injection APS"),
 		});
 		this.page.main.html(`
 			<div class="ia-page">
@@ -105,7 +105,7 @@ class InjectionAPSNetRequirementWorkbench {
 			});
 			injection_aps.ui.render_cards(this.summary, [
 				{ label: __("Rows"), value: data.summary.rows || 0 },
-				{ label: __("Net Qty"), value: injection_aps.ui.format_number(data.summary.net_requirement_qty || 0) },
+				{ label: __("Net Qty", null, "Injection APS"), value: injection_aps.ui.format_number(data.summary.net_requirement_qty || 0) },
 				{ label: __("Planning Qty"), value: injection_aps.ui.format_number(data.summary.planning_qty || 0), note: __("Includes minimum batch uplift") },
 			]);
 			const rows = (data.rows || []).map((row, index) => Object.assign({ _row_no: index + 1 }, row));
@@ -113,19 +113,19 @@ class InjectionAPSNetRequirementWorkbench {
 			injection_aps.ui.render_table(
 				this.table,
 				[
-					{ label: __("No."), fieldname: "_row_no", fieldtype: "Int", className: "ia-col-seq" },
-					{ label: __("Item"), fieldname: "item_code" },
-					{ label: __("Customer"), fieldname: "customer" },
+					{ label: __("No.", null, "Injection APS"), fieldname: "_row_no", fieldtype: "Int", className: "ia-col-seq" },
+					{ label: __("Item", null, "Injection APS"), fieldname: "item_code" },
+					{ label: __("Customer", null, "Injection APS"), fieldname: "customer" },
 					{ label: __("Demand Date"), fieldname: "demand_date" },
 					{ label: __("Demand", null, "Injection APS"), fieldname: "demand_qty" },
-					{ label: __("Stock"), fieldname: "available_stock_qty" },
-					{ label: __("Open WO"), fieldname: "open_work_order_qty" },
+					{ label: __("Stock", null, "Injection APS"), fieldname: "available_stock_qty" },
+					{ label: __("Open WO", null, "Injection APS"), fieldname: "open_work_order_qty" },
 					{ label: __("Existing WO Policy"), fieldname: "existing_work_order_policy" },
 					{ label: __("Safety Gap"), fieldname: "safety_stock_gap_qty" },
 					{ label: __("Min Batch"), fieldname: "minimum_batch_qty" },
 					{ label: __("Planning Qty"), fieldname: "planning_qty" },
-					{ label: __("Net Qty"), fieldname: "net_requirement_qty" },
-					{ label: __("Reason"), fieldname: "reason_text" },
+					{ label: __("Net Qty", null, "Injection APS"), fieldname: "net_requirement_qty" },
+					{ label: __("Reason", null, "Injection APS"), fieldname: "reason_text" },
 				],
 				rows,
 				(column, value, row) => {
@@ -259,13 +259,13 @@ class InjectionAPSNetRequirementWorkbench {
 			fields: [
 				{ fieldname: "demand_date", fieldtype: "Date", label: __("Demand Date"), default: row.demand_date },
 				{ fieldname: "demand_qty", fieldtype: "Float", label: __("Demand", null, "Injection APS"), default: row.demand_qty },
-				{ fieldname: "available_stock_qty", fieldtype: "Float", label: __("Stock"), default: row.available_stock_qty },
-				{ fieldname: "open_work_order_qty", fieldtype: "Float", label: __("Open WO"), default: row.open_work_order_qty },
+				{ fieldname: "available_stock_qty", fieldtype: "Float", label: __("Stock", null, "Injection APS"), default: row.available_stock_qty },
+				{ fieldname: "open_work_order_qty", fieldtype: "Float", label: __("Open WO", null, "Injection APS"), default: row.open_work_order_qty },
 				{ fieldname: "safety_stock_gap_qty", fieldtype: "Float", label: __("Safety Gap"), default: row.safety_stock_gap_qty },
 				{ fieldname: "minimum_batch_qty", fieldtype: "Float", label: __("Min Batch"), default: row.minimum_batch_qty },
-				{ fieldname: "net_requirement_qty", fieldtype: "Float", label: __("Net Qty"), default: row.net_requirement_qty },
+				{ fieldname: "net_requirement_qty", fieldtype: "Float", label: __("Net Qty", null, "Injection APS"), default: row.net_requirement_qty },
 				{ fieldname: "planning_qty", fieldtype: "Float", label: __("Planning Qty"), default: row.planning_qty },
-				{ fieldname: "reason_text", fieldtype: "Small Text", label: __("Reason"), default: row.reason_text || "" },
+				{ fieldname: "reason_text", fieldtype: "Small Text", label: __("Reason", null, "Injection APS"), default: row.reason_text || "" },
 			],
 			primary_action_label: __("Save Changes"),
 			primary_action: async (values) => {
@@ -299,9 +299,9 @@ class InjectionAPSNetRequirementWorkbench {
 			{
 				title: __("Confirm Delete"),
 				summary_lines: [
-					__("Row: {0}").replace("{0}", row.name || "-"),
+					__("Row: {0}", null, "Injection APS").replace("{0}", row.name || "-"),
 					__("Item: {0}").replace("{0}", row.item_code || "-"),
-					__("Demand Date: {0}").replace("{0}", injection_aps.ui.format_date(row.demand_date) || "-"),
+					__("Demand Date: {0}", null, "Injection APS").replace("{0}", injection_aps.ui.format_date(row.demand_date) || "-"),
 				],
 			}
 		);
@@ -332,8 +332,8 @@ class InjectionAPSNetRequirementWorkbench {
 				title: __("Confirm Demand Rebuild"),
 				summary_lines: [
 					__("Company: {0}").replace("{0}", filters.company || "-"),
-					__("Customer: {0}").replace("{0}", filters.customer || __("All")),
-					__("Item: {0}").replace("{0}", filters.item_code || __("All")),
+					__("Customer: {0}").replace("{0}", filters.customer || __("All", null, "Injection APS")),
+					__("Item: {0}").replace("{0}", filters.item_code || __("All", null, "Injection APS")),
 					__("This action will rebuild the demand pool and recalculate net requirements."),
 				],
 			}
@@ -379,13 +379,13 @@ class InjectionAPSNetRequirementWorkbench {
 							fieldname: "plant_floor",
 							fieldtype: "Link",
 							options: "Plant Floor",
-							label: __("Plant Floor"),
+							label: __("Plant Floor", null, "Injection APS"),
 							in_list_view: 1,
 							reqd: 1,
 						},
 					],
 				},
-				{ fieldname: "horizon_days", fieldtype: "Int", label: __("Horizon Days"), default: 14, reqd: 1 },
+				{ fieldname: "horizon_days", fieldtype: "Int", label: __("Horizon Days", null, "Injection APS"), default: 14, reqd: 1 },
 				injection_aps.ui.get_existing_work_order_policy_field(),
 			],
 			primary_action_label: __("Recalculate"),
@@ -408,8 +408,8 @@ class InjectionAPSNetRequirementWorkbench {
 						summary_lines: [
 							__("Company: {0}").replace("{0}", this.companyField.get_value() || "-"),
 							__("Plant Floors: {0}").replace("{0}", plantFloors.join(", ") || "-"),
-							__("Customer: {0}").replace("{0}", this.customerField.get_value() || __("All")),
-							__("Item: {0}").replace("{0}", this.itemField.get_value() || __("All")),
+							__("Customer: {0}").replace("{0}", this.customerField.get_value() || __("All", null, "Injection APS")),
+							__("Item: {0}").replace("{0}", this.itemField.get_value() || __("All", null, "Injection APS")),
 							__("Horizon: {0} days").replace("{0}", String(values.horizon_days || 14)),
 							__("Existing work orders: {0}").replace(
 								"{0}",

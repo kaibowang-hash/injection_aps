@@ -6,11 +6,16 @@
   "result_reference",
   "item_code",
   "customer",
+  "sales_order",
+  "sales_order_item",
   "required_delivery_date",
   "action",
   "proposed_qty",
+  "result_state_token",
   "existing_work_order",
   "existing_qty",
+  "covered_existing_qty",
+  "existing_state_token",
   "target_work_order",
   "target_start_time",
   "target_end_time",
@@ -24,8 +29,7 @@
    "in_list_view": 1,
    "label": "APS Result",
    "options": "APS Schedule Result",
-   "read_only": 1,
-   "reqd": 1
+   "read_only": 1
   },
   {
    "fieldname": "item_code",
@@ -41,6 +45,21 @@
    "fieldtype": "Link",
    "label": "Customer",
    "options": "Customer",
+   "read_only": 1
+  },
+  {
+   "fieldname": "sales_order",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Sales Order",
+   "options": "Sales Order",
+   "read_only": 1
+  },
+  {
+   "fieldname": "sales_order_item",
+   "fieldtype": "Data",
+   "hidden": 1,
+   "label": "Sales Order Item",
    "read_only": 1
   },
   {
@@ -67,6 +86,13 @@
    "reqd": 1
   },
   {
+   "fieldname": "result_state_token",
+   "fieldtype": "Data",
+   "hidden": 1,
+   "label": "Result State Token",
+   "read_only": 1
+  },
+  {
    "fieldname": "existing_work_order",
    "fieldtype": "Link",
    "label": "Existing Work Order",
@@ -77,6 +103,19 @@
    "fieldname": "existing_qty",
    "fieldtype": "Float",
    "label": "Existing Qty",
+   "read_only": 1
+  },
+  {
+   "fieldname": "covered_existing_qty",
+   "fieldtype": "Float",
+   "label": "Covered Existing Qty",
+   "read_only": 1
+  },
+  {
+   "fieldname": "existing_state_token",
+   "fieldtype": "Data",
+   "hidden": 1,
+   "label": "Existing State Token",
    "read_only": 1
   },
   {
@@ -104,12 +143,14 @@
    "fieldtype": "Select",
    "in_list_view": 1,
    "label": "Review Status",
-   "options": "\nPending\nApproved\nRejected\nApplied\nSkipped"
+   "options": "\nPending\nApproved\nRejected\nApplied\nSkipped",
+   "read_only": 1
   },
   {
    "fieldname": "review_note",
    "fieldtype": "Small Text",
-   "label": "Review Note"
+   "label": "Review Note",
+   "read_only": 1
   }
  ],
  "istable": 1,

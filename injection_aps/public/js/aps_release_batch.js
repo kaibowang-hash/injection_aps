@@ -1,15 +1,16 @@
-frappe.require("/assets/injection_aps/js/injection_aps_shared.js");
+const RELEASE_BATCH_SHARED_READY = frappe.require("/assets/injection_aps/js/injection_aps_shared.js");
 
 frappe.ui.form.on("APS Release Batch", {
 	async refresh(frm) {
-			if (frm.is_new()) {
-				return;
-			}
+		if (frm.is_new()) {
+			return;
+		}
+			await RELEASE_BATCH_SHARED_READY;
 			injection_aps.ui.ensure_styles();
 			frm.clear_custom_buttons();
 			if (frm.doc.planning_run) {
 			frm.add_custom_button(__("Run", null, "Injection APS"), () => frappe.set_route("Form", "APS Planning Run", frm.doc.planning_run));
-			frm.add_custom_button(__("Execution"), () => injection_aps.ui.go_to(`aps-release-center?run_name=${encodeURIComponent(frm.doc.planning_run)}`));
+			frm.add_custom_button(__("Execution", null, "Injection APS"), () => injection_aps.ui.go_to(`aps-release-center?run_name=${encodeURIComponent(frm.doc.planning_run)}`));
 		}
 		if (frm.doc.work_order_scheduling) {
 			frm.add_custom_button(__("Scheduling", null, "Injection APS"), () => frappe.set_route("Form", "Work Order Scheduling", frm.doc.work_order_scheduling));

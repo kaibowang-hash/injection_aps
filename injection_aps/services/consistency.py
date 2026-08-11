@@ -6,7 +6,7 @@ from typing import Any
 
 import frappe
 from frappe import _
-from frappe.utils import cint, flt, get_datetime, getdate, now_datetime
+from frappe.utils import add_days, cint, flt, get_datetime, getdate, now_datetime
 
 
 EFFECTIVE_SEGMENT_KINDS = ("Primary", "Manual")
@@ -16,6 +16,7 @@ MANAGED_EXCEPTION_TYPES = (
 	"Unscheduled Quantity",
 	"Overproduction",
 	"Plan Consistency Error",
+	"Demand Lineage Changed",
 )
 MANAGED_RISK_FLAGS = (
 	"Late Delivery",
@@ -57,6 +58,7 @@ def recalculate_plan_consistency(run_name: str, reason: str | None = None) -> di
 	"""Rebuild every canonical quantity and risk projection for one planning run."""
 	run_doc = frappe.get_doc("APS Planning Run", run_name)
 	_resolve_managed_exceptions(run_name)
+	_sync_demand_lineage_exceptions(run_name)
 	open_exceptions = frappe.get_all(
 		"APS Exception Log",
 		filters={"planning_run": run_name, "status": "Open"},
@@ -67,17 +69,21 @@ def recalculate_plan_consistency(run_name: str, reason: str | None = None) -> di
 		if row.source_name:
 			exceptions_by_source[row.source_name].append(row)
 
-	result_summaries = []
-	for result_name in frappe.get_all(
+	result_names = frappe.get_all(
 		"APS Schedule Result",
 		filters={"planning_run": run_name},
 		pluck="name",
 		order_by="creation asc",
-	):
+	)
+	result_docs = [frappe.get_doc("APS Schedule Result", result_name) for result_name in result_names]
+	source_progress_by_result = _get_run_source_progress(result_docs)
+	result_summaries = []
+	for result_doc in result_docs:
 		result_summaries.append(
 			_recalculate_result(
-				frappe.get_doc("APS Schedule Result", result_name),
+				result_doc,
 				exceptions_by_source=exceptions_by_source,
+				source_progress=source_progress_by_result.get(result_doc.name),
 			)
 		)
 
@@ -97,7 +103,11 @@ def recalculate_plan_consistency(run_name: str, reason: str | None = None) -> di
 			"result_count": len(result_summaries),
 			"consistency_status": "Unchecked",
 			"consistency_checked_on": now_datetime(),
-			"consistency_details": _("Recalculation in progress: {0}").format(reason or _("plan mutation")),
+			"consistency_details": _(
+				"Recalculation in progress: {0}", context="Injection APS"
+			).format(
+				reason or _("plan mutation", context="Injection APS")
+			),
 		},
 		update_modified=False,
 	)
@@ -172,7 +182,7 @@ def validate_plan_consistency(run_name: str, update_run: bool = True) -> dict[st
 
 	errors: list[dict[str, Any]] = []
 	result_totals = []
-	for row in frappe.get_all(
+	result_rows = frappe.get_all(
 		"APS Schedule Result",
 		filters={"planning_run": run_name},
 		fields=[
@@ -187,9 +197,21 @@ def validate_plan_consistency(run_name: str, update_run: bool = True) -> dict[st
 			"delivered_qty",
 			"risk_status",
 			"net_requirement",
+			"company",
+			"customer",
+			"sales_order",
+			"sales_order_item",
+			"item_code",
+			"requested_date",
+			"demand_source",
+			"demand_source_snapshot_json",
+			"fulfillment_baseline_json",
 		],
 		order_by="creation asc",
-	):
+	)
+	lineage_errors_by_result = _get_customer_schedule_lineage_errors(result_rows)
+	for row in result_rows:
+		errors.extend(lineage_errors_by_result.get(row.name) or [])
 		segments = frappe.get_all(
 			"APS Schedule Segment",
 			filters={"parent": row.name, "parenttype": "APS Schedule Result"},
@@ -205,6 +227,9 @@ def validate_plan_consistency(run_name: str, update_run: bool = True) -> dict[st
 			],
 		)
 		for segment in segments:
+			family_error = _family_co_product_allocation_error(segment)
+			if family_error:
+				errors.append(_error("family_co_product_unallocated", row.name, family_error, segment=segment.name))
 			if _is_active_machine_segment(segment):
 				for structural_error in _segment_structure_errors(segment):
 					errors.append(
@@ -351,7 +376,11 @@ def get_exception_risk(rows: list[dict[str, Any]]) -> str:
 	return _risk_from_exceptions(rows)
 
 
-def _recalculate_result(result_doc, exceptions_by_source: dict[str, list[dict[str, Any]]]) -> dict[str, Any]:
+def _recalculate_result(
+	result_doc,
+	exceptions_by_source: dict[str, list[dict[str, Any]]],
+	source_progress: dict[str, float] | None = None,
+) -> dict[str, Any]:
 	due_datetime = _due_datetime(result_doc.name, result_doc.requested_date)
 	effective_segments = []
 	result_risk = _risk_from_exceptions(
@@ -367,6 +396,9 @@ def _recalculate_result(result_doc, exceptions_by_source: dict[str, list[dict[st
 
 	for segment in result_doc.segments or []:
 		segment_errors = _segment_structure_errors(segment) if _is_active_machine_segment(segment) else []
+		family_error = _family_co_product_allocation_error(segment)
+		if family_error:
+			segment_errors.append(family_error)
 		segment_risk = _risk_from_exceptions(exceptions_by_source.get(segment.name) or [])
 		flags = [
 			flag
@@ -445,7 +477,7 @@ def _recalculate_result(result_doc, exceptions_by_source: dict[str, list[dict[st
 
 	machine_scheduled_qty = sum(flt(segment.planned_qty) for segment in effective_segments)
 	quantities = calculate_quantity_fields(result_doc.planned_qty, machine_scheduled_qty)
-	source_progress = _get_source_progress(result_doc)
+	source_progress = source_progress or _get_source_progress(result_doc)
 	execution_produced_qty = unlinked_produced_qty + sum(execution_by_work_order.values())
 	production_ledger = _get_production_ledger_progress(result_doc.name)
 	produced_qty = (
@@ -553,55 +585,316 @@ def _recalculate_result(result_doc, exceptions_by_source: dict[str, list[dict[st
 	}
 
 
+def _get_run_source_progress(result_docs) -> dict[str, dict[str, float]]:
+	progress = {
+		row.name: {"produced_qty": 0.0, "delivered_qty": 0.0}
+		for row in result_docs
+	}
+	targets_by_result = {}
+	if result_docs and frappe.db.exists("DocType", "Customer Delivery Schedule"):
+		from injection_aps.services.availability import _get_result_schedule_targets
+
+		targets_by_result = _get_result_schedule_targets(result_docs)
+		progress.update(_progress_from_claimed_schedule_targets(result_docs, targets_by_result))
+
+	# Backlog fulfillment is tied to one exact Sales Order Item.  Only deliveries
+	# posted after the net-requirement baseline may satisfy this result; otherwise
+	# old framework-order history would be deducted from newly planned demand.
+	backlog_groups = defaultdict(list)
+	opening_delivered_by_result = {}
+	for result_doc in result_docs:
+		if (result_doc.get("demand_source") or "") != "Sales Order Backlog":
+			continue
+		if targets_by_result.get(result_doc.name):
+			continue
+		sales_order = result_doc.get("sales_order")
+		sales_order_item = result_doc.get("sales_order_item")
+		opening_delivered_qty = _get_result_sales_order_item_opening_delivered_qty(result_doc)
+		# Legacy/ambiguous backlog results have no trustworthy historical offset.
+		# Remain conservative instead of borrowing another Sales Order's delivery.
+		if not sales_order or not sales_order_item or opening_delivered_qty is None:
+			continue
+		key = (
+			result_doc.get("company"),
+			result_doc.get("customer") or "",
+			result_doc.get("item_code"),
+			sales_order,
+			sales_order_item,
+		)
+		backlog_groups[key].append(result_doc)
+		opening_delivered_by_result[result_doc.name] = opening_delivered_qty
+	if backlog_groups and frappe.db.exists("DocType", "Sales Order"):
+		for key, rows in backlog_groups.items():
+			physical_delivered = _get_sales_order_delivered_total(*key)
+			for result_doc, claimed in _claim_backlog_delivered_qty(
+				rows,
+				physical_delivered,
+				opening_delivered_by_result=opening_delivered_by_result,
+			):
+				progress[result_doc.name]["delivered_qty"] = claimed
+	return progress
+
+
+def _sync_demand_lineage_exceptions(run_name: str) -> None:
+	result_rows = frappe.get_all(
+		"APS Schedule Result",
+		filters={"planning_run": run_name},
+		fields=[
+			"name",
+			"planning_run",
+			"company",
+			"customer",
+			"sales_order",
+			"sales_order_item",
+			"item_code",
+			"requested_date",
+			"demand_source",
+			"demand_source_snapshot_json",
+			"fulfillment_baseline_json",
+		],
+	)
+	lineage_errors_by_result = _get_customer_schedule_lineage_errors(result_rows)
+	for row in result_rows:
+		lineage_errors = lineage_errors_by_result.get(row.name) or []
+		if not lineage_errors:
+			continue
+		_ensure_managed_exception(
+			planning_run=run_name,
+			severity="Blocking",
+			exception_type="Demand Lineage Changed",
+			message=_(
+				"Customer demand lineage for APS result {0} changed after planning; release is blocked."
+			).format(row.name),
+			item_code=row.get("item_code"),
+			customer=row.get("customer"),
+			source_doctype="APS Schedule Result",
+			source_name=row.name,
+			resolution_hint=_(
+				"Recalculate the planning run from the active customer schedule or process the change through Change Impact."
+			),
+			is_blocking=1,
+			diagnostic={"errors": lineage_errors},
+		)
+
+
+def _get_customer_schedule_lineage_errors(
+	result_rows,
+	*,
+	target_rows=None,
+) -> dict[str, list[dict[str, Any]]]:
+	"""Validate frozen schedule targets against the current active demand identity."""
+	baselines = {}
+	target_names = set()
+	for result in result_rows or []:
+		if not _result_has_customer_schedule_source(result):
+			continue
+		baseline = _parse_fulfillment_baseline(result.get("fulfillment_baseline_json"))
+		baselines[result.name] = baseline
+		if baseline:
+			target_names.update(
+				row.get("customer_schedule_item")
+				for row in baseline.get("targets") or []
+				if isinstance(row, dict) and row.get("customer_schedule_item") and not cint(row.get("retired"))
+			)
+	if not baselines:
+		return {}
+	if target_rows is None:
+		target_rows = (
+			frappe.db.sql(
+				"""
+				select
+					i.name, i.parent, i.item_code, i.sales_order, i.schedule_date,
+					i.qty, i.status as item_status,
+					s.company, ifnull(s.customer, '') as customer,
+					s.status as schedule_status
+				from `tabCustomer Delivery Schedule Item` i
+				inner join `tabCustomer Delivery Schedule` s on s.name = i.parent
+				where i.name in %(target_names)s
+				""",
+				{"target_names": tuple(sorted(target_names))},
+				as_dict=True,
+			)
+			if target_names
+			else []
+		)
+	current_by_name = {row.get("name"): row for row in target_rows or [] if row.get("name")}
+	errors_by_result = defaultdict(list)
+	for result in result_rows or []:
+		if result.name not in baselines:
+			continue
+		baseline = baselines.get(result.name)
+		baseline_targets = baseline.get("targets") if isinstance(baseline, dict) else None
+		reasons = []
+		if not isinstance(baseline_targets, list) or not baseline_targets:
+			reasons.append(_("No frozen customer schedule target is available."))
+		else:
+			for frozen in baseline_targets:
+				if not isinstance(frozen, dict):
+					reasons.append(_("The frozen customer schedule target is invalid."))
+					continue
+				target_name = frozen.get("customer_schedule_item")
+				if cint(frozen.get("retired")):
+					reasons.append(_("Customer schedule target {0} was cancelled or retired.").format(target_name or "-"))
+					continue
+				current = current_by_name.get(target_name)
+				if not current:
+					reasons.append(_("Customer schedule target {0} is no longer available.").format(target_name or "-"))
+					continue
+				if (current.get("schedule_status") or "") != "Active" or (current.get("item_status") or "") == "Cancelled":
+					reasons.append(_("Customer schedule target {0} is no longer active.").format(target_name))
+					continue
+				identity_mismatches = []
+				for fieldname in ("company", "customer", "sales_order", "item_code"):
+					if (current.get(fieldname) or "") != (result.get(fieldname) or ""):
+						identity_mismatches.append(fieldname)
+				if getdate(current.get("schedule_date")) != getdate(result.get("requested_date")):
+					identity_mismatches.append("schedule_date")
+				if identity_mismatches:
+					reasons.append(
+						_("Customer schedule target {0} no longer matches result fields: {1}.").format(
+							target_name,
+							", ".join(identity_mismatches),
+						)
+					)
+				if abs(flt(current.get("qty")) - flt(frozen.get("opening_required_qty"))) > QTY_TOLERANCE:
+					reasons.append(_("Customer schedule target {0} quantity changed after planning.").format(target_name))
+		for reason in dict.fromkeys(reasons):
+			errors_by_result[result.name].append(
+				_error("demand_lineage_changed", result.name, reason)
+			)
+	return dict(errors_by_result)
+
+
+def _result_has_customer_schedule_source(result) -> bool:
+	if (result.get("demand_source") or "") == "Customer Delivery Schedule":
+		return True
+	value = result.get("demand_source_snapshot_json")
+	if not value:
+		return False
+	try:
+		source_rows = value if isinstance(value, list) else json.loads(value)
+	except (TypeError, ValueError):
+		return False
+	return any(
+		isinstance(row, dict) and row.get("source_doctype") == "Customer Delivery Schedule"
+		for row in source_rows or []
+	)
+
+
+def _progress_from_claimed_schedule_targets(result_docs, targets_by_result):
+	progress = {}
+	for result_doc in result_docs:
+		produced_qty = 0.0
+		delivered_qty = 0.0
+		for target in targets_by_result.get(result_doc.name) or []:
+			attributed_qty = max(flt(target.get("attributed_qty") or target.get("qty")), 0)
+			produced_qty += min(
+				max(flt(target.get("produced_qty")) - flt(target.get("opening_produced_qty")), 0),
+				attributed_qty,
+			)
+			delivered_qty += min(
+				max(flt(target.get("delivered_qty")) - flt(target.get("opening_delivered_qty")), 0),
+				attributed_qty,
+			)
+		progress[result_doc.name] = {
+			"produced_qty": produced_qty,
+			"delivered_qty": delivered_qty,
+		}
+	return progress
+
+
+def _get_sales_order_delivered_total(
+	company,
+	customer,
+	item_code,
+	sales_order,
+	sales_order_item,
+) -> float:
+	row = frappe.db.sql(
+		"""
+		select coalesce(sum(i.delivered_qty), 0) as delivered_qty
+		from `tabSales Order Item` i
+		inner join `tabSales Order` s on s.name = i.parent
+		where s.company = %(company)s
+			and s.docstatus = 1
+			and ifnull(s.customer, '') = %(customer)s
+			and s.name = %(sales_order)s
+			and i.name = %(sales_order_item)s
+			and i.item_code = %(item_code)s
+		""",
+		{
+			"company": company,
+			"customer": customer,
+			"item_code": item_code,
+			"sales_order": sales_order,
+			"sales_order_item": sales_order_item,
+		},
+		as_dict=True,
+	)[0]
+	return flt(row.delivered_qty)
+
+
+def _claim_backlog_delivered_qty(
+	result_docs,
+	physical_delivered,
+	*,
+	opening_delivered_by_result: dict[str, float] | None = None,
+):
+	physical_delivered = max(flt(physical_delivered), 0)
+	opening_delivered_by_result = opening_delivered_by_result or {}
+	claimed_through = 0.0
+	claims = []
+	for result_doc in result_docs:
+		claim_start = max(
+			claimed_through,
+			max(flt(opening_delivered_by_result.get(result_doc.name)), 0),
+		)
+		claimed = min(
+			max(physical_delivered - claim_start, 0),
+			max(flt(result_doc.get("planned_qty")), 0),
+		)
+		claims.append((result_doc, claimed))
+		claimed_through = claim_start + claimed
+	return claims
+
+
+def _get_result_sales_order_item_opening_delivered_qty(result_doc) -> float | None:
+	baseline = _parse_fulfillment_baseline(result_doc.get("fulfillment_baseline_json"))
+	if baseline is None:
+		return None
+	sales_order = result_doc.get("sales_order") or ""
+	sales_order_item = result_doc.get("sales_order_item") or ""
+	item_code = result_doc.get("item_code") or ""
+	matches = [
+		row
+		for row in baseline.get("sales_order_items") or []
+		if isinstance(row, dict)
+		and (row.get("sales_order") or "") == sales_order
+		and (row.get("sales_order_item") or "") == sales_order_item
+		and (row.get("item_code") or "") == item_code
+	]
+	if len(matches) != 1:
+		return None
+	return max(flt(matches[0].get("opening_delivered_qty")), 0)
+
+
+def _parse_fulfillment_baseline(value) -> dict[str, Any] | None:
+	if value in (None, ""):
+		return None
+	if isinstance(value, dict):
+		return value
+	try:
+		parsed = json.loads(value)
+	except (TypeError, ValueError):
+		return None
+	return parsed if isinstance(parsed, dict) else None
+
+
 def _get_source_progress(result_doc) -> dict[str, float]:
-	produced_qty = 0.0
-	delivered_qty = 0.0
-	if frappe.db.exists("DocType", "Customer Delivery Schedule"):
-		row = frappe.db.sql(
-			"""
-			select
-				coalesce(sum(i.produced_qty), 0) as produced_qty,
-				coalesce(sum(i.delivered_qty), 0) as delivered_qty
-			from `tabCustomer Delivery Schedule Item` i
-			inner join `tabCustomer Delivery Schedule` s on s.name = i.parent
-			where s.company = %(company)s
-				and s.status = 'Active'
-				and ifnull(s.customer, '') = ifnull(%(customer)s, '')
-				and i.item_code = %(item_code)s
-				and i.schedule_date = %(requested_date)s
-			""",
-			{
-				"company": result_doc.company,
-				"customer": result_doc.customer,
-				"item_code": result_doc.item_code,
-				"requested_date": getdate(result_doc.requested_date),
-			},
-			as_dict=True,
-		)[0]
-		produced_qty = flt(row.produced_qty)
-		delivered_qty = flt(row.delivered_qty)
-	if result_doc.demand_source == "Sales Order Backlog" and frappe.db.exists("DocType", "Sales Order"):
-		row = frappe.db.sql(
-			"""
-			select coalesce(sum(i.delivered_qty), 0) as delivered_qty
-			from `tabSales Order Item` i
-			inner join `tabSales Order` s on s.name = i.parent
-			where s.company = %(company)s
-				and s.docstatus = 1
-				and ifnull(s.customer, '') = ifnull(%(customer)s, '')
-				and i.item_code = %(item_code)s
-				and i.delivery_date = %(requested_date)s
-			""",
-			{
-				"company": result_doc.company,
-				"customer": result_doc.customer,
-				"item_code": result_doc.item_code,
-				"requested_date": getdate(result_doc.requested_date),
-			},
-			as_dict=True,
-		)[0]
-		delivered_qty = flt(row.delivered_qty)
-	return {"produced_qty": produced_qty, "delivered_qty": delivered_qty}
+	return _get_run_source_progress([result_doc]).get(
+		result_doc.name,
+		{"produced_qty": 0.0, "delivered_qty": 0.0},
+	)
 
 
 def _get_production_ledger_progress(result_name: str) -> dict[str, Any]:
@@ -644,7 +937,7 @@ def _sum_run_totals(rows: list[dict[str, Any]]) -> dict[str, float]:
 
 def _segment_structure_errors(segment: dict[str, Any] | Any) -> list[str]:
 	errors = []
-	name = _value(segment, "name") or _("new segment")
+	name = _value(segment, "name") or _("new segment", context="Injection APS")
 	if not _value(segment, "workstation"):
 		errors.append(_("Segment {0} has no workstation.").format(name))
 	start_time = _value(segment, "start_time")
@@ -654,6 +947,21 @@ def _segment_structure_errors(segment: dict[str, Any] | Any) -> list[str]:
 	elif get_datetime(end_time) <= get_datetime(start_time):
 		errors.append(_("Segment {0} end time must be later than start time.").format(name))
 	return errors
+
+
+def _family_co_product_allocation_error(segment: dict[str, Any] | Any) -> str | None:
+	"""Fail closed for legacy family credits until an exact allocation ledger exists."""
+	if (
+		(_value(segment, "segment_kind") or "Primary") == "Family Co-Product"
+		and (_value(segment, "segment_status") or "Planned") not in INACTIVE_SEGMENT_STATUSES
+		and flt(_value(segment, "planned_qty")) > 0
+	):
+		return _(
+			"Family co-product Segment {0} has no exact Sales Order Item and execution allocation ledger. "
+			"Recalculate the plan without automatic family credit before release.",
+			context="Injection APS",
+		).format(_value(segment, "name") or _("new segment", context="Injection APS"))
+	return None
 
 
 def _is_active_machine_segment(segment: dict[str, Any] | Any) -> bool:
@@ -667,7 +975,7 @@ def _is_active_machine_segment(segment: dict[str, Any] | Any) -> bool:
 def _due_datetime(result_name: str, requested_date=None):
 	requested_date = requested_date or frappe.db.get_value("APS Schedule Result", result_name, "requested_date")
 	date_value = getdate(requested_date)
-	return get_datetime(f"{date_value} 23:59:59")
+	return get_datetime(add_days(date_value, 1))
 
 
 def _risk_from_exceptions(rows: list[dict[str, Any]]) -> str:
@@ -756,7 +1064,9 @@ def _compare_qty(errors: list[dict[str, Any]], source: str, fieldname: str, actu
 		_error(
 			"quantity_mismatch",
 			source,
-			_("{0} is {1}, expected {2}.").format(fieldname, flt(actual), flt(expected)),
+			_("{0} is {1}, expected {2}.", context="Injection APS").format(
+				fieldname, flt(actual), flt(expected)
+			),
 			fieldname=fieldname,
 			actual=flt(actual),
 			expected=flt(expected),

@@ -1,0 +1,45 @@
+{
+ "content": null,
+ "doctype": "Page",
+ "module": "Injection APS",
+ "name": "aps-change-impact-center",
+ "page_name": "aps-change-impact-center",
+ "roles": [
+  {
+   "role": "System Manager"
+  },
+  {
+   "role": "GMC"
+  },
+  {
+   "role": "PMC"
+  },
+  {
+   "role": "Manufacturing Manager"
+  },
+  {
+   "role": "Manufacturing User"
+  },
+  {
+   "role": "Sales Manager"
+  },
+  {
+   "role": "Sales User"
+  },
+  {
+   "role": "Purchase Manager"
+  },
+  {
+   "role": "Purchase User"
+  },
+  {
+   "role": "Stock Manager"
+  },
+  {
+   "role": "Stock User"
+  }
+ ],
+ "standard": "Yes",
+ "system_page": 0,
+ "title": "Change Impact Center"
+}

@@ -234,13 +234,15 @@ class TestCustomerScheduleProgress(FrappeTestCase):
 
 		with (
 			patch("injection_aps.api.app.require_any_role") as require_any_role,
+			patch("injection_aps.api.app._require_scope_access") as require_scope,
 			patch("injection_aps.api.app.planning.get_customer_schedule_progress_data", return_value={"rows": []}) as service,
 		):
 			data = app.get_customer_schedule_progress_data(company=self.company, item_code=self.item, limit=1)
 
-		assert data == {"rows": []}
+		assert data["rows"] == []
 		assert require_any_role.call_count == 1
 		assert require_any_role.call_args.args[0] == app.APS_READ_ROLES
+		require_scope.assert_called_once_with(company=self.company, customer=None, planning_run=None)
 		service.assert_called_once_with(
 			company=self.company,
 			customer=None,

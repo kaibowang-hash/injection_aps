@@ -17,6 +17,9 @@
   "planned_qty",
   "existing_scheduling",
   "existing_scheduling_item",
+  "work_order_state_token",
+  "segment_state_token",
+  "scheduling_state_token",
   "target_scheduling",
   "review_status",
   "review_note"
@@ -128,6 +131,27 @@
    "read_only": 1
   },
   {
+   "fieldname": "work_order_state_token",
+   "fieldtype": "Data",
+   "hidden": 1,
+   "label": "Work Order State Token",
+   "read_only": 1
+  },
+  {
+   "fieldname": "segment_state_token",
+   "fieldtype": "Data",
+   "hidden": 1,
+   "label": "Segment State Token",
+   "read_only": 1
+  },
+  {
+   "fieldname": "scheduling_state_token",
+   "fieldtype": "Data",
+   "hidden": 1,
+   "label": "Scheduling State Token",
+   "read_only": 1
+  },
+  {
    "fieldname": "target_scheduling",
    "fieldtype": "Link",
    "label": "Target Scheduling",
@@ -140,12 +164,14 @@
    "fieldtype": "Select",
    "in_list_view": 1,
    "label": "Review Status",
-   "options": "\nPending\nApproved\nRejected\nApplied\nSkipped"
+   "options": "\nPending\nApproved\nRejected\nApplied\nSkipped",
+   "read_only": 1
   },
   {
    "fieldname": "review_note",
    "fieldtype": "Small Text",
-   "label": "Review Note"
+   "label": "Review Note",
+   "read_only": 1
   }
  ],
  "istable": 1,
