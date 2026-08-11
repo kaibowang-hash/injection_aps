@@ -8,6 +8,11 @@
   "planning_horizon_days",
   "release_horizon_days",
   "freeze_days",
+  "default_production_strategy",
+  "capacity_bucket_mode",
+  "default_max_prebuild_days",
+  "high_cancellation_risk_percent",
+  "require_pmc_confirmation_for_risk",
   "default_setup_minutes",
   "default_first_article_minutes",
   "default_hourly_capacity_qty",
@@ -60,6 +65,38 @@
    "fieldname": "freeze_days",
    "fieldtype": "Int",
    "label": "Freeze Days"
+  },
+  {
+   "default": "Auto Balance",
+   "fieldname": "default_production_strategy",
+   "fieldtype": "Select",
+   "label": "Default Production Strategy",
+   "options": "Auto Balance\nForce Prebuild\nForce JIT"
+  },
+  {
+   "default": "Shift",
+   "fieldname": "capacity_bucket_mode",
+   "fieldtype": "Select",
+   "label": "Capacity Bucket Mode",
+   "options": "Shift\nDay"
+  },
+  {
+   "default": "7",
+   "fieldname": "default_max_prebuild_days",
+   "fieldtype": "Int",
+   "label": "Default Max Prebuild Days"
+  },
+  {
+   "default": "60",
+   "fieldname": "high_cancellation_risk_percent",
+   "fieldtype": "Percent",
+   "label": "High Cancellation Risk Percent"
+  },
+  {
+   "default": "1",
+   "fieldname": "require_pmc_confirmation_for_risk",
+   "fieldtype": "Check",
+   "label": "Require PMC Confirmation For Risk"
   },
   {
    "default": "30",
@@ -134,7 +171,7 @@
    "label": "Item Safety Stock Field"
   },
   {
-   "default": "max_stock_qty",
+   "default": "custom_aps_max_stock_qty",
    "fieldname": "item_max_stock_field",
    "fieldtype": "Data",
    "label": "Item Max Stock Field"

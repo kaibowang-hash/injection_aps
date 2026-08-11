@@ -54,7 +54,7 @@
    "fieldname": "import_strategy",
    "fieldtype": "Select",
    "label": "Import Strategy",
-   "options": "\nReplace Scope\nPartial Item Update\nAppend",
+   "options": "\nReplace Scope\nPartial Update\nAppend",
    "read_only": 1
   },
   {

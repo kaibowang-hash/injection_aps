@@ -34,21 +34,20 @@ class InjectionAPSScheduleConsole {
 				<div class="ia-feedback"></div>
 				<div class="ia-status-host"></div>
 				<div class="ia-action-host"></div>
+				<div class="ia-import-checks-host"></div>
+				<div class="ia-panel">
+					<h4>${__("Pending Preview")}</h4>
+					<div class="ia-preview-summary ia-card-grid" style="margin-top: 8px;"></div>
+					<div class="ia-preview-table" style="margin-top: 8px;"></div>
+				</div>
 				<div class="ia-grid-2">
 					<div class="ia-panel">
-						<h4>${__("Pending Preview")}</h4>
-						<div class="ia-preview-summary ia-card-grid" style="margin-top: 8px;"></div>
-						<div class="ia-preview-table" style="margin-top: 8px;"></div>
+						<h4>${__("Active Versions")}</h4>
+						<div class="ia-active-table" style="margin-top: 8px;"></div>
 					</div>
-					<div class="ia-page">
-						<div class="ia-panel">
-							<h4>${__("Active Versions")}</h4>
-							<div class="ia-active-table" style="margin-top: 8px;"></div>
-						</div>
-						<div class="ia-panel">
-							<h4>${__("Recent Import Batches")}</h4>
-							<div class="ia-batch-table" style="margin-top: 8px;"></div>
-						</div>
+					<div class="ia-panel">
+						<h4>${__("Recent Import Batches")}</h4>
+						<div class="ia-batch-table" style="margin-top: 8px;"></div>
 					</div>
 				</div>
 			</div>
@@ -58,6 +57,7 @@ class InjectionAPSScheduleConsole {
 		this.feedback = this.page.main.find(".ia-feedback")[0];
 		this.statusHost = this.page.main.find(".ia-status-host")[0];
 		this.actionHost = this.page.main.find(".ia-action-host")[0];
+		this.importChecksHost = this.page.main.find(".ia-import-checks-host")[0];
 		this.previewSummary = this.page.main.find(".ia-preview-summary")[0];
 		this.previewTable = this.page.main.find(".ia-preview-table")[0];
 		this.activeTable = this.page.main.find(".ia-active-table")[0];
@@ -90,14 +90,21 @@ class InjectionAPSScheduleConsole {
 	}
 
 	renderFlow() {
+		const previewReady = Boolean(this.pendingImport && this.pendingImport.preview && this.pendingImport.preview.can_import);
+		const previewBlocked = Boolean(this.pendingImport && !previewReady);
+		const blockingReason = previewBlocked
+			? this.pendingImport.preview.is_idempotent_replay
+				? __("This file was already imported. No additional demand will be created.")
+				: __("Import checks contain blocking findings.")
+			: "";
 		const context = this.pendingImport
 			? {
 				current_step: __("Preview Completed"),
 				next_step: __("Formal Import + Demand Rebuild"),
-				blocking_reason: "",
+				blocking_reason: blockingReason,
 				actions: [
-					{ label: __("Import and Rebuild"), action_key: "import_and_promote", enabled: 1 },
-					{ label: __("Import", null, "Injection APS"), action_key: "import_only", enabled: 1 },
+					{ label: __("Import and Rebuild"), action_key: "import_and_promote", enabled: previewReady ? 1 : 0 },
+					{ label: __("Import", null, "Injection APS"), action_key: "import_only", enabled: previewReady ? 1 : 0 },
 					{ label: __("Net Requirements"), action_key: "open_net_requirement", enabled: this.lastImported ? 1 : 0, route: "aps-net-requirement-workbench" },
 				],
 			}
@@ -214,6 +221,7 @@ class InjectionAPSScheduleConsole {
 	renderPreview() {
 		const preview = this.pendingImport ? this.pendingImport.preview : null;
 		if (!preview) {
+			this.renderImportChecks([]);
 			injection_aps.ui.render_cards(this.previewSummary, [
 				{ label: __("Preview"), value: __("None"), note: __("Run preview before import.") },
 			]);
@@ -231,7 +239,10 @@ class InjectionAPSScheduleConsole {
 			{ label: __("Schedule Scope"), value: preview.schedule_scope || "-" },
 			{ label: __("Version"), value: preview.version_no || "-" },
 			{ label: __("Import Strategy"), value: injection_aps.ui.translate(preview.import_strategy || "-") },
-			{ label: __("Rows"), value: preview.row_count || 0 },
+			{ label: __("Source Rows"), value: preview.source_row_count || 0 },
+			{ label: __("Previous Total"), value: frappe.format(preview.previous_total_qty || 0, { fieldtype: "Float" }) },
+			{ label: __("Post Import Total"), value: frappe.format(preview.post_import_total_qty || 0, { fieldtype: "Float" }) },
+			{ label: __("Total Delta"), value: frappe.format(preview.total_delta_qty || 0, { fieldtype: "Float" }) },
 			{
 				label: __("Changes", null, "Injection APS"),
 				value: summaryRows.length || 0,
@@ -244,7 +255,40 @@ class InjectionAPSScheduleConsole {
 					.join(" | "),
 			},
 		]);
+		this.renderImportChecks(preview.checks || []);
 		this.renderPreviewEditor(preview.rows || []);
+	}
+
+	renderImportChecks(checks) {
+		if (!checks.length) {
+			this.importChecksHost.innerHTML = "";
+			return;
+		}
+		const rows = checks
+			.map((check) => {
+				const status = check.status || "notice";
+				const iconName = status === "passed" ? "check" : status === "failed" ? "x" : "alert-triangle";
+				const details = (check.details || [])
+					.map((detail) => `<li>${injection_aps.ui.escape(detail || "")}</li>`)
+					.join("");
+				return `
+					<div class="ia-import-check ia-import-check-${injection_aps.ui.escape(status)}">
+						<span class="ia-import-check-icon">${injection_aps.ui.icon(iconName, "sm")}</span>
+						<div class="ia-import-check-body">
+							<div class="ia-import-check-title">${injection_aps.ui.escape(check.title || "")}</div>
+							<div class="ia-import-check-summary">${injection_aps.ui.escape(check.summary || "")}</div>
+							${details ? `<ul>${details}</ul>` : ""}
+						</div>
+					</div>
+				`;
+			})
+			.join("");
+		this.importChecksHost.innerHTML = `
+			<div class="ia-panel ia-import-checks">
+				<div class="ia-panel-head"><h4>${__("Import Checks")}</h4></div>
+				${rows}
+			</div>
+		`;
 	}
 
 	openPreviewDialog() {
@@ -259,9 +303,18 @@ class InjectionAPSScheduleConsole {
 					fieldname: "import_strategy",
 					fieldtype: "Select",
 					label: __("Import Strategy"),
-					options: ["Replace Scope", "Partial Item Update", "Append"].join("\n"),
+					options: ["Replace Scope", "Partial Update", "Append"].join("\n"),
 					default: "Replace Scope",
 					reqd: 1,
+				},
+				{
+					fieldname: "duplicate_policy",
+					fieldtype: "Select",
+					label: __("Duplicate Policy"),
+					options: ["Block", "Sum"].join("\n"),
+					default: "Block",
+					reqd: 1,
+					description: __("Duplicates are blocked unless Sum is explicitly selected."),
 				},
 				{
 					fieldname: "file_url",
@@ -310,7 +363,6 @@ class InjectionAPSScheduleConsole {
 				},
 				{ fieldname: "date_start_column", fieldtype: "Select", label: __("Date Start Column") },
 				{ fieldname: "date_end_column", fieldtype: "Select", label: __("Date End Column") },
-				{ fieldname: "skip_zero_qty", fieldtype: "Check", label: __("Skip Zero Qty"), default: 1 },
 				{ fieldname: "inspection_html", fieldtype: "HTML", label: __("Detected Layout") },
 			],
 			primary_action_label: __("Preview"),
@@ -340,7 +392,6 @@ class InjectionAPSScheduleConsole {
 			"date_columns_mode",
 			"date_start_column",
 			"date_end_column",
-			"skip_zero_qty",
 		];
 		dialog.set_df_property("sheet_name", "hidden", showFileMapping ? 0 : 1);
 		dialog.set_df_property("header_row_no", "hidden", showFileMapping ? 0 : 1);
@@ -379,7 +430,6 @@ class InjectionAPSScheduleConsole {
 				date_columns_mode: values.date_columns_mode || "auto",
 				date_start_column: values.date_start_column || undefined,
 				date_end_column: values.date_end_column || undefined,
-				skip_zero_qty: values.skip_zero_qty ? 1 : 0,
 			});
 		}
 		return mapping;
@@ -473,6 +523,7 @@ class InjectionAPSScheduleConsole {
 			version_no: values.version_no,
 			schedule_scope: scheduleScope,
 			import_strategy: values.import_strategy || "Replace Scope",
+			duplicate_policy: values.duplicate_policy || "Block",
 			file_url: values.file_url || undefined,
 			rows_json: values.rows_json || undefined,
 			mapping_json: this.getImportMapping(values) ? JSON.stringify(this.getImportMapping(values)) : undefined,
@@ -491,8 +542,7 @@ class InjectionAPSScheduleConsole {
 		if (!preview) {
 			return;
 		}
-		const editableRows = this.buildEditablePreviewRows(preview.rows || []);
-		payload.rows_json = JSON.stringify(editableRows);
+		const editableRows = this.buildEditablePreviewRows(preview.source_rows || []);
 		this.pendingImport = { payload, preview, editableRows };
 		this.renderPreview();
 		this.renderFlow();
@@ -502,6 +552,10 @@ class InjectionAPSScheduleConsole {
 	async importPending(rebuildNextStep) {
 		if (!this.pendingImport) {
 			frappe.show_alert({ message: __("No pending preview to import."), indicator: "orange" });
+			return;
+		}
+		if (!this.pendingImport.preview.can_import) {
+			frappe.show_alert({ message: __("Resolve all import checks before importing."), indicator: "red" });
 			return;
 		}
 		const confirmationAction = { action_key: rebuildNextStep ? "import_and_promote" : "import_only", confirm_required: 1 };
@@ -542,18 +596,16 @@ class InjectionAPSScheduleConsole {
 				feedback_target: this.feedback,
 			},
 			async () => {
+				const importPayload = Object.assign({}, this.pendingImport.payload, {
+					rebuild: rebuildNextStep ? 1 : 0,
+					existing_work_order_policy: existingWorkOrderPolicy || undefined,
+				});
 				const imported = await frappe.xcall(
 					"injection_aps.api.app.import_customer_delivery_schedule",
-					this.pendingImport.payload
+					importPayload
 				);
-				if (rebuildNextStep) {
-					const promotion = await frappe.xcall(
-						"injection_aps.api.app.promote_schedule_import_to_net_requirement",
-						{
-							import_batch: imported.import_batch,
-							existing_work_order_policy: existingWorkOrderPolicy,
-						}
-					);
+				if (imported.promotion) {
+					const promotion = imported.promotion;
 					injection_aps.ui.show_warnings(promotion.demand_pool, __("Demand Pool Warnings"), "warning_count");
 					injection_aps.ui.show_warnings(promotion.net_requirement, __("Net Requirement Warnings"), "warning_count");
 				}
@@ -575,10 +627,12 @@ class InjectionAPSScheduleConsole {
 			item_code: row.item_code || "",
 			customer_part_no: row.customer_part_no || "",
 			schedule_date: row.schedule_date || "",
-			qty: Number(row.qty || 0),
+			previous_schedule_date: row.previous_schedule_date || "",
+			qty: Number(row.import_qty != null ? row.import_qty : row.qty || 0),
 			remark: row.remark || "",
 			source_origin: row.source_origin || "imported",
 			source_excel_row: row.source_excel_row || "",
+			source_excel_rows: row.source_excel_rows || "",
 			manual_override: row.manual_override ? 1 : 0,
 			manual_change_reason: row.manual_change_reason || "",
 		}));
@@ -608,7 +662,7 @@ class InjectionAPSScheduleConsole {
 			return;
 		}
 		this.pendingImport.preview = preview;
-		this.pendingImport.editableRows = this.buildEditablePreviewRows(preview.rows || []);
+		this.pendingImport.editableRows = this.buildEditablePreviewRows(preview.source_rows || []);
 		this.pendingImport.payload.schedule_scope = preview.schedule_scope || this.pendingImport.payload.schedule_scope;
 		this.pendingImport.payload.import_strategy = preview.import_strategy || this.pendingImport.payload.import_strategy;
 		this.pendingImport.payload.rows_json = JSON.stringify(this.pendingImport.editableRows);
@@ -619,15 +673,17 @@ class InjectionAPSScheduleConsole {
 		const previewRows = rows || [];
 		const columns = [
 			{ label: __("Seq"), fieldname: "line_idx" },
-			{ label: __("Excel Row"), fieldname: "source_excel_row" },
+			{ label: __("Excel Rows"), fieldname: "source_excel_rows" },
 			{ label: __("Sales Order"), fieldname: "sales_order" },
 			{ label: __("Item"), fieldname: "item_code" },
 			{ label: __("Part No"), fieldname: "customer_part_no" },
-			{ label: __("Schedule Date"), fieldname: "schedule_date" },
-			{ label: __("Qty"), fieldname: "qty" },
-			{ label: __("Prev Qty"), fieldname: "previous_qty" },
+			{ label: __("Previous Date"), fieldname: "previous_schedule_date" },
+			{ label: __("New Date"), fieldname: "schedule_date" },
+			{ label: __("Previous Qty"), fieldname: "previous_qty" },
+			{ label: __("New Qty"), fieldname: "new_qty" },
+			{ label: __("Delta"), fieldname: "delta_qty" },
 			{ label: __("Change", null, "Injection APS"), fieldname: "change_type" },
-			{ label: __("Source"), fieldname: "source_origin" },
+			{ label: __("Execution Impact"), fieldname: "execution_impact" },
 		];
 		if (!previewRows.length) {
 			this.previewTable.innerHTML = `
@@ -642,25 +698,28 @@ class InjectionAPSScheduleConsole {
 		}
 		const body = previewRows
 			.map((row, index) => {
-				const tone = ["Cancelled", "Reduced", "Delayed"].includes(row.change_type)
+				const tone = ["Cancelled", "Reduced", "Delayed", "Duplicate Blocked", "Validation Blocked"].includes(row.change_type)
 					? "red"
-					: ["Advanced", "Added", "Increased"].includes(row.change_type)
+					: ["Advanced", "Added", "Appended", "Increased"].includes(row.change_type)
 						? "orange"
 						: "green";
 				const displayLineIndex = row.line_idx || index + 1;
-				const displayExcelRow = row.source_excel_row || "";
+				const displayExcelRows = row.source_excel_rows || row.source_excel_row || "";
+				const sourceIndex = this.findEditableSourceIndex(row);
 				return `
-					<tr data-preview-index="${index}">
+					<tr data-preview-index="${index}" data-source-index="${sourceIndex}">
 						<td class="ia-col-seq">${injection_aps.ui.escape(String(displayLineIndex))}</td>
-						<td class="ia-col-excel-row">${injection_aps.ui.escape(String(displayExcelRow))}</td>
+						<td class="ia-col-excel-row">${injection_aps.ui.escape(String(displayExcelRows))}</td>
 						<td>${injection_aps.ui.escape(row.sales_order || "")}</td>
 						<td>${injection_aps.ui.escape(row.item_code || "")}</td>
 						<td>${injection_aps.ui.escape(row.customer_part_no || "")}</td>
+						<td>${injection_aps.ui.escape(injection_aps.ui.format_date(row.previous_schedule_date))}</td>
 						<td>${injection_aps.ui.escape(injection_aps.ui.format_date(row.schedule_date))}</td>
-						<td>${frappe.format(row.qty || 0, { fieldtype: "Float" })}</td>
 						<td>${frappe.format(row.previous_qty || 0, { fieldtype: "Float" })}</td>
+						<td>${frappe.format(row.new_qty || 0, { fieldtype: "Float" })}</td>
+						<td>${frappe.format(row.delta_qty || 0, { fieldtype: "Float" })}</td>
 						<td>${injection_aps.ui.pill(injection_aps.ui.translate(row.change_type), tone)}</td>
-						<td>${injection_aps.ui.escape(injection_aps.ui.translate(row.source_origin || "imported"))}</td>
+						<td>${injection_aps.ui.escape(row.execution_impact || __("None"))}</td>
 					</tr>
 				`;
 			})
@@ -678,7 +737,7 @@ class InjectionAPSScheduleConsole {
 								.map((column) => {
 									const className = column.fieldname === "line_idx"
 										? "ia-col-seq"
-										: column.fieldname === "source_excel_row"
+										: column.fieldname === "source_excel_rows"
 											? "ia-col-excel-row"
 											: "";
 									return `<th${className ? ` class="${className}"` : ""}>${injection_aps.ui.escape(column.label)}</th>`;
@@ -694,7 +753,10 @@ class InjectionAPSScheduleConsole {
 		this.previewTable.querySelectorAll("[data-preview-index]").forEach((rowNode) => {
 			rowNode.addEventListener("contextmenu", (event) => {
 				event.preventDefault();
-				const rowIndex = Number(rowNode.dataset.previewIndex || 0);
+				const rowIndex = Number(rowNode.dataset.sourceIndex);
+				if (rowIndex < 0) {
+					return;
+				}
 				injection_aps.ui.open_context_menu(
 					[
 						{
@@ -714,6 +776,22 @@ class InjectionAPSScheduleConsole {
 		});
 	}
 
+	findEditableSourceIndex(row) {
+		const rows = this.getEditablePreviewRows();
+		const excelRows = String(row.source_excel_rows || row.source_excel_row || "");
+		return rows.findIndex((source) => {
+			if (excelRows && String(source.source_excel_rows || source.source_excel_row || "") === excelRows) {
+				return true;
+			}
+			return (
+				(source.sales_order || "") === (row.sales_order || "") &&
+				(source.item_code || "") === (row.item_code || "") &&
+				(source.customer_part_no || "") === (row.customer_part_no || "") &&
+				(source.schedule_date || "") === (row.schedule_date || "")
+			);
+		});
+	}
+
 	bindPreviewToolbar(rows, columns) {
 		const exportButton = this.previewTable.querySelector("[data-ia-preview-export='1']");
 		if (exportButton) {
@@ -729,7 +807,7 @@ class InjectionAPSScheduleConsole {
 						if (column.fieldname === "change_type" || column.fieldname === "source_origin") {
 							return injection_aps.ui.translate(value);
 						}
-						if (column.fieldname === "schedule_date") {
+						if (["schedule_date", "previous_schedule_date"].includes(column.fieldname)) {
 							return injection_aps.ui.format_date(value);
 						}
 						return value;

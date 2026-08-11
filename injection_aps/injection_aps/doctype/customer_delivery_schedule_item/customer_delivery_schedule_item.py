@@ -6,6 +6,8 @@ from frappe.utils import flt
 
 class CustomerDeliveryScheduleItem(Document):
 	def validate(self):
+		self.production_strategy = self.production_strategy or "Auto Balance"
+		self.demand_confidence = self.demand_confidence or "Confirmed"
 		self.balance_qty = max(flt(self.qty) - flt(self.delivered_qty), 0)
 		if self.balance_qty <= 0:
 			self.status = "Covered"

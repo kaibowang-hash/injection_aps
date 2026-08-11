@@ -167,14 +167,24 @@ class InjectionAPSReleaseCenter {
 			this.renderWOSReleaseAction(data.run_context || null);
 
 			const executionHealth = data.execution_health || {};
+			const quantities = data.quantity_summary || {};
+			const fulfillment = data.fulfillment_summary || {};
 			const exceptions = data.exceptions || [];
 			const blocking = exceptions.filter((row) => Number(row.is_blocking || 0)).length;
 			injection_aps.ui.render_cards(this.summary, [
-				{ label: __("WO Proposal Batches"), value: (data.work_order_proposal_batches || []).length },
-				{ label: __("Day/Night Proposal Batches"), value: (data.shift_schedule_proposal_batches || []).length },
+				{ label: __("Planned Qty"), value: injection_aps.ui.format_number(quantities.planned_qty || 0) },
+				{ label: __("Machine Scheduled Qty"), value: injection_aps.ui.format_number(quantities.machine_scheduled_qty || 0) },
+				{ label: __("Demand Covered Qty"), value: injection_aps.ui.format_number(quantities.demand_covered_qty || 0) },
+				{ label: __("Overproduction Qty"), value: injection_aps.ui.format_number(quantities.overproduction_qty || 0) },
+				{ label: __("Unscheduled Qty"), value: injection_aps.ui.format_number(quantities.unscheduled_qty || 0) },
+				{ label: __("Produced Qty"), value: injection_aps.ui.format_number(quantities.produced_qty || 0) },
+				{ label: __("Delivered Qty"), value: injection_aps.ui.format_number(quantities.delivered_qty || 0) },
+				{ label: __("Prebuild / JIT"), value: `${injection_aps.ui.format_number(fulfillment.prebuild_qty || 0)} / ${injection_aps.ui.format_number(fulfillment.jit_qty || 0)}` },
+				{ label: __("Current Deliverable"), value: injection_aps.ui.format_number(fulfillment.current_deliverable_qty || 0) },
+				{ label: __("Prebuild Inventory"), value: injection_aps.ui.format_number(fulfillment.prebuild_inventory_qty || 0) },
+				{ label: __("Cancel Stock Risk"), value: injection_aps.ui.format_number(fulfillment.cancellation_inventory_risk_qty || 0) },
+				{ label: __("Consistency"), value: injection_aps.ui.translate(quantities.consistency_status || "Unchecked") },
 				{ label: __("Delayed", null, "Injection APS"), value: executionHealth.delayed_segments || 0 },
-				{ label: __("No Update"), value: executionHealth.no_recent_update_segments || 0 },
-				{ label: __("Today Manufacture"), value: executionHealth.today_completed_entries || 0 },
 				{ label: __("Blocking"), value: blocking, note: __("Manual handling is required before formal apply.") },
 			]);
 			this.renderWorkOrderProposalTable(data.work_order_proposal_batches || []);

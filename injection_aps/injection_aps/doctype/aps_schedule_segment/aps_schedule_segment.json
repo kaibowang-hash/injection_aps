@@ -8,6 +8,15 @@
    "start_time",
    "end_time",
    "planned_qty",
+   "production_mode",
+   "capacity_bucket_start",
+   "capacity_bucket_end",
+   "available_capacity_qty",
+   "occupied_capacity_qty",
+   "remaining_capacity_qty",
+   "load_percent",
+   "projected_late_qty",
+   "prebuildable_qty",
    "sequence_no",
    "lane_key",
    "campaign_key",
@@ -26,16 +35,22 @@
   "split_group",
   "split_index",
   "split_reason",
+  "risk_status",
   "risk_flags",
+  "schedule_delay_minutes",
   "segment_status",
   "linked_work_order",
   "linked_work_order_scheduling",
   "linked_scheduling_item",
   "actual_status",
   "actual_completed_qty",
+  "actual_good_qty",
+  "actual_scrap_qty",
   "actual_start_time",
    "actual_end_time",
    "delay_minutes",
+   "last_actual_report_time",
+   "execution_source_documents",
    "last_execution_sync_on",
    "anchor_strength",
    "execution_anchor_source",
@@ -88,6 +103,61 @@
    "label": "Planned Qty",
    "read_only": 1,
    "reqd": 1
+  },
+  {
+   "fieldname": "production_mode",
+   "fieldtype": "Select",
+   "label": "Production Mode",
+   "options": "\nPrebuild\nJIT\nLate",
+   "read_only": 1
+  },
+  {
+   "fieldname": "capacity_bucket_start",
+   "fieldtype": "Datetime",
+   "label": "Capacity Bucket Start",
+   "read_only": 1
+  },
+  {
+   "fieldname": "capacity_bucket_end",
+   "fieldtype": "Datetime",
+   "label": "Capacity Bucket End",
+   "read_only": 1
+  },
+  {
+   "fieldname": "available_capacity_qty",
+   "fieldtype": "Float",
+   "label": "Available Capacity Qty",
+   "read_only": 1
+  },
+  {
+   "fieldname": "occupied_capacity_qty",
+   "fieldtype": "Float",
+   "label": "Occupied Capacity Qty",
+   "read_only": 1
+  },
+  {
+   "fieldname": "remaining_capacity_qty",
+   "fieldtype": "Float",
+   "label": "Remaining Capacity Qty",
+   "read_only": 1
+  },
+  {
+   "fieldname": "load_percent",
+   "fieldtype": "Percent",
+   "label": "Load Percent",
+   "read_only": 1
+  },
+  {
+   "fieldname": "projected_late_qty",
+   "fieldtype": "Float",
+   "label": "Projected Late Qty",
+   "read_only": 1
+  },
+  {
+   "fieldname": "prebuildable_qty",
+   "fieldtype": "Float",
+   "label": "Prebuildable Qty",
+   "read_only": 1
   },
   {
    "fieldname": "sequence_no",
@@ -203,9 +273,23 @@
    "read_only": 1
   },
   {
+   "fieldname": "risk_status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Risk Status",
+   "options": "\nNormal\nAttention\nCritical\nBlocked",
+   "read_only": 1
+  },
+  {
    "fieldname": "risk_flags",
    "fieldtype": "Small Text",
    "label": "Risk Flags",
+   "read_only": 1
+  },
+  {
+   "fieldname": "schedule_delay_minutes",
+   "fieldtype": "Float",
+   "label": "Schedule Delay Minutes",
    "read_only": 1
   },
   {
@@ -213,7 +297,7 @@
    "fieldtype": "Select",
    "in_list_view": 1,
    "label": "Segment Status",
-   "options": "\nPlanned\nRisk\nApproved\nWork Order Proposed\nShift Proposed\nApplied\nCompleted\nBlocked",
+   "options": "\nPlanned\nRisk\nApproved\nWork Order Proposed\nShift Proposed\nApplied\nCompleted\nBlocked\nCancelled",
    "read_only": 1,
    "search_index": 1
   },
@@ -251,6 +335,18 @@
    "read_only": 1
   },
   {
+   "fieldname": "actual_good_qty",
+   "fieldtype": "Float",
+   "label": "Actual Good Qty",
+   "read_only": 1
+  },
+  {
+   "fieldname": "actual_scrap_qty",
+   "fieldtype": "Float",
+   "label": "Actual Scrap Qty",
+   "read_only": 1
+  },
+  {
    "fieldname": "actual_start_time",
    "fieldtype": "Datetime",
    "label": "Actual Start Time",
@@ -266,6 +362,18 @@
    "fieldname": "delay_minutes",
    "fieldtype": "Float",
    "label": "Delay Minutes",
+   "read_only": 1
+  },
+  {
+   "fieldname": "last_actual_report_time",
+   "fieldtype": "Datetime",
+   "label": "Last Actual Report Time",
+   "read_only": 1
+  },
+  {
+   "fieldname": "execution_source_documents",
+   "fieldtype": "Small Text",
+   "label": "Execution Source Documents",
    "read_only": 1
   },
   {

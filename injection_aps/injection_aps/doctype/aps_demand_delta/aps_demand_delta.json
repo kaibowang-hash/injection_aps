@@ -16,6 +16,13 @@
   "current_qty",
   "delta_qty",
   "change_type",
+  "source_excel_rows",
+  "produced_qty",
+  "delivered_qty",
+  "frozen_qty",
+  "affects_produced",
+  "affects_delivered",
+  "affects_frozen",
   "remark"
  ],
  "fields": [
@@ -119,9 +126,51 @@
    "fieldtype": "Select",
    "in_list_view": 1,
    "label": "Change Type",
-   "options": "\nAdded\nCancelled\nIncreased\nDecreased\nRescheduled Earlier\nRescheduled Later\nUnchanged",
+   "options": "\nAdded\nAppended\nCancelled\nIncreased\nReduced\nAdvanced\nDelayed\nUnchanged",
    "read_only": 1,
    "reqd": 1
+  },
+  {
+   "fieldname": "source_excel_rows",
+   "fieldtype": "Data",
+   "label": "Source Excel Rows",
+   "read_only": 1
+  },
+  {
+   "fieldname": "produced_qty",
+   "fieldtype": "Float",
+   "label": "Produced Qty",
+   "read_only": 1
+  },
+  {
+   "fieldname": "delivered_qty",
+   "fieldtype": "Float",
+   "label": "Delivered Qty",
+   "read_only": 1
+  },
+  {
+   "fieldname": "frozen_qty",
+   "fieldtype": "Float",
+   "label": "Frozen Qty",
+   "read_only": 1
+  },
+  {
+   "fieldname": "affects_produced",
+   "fieldtype": "Check",
+   "label": "Affects Produced",
+   "read_only": 1
+  },
+  {
+   "fieldname": "affects_delivered",
+   "fieldtype": "Check",
+   "label": "Affects Delivered",
+   "read_only": 1
+  },
+  {
+   "fieldname": "affects_frozen",
+   "fieldtype": "Check",
+   "label": "Affects Frozen",
+   "read_only": 1
   },
   {
    "fieldname": "remark",

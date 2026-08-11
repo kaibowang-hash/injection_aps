@@ -20,8 +20,29 @@
   "approved_by",
   "approved_on",
   "total_net_requirement_qty",
+  "total_machine_scheduled_qty",
+  "total_demand_covered_qty",
+  "total_overproduction_qty",
   "total_scheduled_qty",
   "total_unscheduled_qty",
+  "total_produced_qty",
+  "total_delivered_qty",
+  "total_prebuild_qty",
+  "total_jit_qty",
+  "total_scrap_qty",
+  "total_current_deliverable_qty",
+  "total_prebuild_inventory_qty",
+  "total_cancellation_inventory_risk_qty",
+  "capacity_balance_status",
+  "capacity_balance_analyzed_on",
+  "capacity_balance_confirmed_by",
+  "capacity_balance_confirmed_on",
+  "capacity_balance_applied_on",
+  "capacity_balance_fingerprint",
+  "capacity_balance_analysis_json",
+  "consistency_status",
+  "consistency_checked_on",
+  "consistency_details",
   "exception_count",
   "result_count",
   "notes"
@@ -134,13 +155,145 @@
   {
    "fieldname": "total_scheduled_qty",
    "fieldtype": "Float",
-   "label": "Total Scheduled Qty",
+   "hidden": 1,
+   "label": "Total Scheduled Qty (Legacy Mirror)",
+   "read_only": 1
+  },
+  {
+   "fieldname": "total_machine_scheduled_qty",
+   "fieldtype": "Float",
+   "label": "Total Machine Scheduled Qty",
+   "read_only": 1
+  },
+  {
+   "fieldname": "total_demand_covered_qty",
+   "fieldtype": "Float",
+   "label": "Total Demand Covered Qty",
+   "read_only": 1
+  },
+  {
+   "fieldname": "total_overproduction_qty",
+   "fieldtype": "Float",
+   "label": "Total Overproduction Qty",
    "read_only": 1
   },
   {
    "fieldname": "total_unscheduled_qty",
    "fieldtype": "Float",
    "label": "Total Unscheduled Qty",
+   "read_only": 1
+  },
+  {
+   "fieldname": "total_produced_qty",
+   "fieldtype": "Float",
+   "label": "Total Produced Qty",
+   "read_only": 1
+  },
+  {
+   "fieldname": "total_delivered_qty",
+   "fieldtype": "Float",
+   "label": "Total Delivered Qty",
+   "read_only": 1
+  },
+  {
+   "fieldname": "total_prebuild_qty",
+   "fieldtype": "Float",
+   "label": "Total Prebuild Qty",
+   "read_only": 1
+  },
+  {
+   "fieldname": "total_jit_qty",
+   "fieldtype": "Float",
+   "label": "Total JIT Qty",
+   "read_only": 1
+  },
+  {
+   "fieldname": "total_scrap_qty",
+   "fieldtype": "Float",
+   "label": "Total Scrap Qty",
+   "read_only": 1
+  },
+  {
+   "fieldname": "total_current_deliverable_qty",
+   "fieldtype": "Float",
+   "label": "Total Current Deliverable Qty",
+   "read_only": 1
+  },
+  {
+   "fieldname": "total_prebuild_inventory_qty",
+   "fieldtype": "Float",
+   "label": "Total Prebuild Inventory Qty",
+   "read_only": 1
+  },
+  {
+   "fieldname": "total_cancellation_inventory_risk_qty",
+   "fieldtype": "Float",
+   "label": "Total Cancellation Inventory Risk Qty",
+   "read_only": 1
+  },
+  {
+   "default": "Not Analyzed",
+   "fieldname": "capacity_balance_status",
+   "fieldtype": "Select",
+   "label": "Capacity Balance Status",
+   "options": "Not Analyzed\nBalanced\nSuggestion Ready\nConfirmation Required\nApplied\nBlocked",
+   "read_only": 1
+  },
+  {
+   "fieldname": "capacity_balance_analyzed_on",
+   "fieldtype": "Datetime",
+   "label": "Capacity Balance Analyzed On",
+   "read_only": 1
+  },
+  {
+   "fieldname": "capacity_balance_confirmed_by",
+   "fieldtype": "Link",
+   "label": "Capacity Balance Confirmed By",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "fieldname": "capacity_balance_confirmed_on",
+   "fieldtype": "Datetime",
+   "label": "Capacity Balance Confirmed On",
+   "read_only": 1
+  },
+  {
+   "fieldname": "capacity_balance_applied_on",
+   "fieldtype": "Datetime",
+   "label": "Capacity Balance Applied On",
+   "read_only": 1
+  },
+  {
+   "fieldname": "capacity_balance_fingerprint",
+   "fieldtype": "Data",
+   "label": "Capacity Balance Fingerprint",
+   "read_only": 1
+  },
+  {
+   "fieldname": "capacity_balance_analysis_json",
+   "fieldtype": "Long Text",
+   "label": "Capacity Balance Analysis JSON",
+   "read_only": 1
+  },
+  {
+   "default": "Unchecked",
+   "fieldname": "consistency_status",
+   "fieldtype": "Select",
+   "label": "Consistency Status",
+   "options": "\nUnchecked\nValid\nInvalid",
+   "read_only": 1
+  },
+  {
+   "fieldname": "consistency_checked_on",
+   "fieldtype": "Datetime",
+   "label": "Consistency Checked On",
+   "read_only": 1
+  },
+  {
+   "fieldname": "consistency_details",
+   "fieldtype": "Long Text",
+   "label": "Consistency Details",
    "read_only": 1
   },
   {

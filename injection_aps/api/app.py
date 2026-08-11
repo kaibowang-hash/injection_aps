@@ -6,10 +6,10 @@ from urllib.parse import urlencode
 
 import frappe
 from frappe import _
-from frappe.utils import now_datetime
+from frappe.utils import flt, get_datetime, now_datetime
 from frappe.utils.xlsxutils import make_xlsx
 
-from injection_aps.services import customizations, planning
+from injection_aps.services import availability, capacity_balance, consistency, customizations, delivery_sync, planning
 from injection_aps.services.permissions import (
 	APS_ADMIN_ROLES,
 	APS_APPROVE_ROLES,
@@ -265,9 +265,11 @@ def preview_customer_delivery_schedule(
 	version_no,
 	schedule_scope=None,
 	import_strategy=None,
+	duplicate_policy=None,
 	file_url=None,
 	rows_json=None,
 	mapping_json=None,
+	source_type="Customer Delivery Schedule",
 ):
 	_require_demand_access()
 	return planning.preview_customer_delivery_schedule(
@@ -276,9 +278,11 @@ def preview_customer_delivery_schedule(
 		version_no=version_no,
 		schedule_scope=schedule_scope,
 		import_strategy=import_strategy,
+		duplicate_policy=duplicate_policy,
 		file_url=file_url,
 		rows_json=rows_json,
 		mapping_json=mapping_json,
+		source_type=source_type,
 	)
 
 
@@ -289,22 +293,30 @@ def import_customer_delivery_schedule(
 	version_no,
 	schedule_scope=None,
 	import_strategy=None,
+	duplicate_policy=None,
 	file_url=None,
 	rows_json=None,
 	mapping_json=None,
 	source_type="Customer Delivery Schedule",
+	rebuild=0,
+	existing_work_order_policy=None,
 ):
 	_require_demand_access()
+	if frappe.utils.cint(rebuild):
+		_require_plan_access()
 	return planning.import_customer_delivery_schedule(
 		customer=customer,
 		company=company,
 		version_no=version_no,
 		schedule_scope=schedule_scope,
 		import_strategy=import_strategy,
+		duplicate_policy=duplicate_policy,
 		file_url=file_url,
 		rows_json=rows_json,
 		mapping_json=mapping_json,
 		source_type=source_type,
+		rebuild=frappe.utils.cint(rebuild),
+		existing_work_order_policy=existing_work_order_policy,
 	)
 
 
@@ -346,6 +358,15 @@ def run_planning_run(
 		customer=customer,
 		run_type=run_type,
 		existing_work_order_policy=existing_work_order_policy,
+	)
+
+
+@frappe.whitelist()
+def recalculate_plan_consistency(run_name):
+	_require_plan_access()
+	return consistency.recalculate_plan_consistency(
+		run_name,
+		reason="manual API recalculation",
 	)
 
 
@@ -445,6 +466,49 @@ def sync_execution_feedback_to_aps(run_name):
 
 
 @frappe.whitelist()
+def sync_delivery_allocations(company, customer=None, item_codes=None):
+	_require_execution_access()
+	if isinstance(item_codes, str):
+		item_codes = frappe.parse_json(item_codes) if item_codes.strip().startswith("[") else [item_codes]
+	return delivery_sync.sync_delivery_allocations(
+		company=company,
+		customer=customer,
+		item_codes=item_codes or [],
+	)
+
+
+@frappe.whitelist()
+def get_fulfillment_projection(run_name=None, result_name=None, as_of=None):
+	_require_read_access()
+	if result_name:
+		return availability.get_result_fulfillment_projection(result_name, as_of=as_of)
+	if not run_name:
+		frappe.throw(_("Provide run_name or result_name."))
+	return availability.get_run_fulfillment_projection(run_name, persist=False, as_of=as_of)
+
+
+@frappe.whitelist()
+def analyze_capacity_balance(run_name):
+	_require_plan_access()
+	return capacity_balance.analyze_capacity_balance(run_name, persist=True)
+
+
+@frappe.whitelist()
+def confirm_capacity_balance(run_name):
+	_require_plan_access()
+	return capacity_balance.confirm_capacity_balance(run_name)
+
+
+@frappe.whitelist()
+def apply_capacity_balance(run_name, pmc_confirmed=0):
+	_require_plan_access()
+	return capacity_balance.apply_capacity_balance(
+		run_name,
+		pmc_confirmed=bool(frappe.utils.cint(pmc_confirmed)),
+	)
+
+
+@frappe.whitelist()
 def get_execution_health_for_run(run_name, sync=0):
 	_require_execution_access()
 	return planning.get_execution_health_for_run(run_name, sync=frappe.utils.cint(sync))
@@ -460,6 +524,24 @@ def sync_machine_capabilities_from_workstations():
 def analyze_change_request_impact(change_request):
 	_require_demand_access()
 	return planning.analyze_change_request_impact(change_request)
+
+
+@frappe.whitelist()
+def confirm_change_request(change_request):
+	_require_plan_access()
+	return planning.confirm_change_request(change_request)
+
+
+@frappe.whitelist()
+def approve_change_request(change_request):
+	_require_approve_access()
+	return planning.approve_change_request(change_request)
+
+
+@frappe.whitelist()
+def reject_change_request(change_request, reason=None):
+	_require_approve_access()
+	return planning.reject_change_request(change_request, reason=reason)
 
 
 @frappe.whitelist()
@@ -611,7 +693,7 @@ def apply_segment_split(segment_name, split_time=None, split_qty=None, downtime_
 
 
 @frappe.whitelist()
-def create_or_update_downtime_window(name=None, company=None, scope=None, plant_floor=None, workstation=None, start_time=None, end_time=None, reason=None, status="Active", planning_run=None, notes=None):
+def create_or_update_downtime_window(name=None, company=None, scope=None, plant_floor=None, workstation=None, start_time=None, end_time=None, available_capacity_percent=None, reason=None, status="Active", planning_run=None, notes=None):
 	_require_release_access()
 	return planning.create_or_update_downtime_window(
 		name=name,
@@ -621,6 +703,7 @@ def create_or_update_downtime_window(name=None, company=None, scope=None, plant_
 		workstation=workstation,
 		start_time=start_time,
 		end_time=end_time,
+		available_capacity_percent=available_capacity_percent,
 		reason=reason,
 		status=status,
 		planning_run=planning_run,
@@ -913,8 +996,15 @@ def get_run_console_data(company=None, plant_floor=None):
 			"approval_state",
 			"existing_work_order_policy",
 			"total_net_requirement_qty",
+			"total_machine_scheduled_qty",
+			"total_demand_covered_qty",
+			"total_overproduction_qty",
 			"total_scheduled_qty",
 			"total_unscheduled_qty",
+			"total_produced_qty",
+			"total_delivered_qty",
+			"consistency_status",
+			"consistency_checked_on",
 			"exception_count",
 			"result_count",
 			"notes",
@@ -971,9 +1061,31 @@ def get_schedule_gantt_data(run_name):
 			"customer",
 			"requested_date",
 			"demand_source",
+			"production_strategy",
+			"planned_qty",
+			"machine_scheduled_qty",
+			"demand_covered_qty",
+			"overproduction_qty",
 			"risk_status",
 			"status",
 			"unscheduled_qty",
+			"produced_qty",
+			"delivered_qty",
+			"prebuild_qty",
+			"jit_qty",
+			"early_days",
+			"projected_peak_inventory_qty",
+			"late_qty_before_balance",
+			"late_qty_after_balance",
+			"good_produced_qty",
+			"scrap_qty",
+			"current_deliverable_qty",
+			"prebuild_inventory_qty",
+			"cancellation_inventory_risk_qty",
+			"last_actual_report_time",
+			"execution_source_documents",
+			"projected_completion_time",
+			"schedule_delay_minutes",
 			"copy_mold_parallel",
 			"family_mold_result",
 			"primary_mould_reference",
@@ -1001,6 +1113,7 @@ def get_schedule_gantt_data(run_name):
 			"blocked_results": [],
 			"run": planning.get_next_actions_for_context("APS Planning Run", run_name),
 			"run_context": planning.get_next_actions_for_context("APS Planning Run", run_name),
+			"quantity_summary": consistency.get_run_quantity_summary(run_name),
 		}
 	item_detail_map = {
 		row.item_code: planning._get_item_detail_snapshot(row.item_code, row.customer, settings)
@@ -1027,10 +1140,12 @@ def get_schedule_gantt_data(run_name):
 			"co_product_item_code",
 			"mould_reference",
 			"segment_status",
+			"risk_status",
 			"is_locked",
 			"is_manual",
 			"schedule_explanation",
 			"risk_flags",
+			"schedule_delay_minutes",
 			"segment_note",
 			"manual_change_note",
 			"original_segment",
@@ -1042,9 +1157,22 @@ def get_schedule_gantt_data(run_name):
 			"linked_scheduling_item",
 			"actual_status",
 			"actual_completed_qty",
+			"actual_good_qty",
+			"actual_scrap_qty",
 			"actual_start_time",
 			"actual_end_time",
 			"delay_minutes",
+			"last_actual_report_time",
+			"execution_source_documents",
+			"production_mode",
+			"capacity_bucket_start",
+			"capacity_bucket_end",
+			"available_capacity_qty",
+			"occupied_capacity_qty",
+			"remaining_capacity_qty",
+			"load_percent",
+			"projected_late_qty",
+			"prebuildable_qty",
 		],
 		order_by="start_time asc",
 	)
@@ -1066,28 +1194,66 @@ def get_schedule_gantt_data(run_name):
 		order_by="modified desc",
 	)
 	result_map = {row.name: row for row in results}
+	fulfillment = availability.get_run_fulfillment_projection(run_name, persist=False)
+	fulfillment_map = {row["result"]: row for row in fulfillment.get("results") or []}
 	exception_map = {}
 	for row in exceptions:
 		exception_map.setdefault(row.source_name, []).append(row)
 	primary_segment_count = {}
+	segment_names_by_result = defaultdict(list)
 	for row in segments:
-		if row.segment_kind != "Family Co-Product":
+		segment_names_by_result[row.parent].append(row.name)
+		if consistency.is_effective_primary_segment(row):
 			primary_segment_count[row.parent] = primary_segment_count.get(row.parent, 0) + 1
 	tasks = []
 	for row in segments:
 		parent = result_map.get(row.parent)
 		if not parent:
 			continue
+		if (
+			row.segment_status == "Cancelled"
+			or not row.planned_qty
+			or not row.workstation
+			or not row.start_time
+			or not row.end_time
+			or get_datetime(row.end_time) <= get_datetime(row.start_time)
+		):
+			continue
 		item_detail = item_detail_map.get(parent.item_code) or {}
-		risk_rows = (exception_map.get(parent.name) or []) + (exception_map.get(parent.net_requirement) or [])
+		fulfillment_row = fulfillment_map.get(parent.name) or {}
+		risk_rows = (
+			(exception_map.get(parent.name) or [])
+			+ (exception_map.get(parent.net_requirement) or [])
+			+ (exception_map.get(row.name) or [])
+		)
+		execution_risk = (
+			"Critical"
+			if row.actual_status in ("Delayed", "Overproduced")
+			else "Attention" if row.actual_status in ("Slow Progress", "No Recent Update") else "Normal"
+		)
+		task_risk = consistency.get_worst_risk(
+			parent.risk_status,
+			row.risk_status,
+			consistency.get_exception_risk(risk_rows),
+			execution_risk,
+			"Blocked" if row.segment_status == "Blocked" else "Normal",
+		)
+		risk_badges = [risk_row.exception_type for risk_row in risk_rows]
+		if row.is_locked:
+			risk_badges.append("Frozen / Locked")
+		if row.actual_status in ("Delayed", "Slow Progress", "No Recent Update", "Overproduced"):
+			risk_badges.append(f"Execution: {row.actual_status}")
 		tasks.append(
 			{
 				"id": row.name,
 				"name": f"{parent.item_code} / {item_detail.get('item_name') or row.workstation}",
 				"start": row.start_time,
 				"end": row.end_time,
-				"progress": 100 if row.actual_status in ("Completed", "Overproduced") or row.segment_status == "Completed" else 0,
-				"custom_class": f"ia-risk-{(parent.risk_status or 'normal').lower()}",
+				"progress": min(
+					max((flt(row.actual_completed_qty) / flt(row.planned_qty) * 100) if flt(row.planned_qty) else 0, 0),
+					100,
+				),
+				"custom_class": f"ia-risk-{task_risk.lower()}",
 				"details": {
 					"segment_name": row.name,
 					"result_name": row.parent,
@@ -1098,10 +1264,35 @@ def get_schedule_gantt_data(run_name):
 					"customer": parent.customer,
 					"requested_date": parent.requested_date,
 					"demand_source": parent.demand_source,
+					"production_strategy": parent.production_strategy,
+					"planned_qty": parent.planned_qty,
+					"machine_scheduled_qty": parent.machine_scheduled_qty,
+					"demand_covered_qty": parent.demand_covered_qty,
+					"overproduction_qty": parent.overproduction_qty,
+					"unscheduled_qty": parent.unscheduled_qty,
+					"produced_qty": parent.produced_qty,
+					"delivered_qty": parent.delivered_qty,
+					"prebuild_qty": parent.prebuild_qty,
+					"jit_qty": parent.jit_qty,
+					"early_days": parent.early_days,
+					"projected_peak_inventory_qty": parent.projected_peak_inventory_qty,
+					"late_qty_before_balance": parent.late_qty_before_balance,
+					"late_qty_after_balance": parent.late_qty_after_balance,
+					"good_produced_qty": parent.good_produced_qty,
+					"scrap_qty": parent.scrap_qty,
+					"current_deliverable_qty": parent.current_deliverable_qty,
+					"prebuild_inventory_qty": parent.prebuild_inventory_qty,
+					"cancellation_inventory_risk_qty": parent.cancellation_inventory_risk_qty,
+					"last_actual_report_time": parent.last_actual_report_time,
+					"execution_source_documents": parent.execution_source_documents,
+					"fulfillment_timeline": fulfillment_row.get("timeline") or [],
+					"projected_completion_time": parent.projected_completion_time,
+					"result_risk_status": parent.risk_status,
+					"risk_status": task_risk,
 					"net_requirement": parent.net_requirement,
 					"plant_floor": row.plant_floor,
 					"workstation": row.workstation,
-					"planned_qty": row.planned_qty,
+					"segment_planned_qty": row.planned_qty,
 					"lane_key": row.lane_key,
 					"parallel_group": row.parallel_group,
 					"family_group": row.family_group,
@@ -1127,15 +1318,27 @@ def get_schedule_gantt_data(run_name):
 					"split_index": row.split_index,
 					"split_reason": row.split_reason,
 					"risk_flags": row.risk_flags,
-					"risk_badges": [risk_row.exception_type for risk_row in risk_rows],
+					"risk_badges": list(dict.fromkeys(risk_badges)),
 					"actual_status": row.actual_status or parent.actual_status,
 					"actual_completed_qty": row.actual_completed_qty,
+					"actual_good_qty": row.actual_good_qty,
+					"actual_scrap_qty": row.actual_scrap_qty,
 					"actual_start_time": row.actual_start_time or parent.actual_start_time,
 					"actual_end_time": row.actual_end_time or parent.actual_end_time,
+					"schedule_delay_minutes": row.schedule_delay_minutes or parent.schedule_delay_minutes,
 					"delay_minutes": row.delay_minutes or parent.delay_minutes,
 					"linked_work_order": row.linked_work_order,
 					"linked_work_order_scheduling": row.linked_work_order_scheduling,
 					"linked_scheduling_item": row.linked_scheduling_item,
+					"production_mode": row.production_mode,
+					"capacity_bucket_start": row.capacity_bucket_start,
+					"capacity_bucket_end": row.capacity_bucket_end,
+					"available_capacity_qty": row.available_capacity_qty,
+					"occupied_capacity_qty": row.occupied_capacity_qty,
+					"remaining_capacity_qty": row.remaining_capacity_qty,
+					"load_percent": row.load_percent,
+					"projected_late_qty": row.projected_late_qty,
+					"prebuildable_qty": row.prebuildable_qty,
 					"item_route": item_detail.get("item_route"),
 					"result_route": f"Form/APS Schedule Result/{row.parent}",
 					"net_requirement_route": f"Form/APS Net Requirement/{parent.net_requirement}" if parent.net_requirement else "",
@@ -1148,7 +1351,14 @@ def get_schedule_gantt_data(run_name):
 	for row in results:
 		item_detail = item_detail_map.get(row.item_code) or {}
 		risk_rows = (exception_map.get(row.name) or []) + (exception_map.get(row.net_requirement) or [])
-		if primary_segment_count.get(row.name) and row.risk_status not in ("Critical", "Blocked") and not row.unscheduled_qty:
+		for segment_name in segment_names_by_result.get(row.name) or []:
+			risk_rows.extend(exception_map.get(segment_name) or [])
+		if (
+			primary_segment_count.get(row.name)
+			and row.risk_status == "Normal"
+			and not row.unscheduled_qty
+			and not row.overproduction_qty
+		):
 			continue
 		blocked_results.append(
 			{
@@ -1160,7 +1370,18 @@ def get_schedule_gantt_data(run_name):
 				"demand_source": row.demand_source,
 				"risk_status": row.risk_status,
 				"status": row.status,
+				"planned_qty": row.planned_qty,
+				"machine_scheduled_qty": row.machine_scheduled_qty,
+				"demand_covered_qty": row.demand_covered_qty,
+				"overproduction_qty": row.overproduction_qty,
 				"unscheduled_qty": row.unscheduled_qty,
+				"produced_qty": row.produced_qty,
+				"delivered_qty": row.delivered_qty,
+				"production_strategy": row.production_strategy,
+				"prebuild_qty": row.prebuild_qty,
+				"jit_qty": row.jit_qty,
+				"current_deliverable_qty": row.current_deliverable_qty,
+				"cancellation_inventory_risk_qty": row.cancellation_inventory_risk_qty,
 				"blocking_reason": row.blocking_reason,
 				"exception_types": [risk_row.exception_type for risk_row in risk_rows],
 				"diagnostic_summary": next(
@@ -1185,6 +1406,9 @@ def get_schedule_gantt_data(run_name):
 		"blocked_results": blocked_results,
 		"run": planning.get_next_actions_for_context("APS Planning Run", run_name),
 		"run_context": planning.get_next_actions_for_context("APS Planning Run", run_name),
+		"quantity_summary": consistency.get_run_quantity_summary(run_name),
+		"fulfillment_summary": fulfillment.get("summary") or {},
+		"fulfillment_results": fulfillment.get("results") or [],
 	}
 
 
@@ -1279,12 +1503,15 @@ def get_release_center_data(run_name=None):
 		row["workstation_route"] = f"Form/Workstation/{row['workstation']}" if row.get("workstation") else ""
 	run_context = planning.get_next_actions_for_context("APS Planning Run", run_name) if run_name else None
 	execution_health = planning.get_execution_health_for_run(run_name) if run_name else None
+	fulfillment = availability.get_run_fulfillment_projection(run_name, persist=False) if run_name else None
 	return {
 		"work_order_proposal_batches": work_order_proposal_batches,
 		"shift_schedule_proposal_batches": shift_schedule_proposal_batches,
 		"release_batches": release_batches,
 		"exceptions": exceptions,
 		"run_context": run_context,
+		"quantity_summary": consistency.get_run_quantity_summary(run_name) if run_name else None,
 		"execution_health": execution_health,
+		"fulfillment_summary": (fulfillment or {}).get("summary"),
 		"recent_runs": planning.get_recent_run_contexts(limit=8),
 	}

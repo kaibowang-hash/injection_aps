@@ -90,6 +90,9 @@ async function show_version_diff(frm) {
 			customer: frm.doc.customer,
 			company: frm.doc.company,
 			version_no: frm.doc.version_no || frm.doc.name,
+			schedule_scope: frm.doc.schedule_scope || frm.doc.version_no || frm.doc.name,
+			import_strategy: frm.doc.import_strategy || "Replace Scope",
+			duplicate_policy: "Block",
 			rows_json: JSON.stringify(
 				(frm.doc.items || []).map((row) => ({
 					sales_order: row.sales_order,

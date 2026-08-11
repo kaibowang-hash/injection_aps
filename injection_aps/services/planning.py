@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 from collections import defaultdict
@@ -14,8 +15,10 @@ from openpyxl.utils.cell import column_index_from_string, get_column_letter
 from frappe.utils import add_days, cint, flt, get_datetime, getdate, now_datetime, today
 from frappe.utils.xlsxutils import read_xlsx_file_from_attached_file
 
+from injection_aps.services import consistency
 from injection_aps.services.permissions import (
 	APS_APPROVE_ROLES,
+	APS_DEMAND_ROLES,
 	APS_PLAN_ROLES,
 	APS_RELEASE_ROLES,
 )
@@ -24,6 +27,7 @@ from injection_aps.services.permissions import (
 DEMAND_SOURCE_PRIORITY = {
 	"Urgent Order": 1000,
 	"Customer Delivery Schedule": 800,
+	"Forecast": 700,
 	"Sales Order Backlog": 600,
 	"Safety Stock": 400,
 	"Trial Production": 300,
@@ -49,6 +53,8 @@ FROZEN_SCHEDULING_STATUSES = ("Material Transfer", "Job Card", "Manufacture")
 ACTIVE_SCHEDULING_STATUSES = ("", "Schedule Confirmed", "Material Transfer", "Job Card", "Manufacture")
 ACTIVE_DOWNTIME_STATUSES = ("Active", "Applied")
 CONFIRMED_ADJUSTMENT_STATUSES = ("Confirmed", "Applied")
+SCHEDULE_IMPORT_STRATEGIES = ("Replace Scope", "Partial Update", "Append")
+SCHEDULE_DUPLICATE_POLICIES = ("Block", "Sum")
 ANCHOR_STRENGTH_HARD = 100
 ANCHOR_STRENGTH_RELEASED = 70
 ANCHOR_STRENGTH_LOCKED = 50
@@ -80,6 +86,14 @@ ACTION_REQUIRED_ROLES = {
 	"generate_shift_schedule_proposals": APS_RELEASE_ROLES,
 	"apply_work_order_proposals": APS_RELEASE_ROLES,
 	"apply_shift_schedule_proposals": APS_RELEASE_ROLES,
+	"analyze_change_request": APS_DEMAND_ROLES,
+	"confirm_change_request": APS_PLAN_ROLES,
+	"approve_change_request": APS_APPROVE_ROLES,
+	"reject_change_request": APS_APPROVE_ROLES,
+	"apply_change_request": APS_APPROVE_ROLES,
+	"analyze_capacity_balance": APS_PLAN_ROLES,
+	"confirm_capacity_balance": APS_PLAN_ROLES,
+	"apply_capacity_balance": APS_PLAN_ROLES,
 }
 
 
@@ -149,6 +163,7 @@ def _get_active_downtime_windows(
 			workstation,
 			start_time,
 			end_time,
+			available_capacity_percent,
 			reason,
 			status,
 			planning_run
@@ -198,6 +213,8 @@ def _shift_start_past_downtime(start_time, downtime_windows: list[dict[str, Any]
 	while changed:
 		changed = False
 		for row in downtime_windows or []:
+			if _downtime_capacity_factor(row) > 0:
+				continue
 			window_start = get_datetime(row.get("start_time"))
 			window_end = get_datetime(row.get("end_time"))
 			if window_start <= start_value < window_end:
@@ -212,13 +229,14 @@ def _available_run_hours_between(start_time, end_time, downtime_windows: list[di
 	end_value = get_datetime(end_time)
 	if end_value <= start_value:
 		return 0
-	available_seconds = (end_value - start_value).total_seconds()
-	for row in downtime_windows or []:
-		window_start = max(start_value, get_datetime(row.get("start_time")))
-		window_end = min(end_value, get_datetime(row.get("end_time")))
-		if window_start < window_end:
-			available_seconds -= (window_end - window_start).total_seconds()
-	return max(available_seconds / 3600, 0)
+	available_hours = 0.0
+	for interval_start, interval_end, factor, _active_windows in _iter_capacity_intervals(
+		start_value,
+		end_value,
+		downtime_windows,
+	):
+		available_hours += max((interval_end - interval_start).total_seconds() / 3600, 0) * factor
+	return max(available_hours, 0)
 
 
 def _estimate_end_for_qty_around_downtime(
@@ -229,27 +247,29 @@ def _estimate_end_for_qty_around_downtime(
 	horizon_end=None,
 ):
 	rate = max(flt(hourly_capacity_qty), 0)
-	current = _shift_start_past_downtime(start_time, downtime_windows)
+	current = get_datetime(start_time)
 	if rate <= 0 or flt(qty) <= 0:
 		return current
 	remaining_hours = flt(qty) / rate
 	limit = get_datetime(horizon_end) if horizon_end else None
-	for row in downtime_windows or []:
-		window_start = get_datetime(row.get("start_time"))
-		window_end = get_datetime(row.get("end_time"))
-		if window_end <= current:
+	window_end = max(
+		[get_datetime(row.get("end_time")) for row in downtime_windows or [] if row.get("end_time")] or [current]
+	)
+	timeline_end = max(window_end, limit or window_end, current)
+	for interval_start, interval_end, factor, _active_windows in _iter_capacity_intervals(
+		current,
+		timeline_end,
+		downtime_windows,
+	):
+		if factor <= 0:
+			current = interval_end
 			continue
-		if current < window_start:
-			slot_end = min(window_start, limit) if limit else window_start
-			slot_hours = max((slot_end - current).total_seconds() / 3600, 0)
-			if remaining_hours <= slot_hours:
-				return current + timedelta(hours=remaining_hours)
-			remaining_hours -= slot_hours
-			current = window_end
-		elif window_start <= current < window_end:
-			current = window_end
-		if limit and current >= limit:
-			break
+		wall_hours = max((interval_end - interval_start).total_seconds() / 3600, 0)
+		effective_hours = wall_hours * factor
+		if remaining_hours <= effective_hours + 1e-12:
+			return interval_start + timedelta(hours=remaining_hours / factor)
+		remaining_hours -= effective_hours
+		current = interval_end
 	return current + timedelta(hours=remaining_hours)
 
 
@@ -262,43 +282,70 @@ def _allocate_qty_around_downtime(
 ) -> tuple[list[dict[str, Any]], float]:
 	rate = max(flt(hourly_capacity_qty), 0)
 	remaining = flt(qty)
-	current = _shift_start_past_downtime(start_time, downtime_windows)
+	current = get_datetime(start_time)
 	limit = get_datetime(horizon_end)
 	chunks: list[dict[str, Any]] = []
 	if rate <= 0 or remaining <= 0 or current >= limit:
 		return chunks, remaining
-	windows = list(downtime_windows or [])
-	while remaining > 0 and current < limit:
-		next_window = next((row for row in windows if get_datetime(row.get("end_time")) > current), None)
-		slot_end = limit
-		if next_window:
-			window_start = get_datetime(next_window.get("start_time"))
-			window_end = get_datetime(next_window.get("end_time"))
-			if current < window_start:
-				slot_end = min(window_start, limit)
-			else:
-				current = max(current, window_end)
-				continue
-		slot_hours = max((slot_end - current).total_seconds() / 3600, 0)
-		slot_qty = slot_hours * rate
-		chunk_qty = min(remaining, slot_qty)
-		if chunk_qty > 0:
-			chunk_end = current + timedelta(hours=chunk_qty / rate)
-			chunks.append(
-				{
-					"start_time": current,
-					"end_time": chunk_end,
-					"planned_qty": chunk_qty,
-					"downtime_window": next_window.get("name") if next_window and chunk_end >= get_datetime(next_window.get("start_time")) else None,
-				}
-			)
-			remaining -= chunk_qty
-			current = chunk_end
-		if remaining > 0 and next_window and current >= get_datetime(next_window.get("start_time")):
-			current = max(current, get_datetime(next_window.get("end_time")))
-		elif slot_qty <= 0:
+	for interval_start, interval_end, factor, active_windows in _iter_capacity_intervals(
+		current,
+		limit,
+		downtime_windows,
+	):
+		if remaining <= 0:
 			break
+		if factor <= 0:
+			continue
+		effective_rate = rate * factor
+		wall_hours = max((interval_end - interval_start).total_seconds() / 3600, 0)
+		chunk_qty = min(remaining, wall_hours * effective_rate)
+		if chunk_qty <= 0:
+			continue
+		chunk_end = interval_start + timedelta(hours=chunk_qty / effective_rate)
+		chunks.append(
+			{
+				"start_time": interval_start,
+				"end_time": chunk_end,
+				"planned_qty": chunk_qty,
+				"downtime_window": active_windows[0].get("name") if active_windows else None,
+				"available_capacity_percent": factor * 100,
+			}
+		)
+		remaining -= chunk_qty
 	return chunks, max(remaining, 0)
+
+
+def _downtime_capacity_factor(window: dict[str, Any]) -> float:
+	value = window.get("available_capacity_percent")
+	if value in (None, ""):
+		return 0.0
+	return min(max(flt(value) / 100, 0), 1)
+
+
+def _iter_capacity_intervals(start_time, end_time, downtime_windows: list[dict[str, Any]] | None):
+	start_value = get_datetime(start_time)
+	end_value = get_datetime(end_time)
+	boundaries = {start_value, end_value}
+	for row in downtime_windows or []:
+		window_start = max(start_value, get_datetime(row.get("start_time")))
+		window_end = min(end_value, get_datetime(row.get("end_time")))
+		if window_start < window_end:
+			boundaries.add(window_start)
+			boundaries.add(window_end)
+	ordered = sorted(boundaries)
+	for index in range(len(ordered) - 1):
+		interval_start = ordered[index]
+		interval_end = ordered[index + 1]
+		if interval_end <= interval_start:
+			continue
+		midpoint = interval_start + (interval_end - interval_start) / 2
+		active_windows = [
+			row
+			for row in downtime_windows or []
+			if get_datetime(row.get("start_time")) <= midpoint < get_datetime(row.get("end_time"))
+		]
+		factor = min([_downtime_capacity_factor(row) for row in active_windows] or [1.0])
+		yield interval_start, interval_end, factor, active_windows
 
 
 def _coerce_plant_floor_list(plant_floors: Any = None, plant_floor: str | None = None) -> list[str]:
@@ -456,6 +503,10 @@ def _build_planning_run_context(doc) -> dict[str, Any]:
 
 	if cint(doc.exception_count) and doc.status in ("Planned", "Approved", "Work Order Proposed", "Shift Proposed"):
 		blocking_reason = "There are still {0} APS exceptions waiting for review.".format(doc.exception_count)
+	if doc.get("consistency_status") != "Valid":
+		blocking_reason = "Plan consistency is {0}. Recalculate and resolve consistency errors before release.".format(
+			doc.get("consistency_status") or "Unchecked"
+		)
 
 	selected_plant_floors = _get_run_selected_plant_floors(doc)
 	return {
@@ -474,6 +525,8 @@ def _build_planning_run_context(doc) -> dict[str, Any]:
 		"approval_state_label": _label_approval_state(doc.approval_state),
 		"existing_work_order_policy": doc.get("existing_work_order_policy"),
 		"exception_count": cint(doc.exception_count or 0),
+		"consistency_status": doc.get("consistency_status") or "Unchecked",
+		"quantity_summary": consistency.get_run_quantity_summary(doc.name),
 		"planning_date": doc.planning_date,
 		"modified": doc.modified,
 		"run_route": _build_form_route("APS Planning Run", doc.name),
@@ -493,6 +546,7 @@ def get_recent_run_contexts(limit: int = 8) -> list[dict[str, Any]]:
 			"horizon_days",
 			"status",
 			"approval_state",
+			"consistency_status",
 			"exception_count",
 			"modified",
 		],
@@ -531,33 +585,99 @@ def preview_customer_delivery_schedule(
 	version_no: str,
 	schedule_scope: str | None = None,
 	import_strategy: str | None = None,
+	duplicate_policy: str | None = None,
 	file_url: str | None = None,
 	rows_json: str | list[dict] | None = None,
 	mapping_json: str | dict[str, Any] | None = None,
+	source_type: str = "Customer Delivery Schedule",
 ) -> dict[str, Any]:
 	schedule_scope = _normalize_schedule_scope(schedule_scope or version_no)
 	import_strategy = _normalize_schedule_import_strategy(import_strategy)
+	duplicate_policy = _normalize_schedule_duplicate_policy(duplicate_policy)
 	rows, parse_context = _normalize_schedule_rows(
 		file_url=file_url,
 		rows_json=rows_json,
 		mapping_json=mapping_json,
 	)
-	diff_rows = compare_schedule_against_active(
+	prepared_rows = _prepare_schedule_rows_for_import(rows)
+	row_issues = _validate_schedule_import_rows(prepared_rows)
+	resolved_rows, duplicate_groups = _resolve_schedule_row_duplicates(
+		prepared_rows,
+		duplicate_policy=duplicate_policy,
+	)
+	partial_ambiguities = _find_partial_update_ambiguities(
+		_get_active_schedule_rows(customer=customer, company=company, schedule_scope=schedule_scope),
+		resolved_rows,
+	) if import_strategy == "Partial Update" and not row_issues else []
+	import_fingerprint = _build_schedule_import_fingerprint(
 		customer=customer,
 		company=company,
 		schedule_scope=schedule_scope,
 		import_strategy=import_strategy,
-		rows=rows,
+		source_type=source_type,
+		rows=resolved_rows if duplicate_policy == "Sum" else prepared_rows,
 	)
+	replay = _get_schedule_import_replay(import_fingerprint)
+	blocking_duplicate = bool(duplicate_groups and duplicate_policy == "Block")
+	append_zero_rows = [row for row in resolved_rows if abs(flt(row.get("qty"))) < 0.000001] if import_strategy == "Append" else []
+	can_plan = not row_issues and not blocking_duplicate and not append_zero_rows and not partial_ambiguities
+	previous_rows = _get_active_schedule_rows(customer=customer, company=company, schedule_scope=schedule_scope)
+	if can_plan:
+		plan = _build_schedule_import_plan(
+			previous_rows=previous_rows,
+			incoming_rows=resolved_rows,
+			import_strategy=import_strategy,
+		)
+		diff_rows = _attach_schedule_import_impacts(
+			plan["diff_rows"],
+			customer=customer,
+			company=company,
+			import_strategy=import_strategy,
+		)
+		effective_schedule_rows = plan["effective_schedule_rows"]
+	else:
+		diff_rows = _build_blocked_schedule_preview_rows(prepared_rows, duplicate_groups)
+		effective_schedule_rows = []
+	previous_total_qty = sum(flt(row.get("qty")) for row in previous_rows)
+	post_import_total_qty = (
+		previous_total_qty + sum(flt(row.get("qty")) for row in effective_schedule_rows)
+		if import_strategy == "Append"
+		else sum(flt(row.get("qty")) for row in effective_schedule_rows)
+	)
+	checks = _build_schedule_import_checks(
+		import_strategy=import_strategy,
+		duplicate_policy=duplicate_policy,
+		duplicate_groups=duplicate_groups,
+		row_issues=row_issues,
+		append_zero_rows=append_zero_rows,
+		partial_ambiguities=partial_ambiguities,
+		replay=replay,
+	)
+	can_import = not replay and not any(cint(check.get("blocking")) for check in checks)
 	return {
 		"customer": customer,
 		"company": company,
 		"schedule_scope": schedule_scope,
 		"import_strategy": import_strategy,
+		"duplicate_policy": duplicate_policy,
 		"version_no": version_no,
 		"row_count": len(diff_rows),
+		"source_row_count": len(prepared_rows),
+		"effective_row_count": len(effective_schedule_rows),
+		"previous_total_qty": previous_total_qty,
+		"incoming_total_qty": sum(flt(row.get("qty")) for row in resolved_rows),
+		"post_import_total_qty": post_import_total_qty,
+		"total_delta_qty": post_import_total_qty - previous_total_qty,
 		"summary": _summarize_change_types(diff_rows),
 		"rows": diff_rows,
+		"source_rows": resolved_rows,
+		"effective_schedule_rows": effective_schedule_rows,
+		"duplicate_groups": duplicate_groups,
+		"checks": checks,
+		"can_import": can_import,
+		"is_idempotent_replay": 1 if replay else 0,
+		"existing_import": replay,
+		"import_fingerprint": import_fingerprint,
 		"parse_context": parse_context,
 	}
 
@@ -568,10 +688,13 @@ def import_customer_delivery_schedule(
 	version_no: str,
 	schedule_scope: str | None = None,
 	import_strategy: str | None = None,
+	duplicate_policy: str | None = None,
 	file_url: str | None = None,
 	rows_json: str | list[dict] | None = None,
 	mapping_json: str | dict[str, Any] | None = None,
 	source_type: str = "Customer Delivery Schedule",
+	rebuild: int = 0,
+	existing_work_order_policy: str | None = None,
 ) -> dict[str, Any]:
 	preview = preview_customer_delivery_schedule(
 		customer=customer,
@@ -579,96 +702,72 @@ def import_customer_delivery_schedule(
 		version_no=version_no,
 		schedule_scope=schedule_scope,
 		import_strategy=import_strategy,
+		duplicate_policy=duplicate_policy,
 		file_url=file_url,
 		rows_json=rows_json,
 		mapping_json=mapping_json,
+		source_type=source_type,
 	)
+	if preview.get("is_idempotent_replay"):
+		return {
+			**(preview.get("existing_import") or {}),
+			"summary": preview.get("summary") or {},
+			"idempotent_replay": 1,
+			"promotion": None,
+		}
+	if not preview.get("can_import"):
+		blocking_messages = [
+			check.get("summary") or check.get("title")
+			for check in preview.get("checks") or []
+			if cint(check.get("blocking"))
+		]
+		frappe.throw(
+			_("Schedule import checks failed. Resolve every blocking check before import:<br>{0}").format(
+				"<br>".join(blocking_messages[:12])
+			),
+			frappe.ValidationError,
+		)
 	schedule_scope = preview.get("schedule_scope")
 	import_strategy = preview.get("import_strategy")
-
-	import_batch = frappe.get_doc(
-		{
-			"doctype": "APS Schedule Import Batch",
-			"customer": customer,
-			"company": company,
-			"schedule_scope": schedule_scope,
-			"version_no": version_no,
-			"import_strategy": import_strategy,
-			"status": "Imported",
-			"imported_rows": len(preview["rows"]),
-			"effective_rows": sum(1 for row in preview["rows"] if flt(row.get("qty")) > 0),
-			"change_summary": json.dumps(preview["summary"], ensure_ascii=True, sort_keys=True),
-			"source_type": source_type,
-			"uploaded_file": file_url,
-			"parser_mode": preview.get("parse_context", {}).get("parser_mode"),
-			"sheet_name": preview.get("parse_context", {}).get("sheet_name"),
-			"mapping_json": _serialize_diagnostic_json(preview.get("parse_context", {}).get("mapping")),
-		}
-	).insert(ignore_permissions=True)
-
-	if import_strategy in {"Replace Scope", "Partial Item Update"}:
-		for name in frappe.get_all(
-			"Customer Delivery Schedule",
-			filters={
-				"customer": customer,
+	save_point = f"aps_schedule_import_{frappe.generate_hash(length=10)}"
+	frappe.db.savepoint(save_point)
+	try:
+		result = _apply_customer_delivery_schedule_import(
+			preview=preview,
+			customer=customer,
+			company=company,
+			version_no=version_no,
+			schedule_scope=schedule_scope,
+			import_strategy=import_strategy,
+			duplicate_policy=preview.get("duplicate_policy"),
+			file_url=file_url,
+			source_type=source_type,
+		)
+		if cint(rebuild):
+			existing_work_order_policy = _normalize_existing_work_order_policy(existing_work_order_policy)
+			result["promotion"] = {
 				"company": company,
-				"schedule_scope": schedule_scope,
-				"status": "Active",
-			},
-			pluck="name",
-		):
-			frappe.db.set_value("Customer Delivery Schedule", name, "status", "Superseded")
-
-	schedule = frappe.get_doc(
-		{
-			"doctype": "Customer Delivery Schedule",
-			"customer": customer,
-			"company": company,
-			"schedule_scope": schedule_scope,
-			"version_no": version_no,
-			"import_strategy": import_strategy,
-			"import_batch": import_batch.name,
-			"source_type": source_type,
-			"status": "Active",
-			"schedule_total_qty": sum(flt(row.get("qty")) for row in preview["rows"]),
-			"change_summary": json.dumps(preview["summary"], ensure_ascii=True, sort_keys=True),
-			"items": [
-				{
-					"sales_order": row.get("sales_order"),
-					"item_code": row.get("item_code"),
-					"customer_part_no": row.get("customer_part_no"),
-					"schedule_date": row.get("schedule_date"),
-					"qty": row.get("qty"),
-					"allocated_qty": row.get("allocated_qty") or 0,
-					"produced_qty": row.get("produced_qty") or 0,
-					"delivered_qty": row.get("delivered_qty") or 0,
-					"balance_qty": max(flt(row.get("qty")) - flt(row.get("delivered_qty")), 0),
-					"change_type": row.get("change_type"),
-					"status": "Open" if flt(row.get("qty")) > flt(row.get("delivered_qty")) else "Covered",
-					"remark": row.get("remark"),
-					"source_origin": row.get("source_origin") or "imported",
-					"source_excel_row": cint(row.get("source_excel_row")),
-					"manual_override": cint(row.get("manual_override")),
-					"manual_change_reason": row.get("manual_change_reason"),
-				}
-				for row in preview["rows"]
-			],
-		}
-	).insert(ignore_permissions=True)
-	_record_schedule_deltas(
-		import_batch=import_batch.name,
-		schedule_name=schedule.name,
-		customer=customer,
-		company=company,
-		schedule_scope=schedule_scope,
-		diff_rows=preview["rows"],
-	)
-
-	return {
-		"import_batch": import_batch.name,
-		"schedule": schedule.name,
-		"summary": preview["summary"],
-	}
+				"existing_work_order_policy": existing_work_order_policy,
+				"demand_pool": rebuild_demand_pool(company=company),
+				"net_requirement": rebuild_net_requirements(
+					company=company,
+					existing_work_order_policy=existing_work_order_policy,
+				),
+				"next_route": "aps-net-requirement-workbench",
+			}
+		else:
+			result["promotion"] = None
+		frappe.db.release_savepoint(save_point)
+		return result
+	except frappe.DuplicateEntryError:
+		frappe.db.rollback(save_point=save_point)
+		replay = _get_schedule_import_replay(preview.get("import_fingerprint"))
+		if replay:
+			return {**replay, "summary": preview.get("summary") or {}, "idempotent_replay": 1, "promotion": None}
+		raise
+	except Exception:
+		frappe.db.rollback(save_point=save_point)
+		raise
 
 
 def compare_schedule_against_active(
@@ -681,90 +780,17 @@ def compare_schedule_against_active(
 	schedule_scope = _normalize_schedule_scope(schedule_scope)
 	import_strategy = _normalize_schedule_import_strategy(import_strategy)
 	previous_rows = _get_active_schedule_rows(customer=customer, company=company, schedule_scope=schedule_scope)
-	current_rows = _build_effective_schedule_rows(
+	plan = _build_schedule_import_plan(
 		previous_rows=previous_rows,
 		incoming_rows=rows,
 		import_strategy=import_strategy,
 	)
-	previous_exact = {_schedule_row_key(row): row for row in previous_rows}
-	current_exact = {_schedule_row_key(row): row for row in current_rows}
-	processed_previous = set()
-	diff_rows = []
-
-	for key in sorted(set(previous_exact) & set(current_exact)):
-		previous = previous_exact[key]
-		current = dict(current_exact[key])
-		current["previous_qty"] = flt(previous.get("qty"))
-		current["previous_schedule_date"] = previous.get("schedule_date")
-		current["allocated_qty"] = flt(previous.get("allocated_qty"))
-		current["produced_qty"] = flt(previous.get("produced_qty"))
-		current["delivered_qty"] = flt(previous.get("delivered_qty"))
-		current["change_type"] = _detect_change_type(previous, current)
-		current["balance_qty"] = max(flt(current.get("qty")) - flt(current.get("delivered_qty")), 0)
-		diff_rows.append(current)
-		processed_previous.add(key)
-
-	previous_unmatched = [
-		row for key, row in previous_exact.items() if key not in processed_previous and key not in current_exact
-	]
-	current_unmatched = [row for key, row in current_exact.items() if key not in processed_previous and key not in previous_exact]
-
-	previous_grouped = defaultdict(list)
-	current_grouped = defaultdict(list)
-	for row in previous_unmatched:
-		previous_grouped[_schedule_identity_key(row)].append(row)
-	for row in current_unmatched:
-		current_grouped[_schedule_identity_key(row)].append(row)
-
-	for key in sorted(set(previous_grouped) | set(current_grouped)):
-		previous_group = sorted(previous_grouped.get(key) or [], key=lambda row: getdate(row.get("schedule_date")))
-		current_group = sorted(current_grouped.get(key) or [], key=lambda row: getdate(row.get("schedule_date")))
-		pairs = min(len(previous_group), len(current_group))
-
-		for idx in range(pairs):
-			previous = previous_group[idx]
-			current = dict(current_group[idx])
-			current["previous_qty"] = flt(previous.get("qty"))
-			current["previous_schedule_date"] = previous.get("schedule_date")
-			current["allocated_qty"] = flt(previous.get("allocated_qty"))
-			current["produced_qty"] = flt(previous.get("produced_qty"))
-			current["delivered_qty"] = flt(previous.get("delivered_qty"))
-			current["change_type"] = _detect_change_type(previous, current)
-			current["balance_qty"] = max(flt(current.get("qty")) - flt(current.get("delivered_qty")), 0)
-			diff_rows.append(current)
-
-		for current in current_group[pairs:]:
-			row = dict(current)
-			row.setdefault("allocated_qty", 0)
-			row.setdefault("produced_qty", 0)
-			row.setdefault("delivered_qty", 0)
-			row["previous_qty"] = 0
-			row["previous_schedule_date"] = None
-			row["change_type"] = "Added"
-			row["balance_qty"] = max(flt(row.get("qty")) - flt(row.get("delivered_qty")), 0)
-			diff_rows.append(row)
-
-		for previous in previous_group[pairs:]:
-			row = dict(previous)
-			row["previous_qty"] = flt(previous.get("qty"))
-			row["previous_schedule_date"] = previous.get("schedule_date")
-			row["qty"] = 0
-			row["change_type"] = "Cancelled"
-			row["balance_qty"] = 0
-			diff_rows.append(row)
-
-	sorted_rows = sorted(
-		diff_rows,
-		key=lambda row: (
-			getdate(row.get("schedule_date")),
-			row.get("sales_order") or "",
-			row.get("item_code") or "",
-			row.get("customer_part_no") or "",
-		),
+	return _attach_schedule_import_impacts(
+		plan["diff_rows"],
+		customer=customer,
+		company=company,
+		import_strategy=import_strategy,
 	)
-	for idx, row in enumerate(sorted_rows, start=1):
-		row["line_idx"] = idx
-	return sorted_rows
 
 
 def _normalize_schedule_scope(value: str | None) -> str:
@@ -773,9 +799,15 @@ def _normalize_schedule_scope(value: str | None) -> str:
 
 
 def _normalize_schedule_import_strategy(value: str | None) -> str:
-	allowed = {"Replace Scope", "Partial Item Update", "Append"}
 	strategy = str(value or "").strip()
-	return strategy if strategy in allowed else "Replace Scope"
+	if strategy == "Partial Item Update":
+		strategy = "Partial Update"
+	return strategy if strategy in SCHEDULE_IMPORT_STRATEGIES else "Replace Scope"
+
+
+def _normalize_schedule_duplicate_policy(value: str | None) -> str:
+	policy = str(value or "").strip()
+	return policy if policy in SCHEDULE_DUPLICATE_POLICIES else "Block"
 
 
 def _build_effective_schedule_rows(
@@ -783,36 +815,630 @@ def _build_effective_schedule_rows(
 	incoming_rows: list[dict[str, Any]],
 	import_strategy: str,
 ) -> list[dict[str, Any]]:
-	prepared_rows = _prepare_schedule_rows_for_import(incoming_rows)
-	if import_strategy == "Partial Item Update":
-		merged_rows = {_schedule_row_key(row): dict(row, source_origin=row.get("source_origin") or "retained_existing") for row in previous_rows}
-		for row in prepared_rows:
-			merged_rows[_schedule_row_key(row)] = dict(row)
-		return list(merged_rows.values())
-	return prepared_rows
+	return _build_schedule_import_plan(
+		previous_rows=previous_rows,
+		incoming_rows=incoming_rows,
+		import_strategy=_normalize_schedule_import_strategy(import_strategy),
+	)["effective_schedule_rows"]
 
 
 def _prepare_schedule_rows_for_import(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
 	prepared = []
 	for row in rows or []:
-		item_code = row.get("item_code")
-		if not item_code:
-			continue
+		item_code = str(row.get("item_code") or "").strip()
+		schedule_date = row.get("schedule_date")
+		previous_schedule_date = row.get("previous_schedule_date")
+		source_excel_rows = _schedule_source_row_numbers(row)
 		prepared.append(
 			{
 				"sales_order": row.get("sales_order"),
-				"item_code": _resolve_item_name(item_code) or item_code,
+				"item_code": (_resolve_item_name(item_code) or item_code) if item_code else "",
 				"customer_part_no": row.get("customer_part_no"),
-				"schedule_date": getdate(row.get("schedule_date")) if row.get("schedule_date") else getdate(today()),
+				"schedule_date": getdate(schedule_date) if schedule_date else None,
+				"previous_schedule_date": getdate(previous_schedule_date) if previous_schedule_date else None,
 				"qty": flt(row.get("qty")),
 				"remark": row.get("remark"),
 				"source_origin": row.get("source_origin") or "imported",
-				"source_excel_row": cint(row.get("source_excel_row")),
+				"source_excel_row": source_excel_rows[0] if source_excel_rows else 0,
+				"source_excel_rows": ", ".join(str(value) for value in source_excel_rows),
 				"manual_override": cint(row.get("manual_override")),
 				"manual_change_reason": row.get("manual_change_reason"),
 			}
 		)
 	return prepared
+
+
+def _schedule_source_row_numbers(row: dict[str, Any]) -> list[int]:
+	values = row.get("source_excel_rows") or row.get("source_excel_row") or []
+	if not isinstance(values, (list, tuple, set)):
+		values = str(values).replace(";", ",").split(",")
+	return sorted({cint(value) for value in values if cint(value) > 0})
+
+
+def _validate_schedule_import_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+	issues = []
+	if not rows:
+		return [{"excel_rows": [], "message": _("The import contains no schedule rows.")}]
+	item_doctype_exists = frappe.db.exists("DocType", "Item")
+	for index, row in enumerate(rows, start=1):
+		excel_rows = _schedule_source_row_numbers(row) or [index]
+		if not row.get("item_code"):
+			issues.append({"excel_rows": excel_rows, "message": _("Item Code is required.")})
+		elif item_doctype_exists and not frappe.db.exists("Item", row.get("item_code")):
+			issues.append(
+				{"excel_rows": excel_rows, "message": _("Item {0} does not exist.").format(row.get("item_code"))}
+			)
+		if not row.get("schedule_date"):
+			issues.append({"excel_rows": excel_rows, "message": _("Schedule Date is required.")})
+		if flt(row.get("qty")) < 0:
+			issues.append({"excel_rows": excel_rows, "message": _("Quantity cannot be negative; use zero to cancel.")})
+	return issues
+
+
+def _resolve_schedule_row_duplicates(
+	rows: list[dict[str, Any]],
+	duplicate_policy: str,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+	grouped = defaultdict(list)
+	for row in rows or []:
+		grouped[_schedule_row_key(row)].append(row)
+	duplicate_groups = []
+	resolved_rows = []
+	for key, group in grouped.items():
+		if len(group) == 1:
+			resolved_rows.append(dict(group[0]))
+			continue
+		excel_rows = sorted({value for row in group for value in _schedule_source_row_numbers(row)})
+		duplicate_groups.append(
+			{
+				"sales_order": key[0],
+				"item_code": key[1],
+				"schedule_date": key[2] or None,
+				"customer_part_no": key[3],
+				"excel_rows": excel_rows,
+				"quantities": [flt(row.get("qty")) for row in group],
+				"total_qty": sum(flt(row.get("qty")) for row in group),
+			}
+		)
+		if duplicate_policy == "Sum":
+			combined = dict(group[0])
+			combined["qty"] = sum(flt(row.get("qty")) for row in group)
+			combined["source_excel_row"] = excel_rows[0] if excel_rows else 0
+			combined["source_excel_rows"] = ", ".join(str(value) for value in excel_rows)
+			combined["source_origin"] = "summed_duplicate"
+			resolved_rows.append(combined)
+		else:
+			resolved_rows.extend(dict(row) for row in group)
+	return resolved_rows, duplicate_groups
+
+
+def _find_partial_update_ambiguities(
+	previous_rows: list[dict[str, Any]],
+	incoming_rows: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+	previous_exact = {_schedule_row_key(row): row for row in previous_rows}
+	previous_by_identity = defaultdict(list)
+	incoming_by_identity = defaultdict(list)
+	for row in previous_rows:
+		previous_by_identity[_schedule_identity_key(row)].append(row)
+	for row in incoming_rows:
+		incoming_by_identity[_schedule_identity_key(row)].append(row)
+	ambiguities = []
+	for identity, incoming_group in incoming_by_identity.items():
+		previous_group = previous_by_identity.get(identity) or []
+		for row in incoming_group:
+			if _schedule_row_key(row) in previous_exact or not previous_group:
+				continue
+			previous_date = row.get("previous_schedule_date")
+			if previous_date:
+				previous_key = (*identity[:2], str(getdate(previous_date)), identity[2])
+				if previous_key in previous_exact:
+					continue
+			if len(previous_group) == 1 and len(incoming_group) == 1:
+				continue
+			ambiguities.append(
+				{
+					"item_code": row.get("item_code"),
+					"sales_order": row.get("sales_order"),
+					"excel_rows": _schedule_source_row_numbers(row),
+					"previous_dates": sorted(str(item.get("schedule_date")) for item in previous_group),
+					"new_date": str(row.get("schedule_date") or ""),
+				}
+			)
+	return ambiguities
+
+
+def _build_schedule_import_fingerprint(
+	*,
+	customer: str,
+	company: str,
+	schedule_scope: str,
+	import_strategy: str,
+	source_type: str,
+	rows: list[dict[str, Any]],
+) -> str:
+	semantic_rows = []
+	for row in rows or []:
+		semantic_rows.append(
+			{
+				"sales_order": row.get("sales_order") or "",
+				"item_code": row.get("item_code") or "",
+				"customer_part_no": row.get("customer_part_no") or "",
+				"schedule_date": str(row.get("schedule_date") or ""),
+				"previous_schedule_date": str(row.get("previous_schedule_date") or ""),
+				"qty": round(flt(row.get("qty")), 6),
+				"remark": row.get("remark") or "",
+				"source_origin": row.get("source_origin") or "imported",
+				"manual_override": cint(row.get("manual_override")),
+				"manual_change_reason": row.get("manual_change_reason") or "",
+			}
+		)
+	semantic_rows.sort(
+		key=lambda row: (
+			row["sales_order"],
+			row["item_code"],
+			row["schedule_date"],
+			row["customer_part_no"],
+			row["qty"],
+		)
+	)
+	payload = {
+		"customer": customer or "",
+		"company": company or "",
+		"schedule_scope": schedule_scope or "",
+		"import_strategy": import_strategy,
+		"source_type": source_type or "Customer Delivery Schedule",
+		"rows": semantic_rows,
+	}
+	return hashlib.sha256(json.dumps(payload, ensure_ascii=True, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+
+
+def _get_schedule_import_replay(import_fingerprint: str | None) -> dict[str, Any] | None:
+	if not import_fingerprint or not frappe.db.exists("DocType", "APS Schedule Import Batch"):
+		return None
+	meta = frappe.get_meta("APS Schedule Import Batch")
+	if not meta.has_field("import_fingerprint"):
+		return None
+	batch = frappe.db.get_value(
+		"APS Schedule Import Batch",
+		{"import_fingerprint": import_fingerprint, "status": "Imported"},
+		["name", "schedule_reference"],
+		as_dict=True,
+	)
+	if not batch:
+		return None
+	return {"import_batch": batch.name, "schedule": batch.schedule_reference, "import_fingerprint": import_fingerprint}
+
+
+def _build_schedule_import_plan(
+	*,
+	previous_rows: list[dict[str, Any]],
+	incoming_rows: list[dict[str, Any]],
+	import_strategy: str,
+) -> dict[str, list[dict[str, Any]]]:
+	previous_rows = _aggregate_schedule_rows(previous_rows)
+	incoming_rows = _prepare_schedule_rows_for_import(incoming_rows)
+	if import_strategy == "Append":
+		diff_rows = []
+		previous_exact = {_schedule_row_key(row): row for row in previous_rows}
+		for incoming in incoming_rows:
+			previous = previous_exact.get(_schedule_row_key(incoming)) or {}
+			row = _build_schedule_diff_row(previous, incoming)
+			row["import_qty"] = flt(incoming.get("qty"))
+			row["qty"] = flt(previous.get("qty")) + row["import_qty"]
+			row["new_qty"] = row["qty"]
+			row["delta_qty"] = row["import_qty"]
+			row["change_type"] = "Appended"
+			row["source_origin"] = incoming.get("source_origin") or "appended"
+			diff_rows.append(row)
+		return {
+			"effective_schedule_rows": [dict(row, source_origin=row.get("source_origin") or "appended") for row in incoming_rows],
+			"diff_rows": _sort_schedule_diff_rows(diff_rows),
+		}
+
+	if import_strategy == "Partial Update":
+		effective_by_key = {
+			_schedule_row_key(row): dict(row, source_origin=row.get("source_origin") or "retained_existing")
+			for row in previous_rows
+		}
+		incoming_by_identity = defaultdict(list)
+		previous_by_identity = defaultdict(list)
+		for row in incoming_rows:
+			incoming_by_identity[_schedule_identity_key(row)].append(row)
+		for row in previous_rows:
+			previous_by_identity[_schedule_identity_key(row)].append(row)
+		for incoming in incoming_rows:
+			incoming_key = _schedule_row_key(incoming)
+			previous = effective_by_key.get(incoming_key)
+			if not previous:
+				identity = _schedule_identity_key(incoming)
+				previous_date = incoming.get("previous_schedule_date")
+				if previous_date:
+					candidate_key = _schedule_row_key(dict(incoming, schedule_date=previous_date))
+					previous = effective_by_key.pop(candidate_key, None)
+				elif len(previous_by_identity.get(identity) or []) == 1 and len(incoming_by_identity.get(identity) or []) == 1:
+					candidate_key = _schedule_row_key(previous_by_identity[identity][0])
+					previous = effective_by_key.pop(candidate_key, None)
+			merged = dict(previous or {})
+			merged.update(incoming)
+			merged["allocated_qty"] = flt((previous or {}).get("allocated_qty"))
+			merged["produced_qty"] = flt((previous or {}).get("produced_qty"))
+			merged["delivered_qty"] = flt((previous or {}).get("delivered_qty"))
+			merged["balance_qty"] = max(flt(merged.get("qty")) - flt(merged.get("delivered_qty")), 0)
+			effective_by_key[incoming_key] = merged
+		effective_rows = list(effective_by_key.values())
+	else:
+		effective_rows = incoming_rows
+
+	return {
+		"effective_schedule_rows": effective_rows,
+		"diff_rows": _build_replacement_schedule_diff(previous_rows, effective_rows),
+	}
+
+
+def _build_replacement_schedule_diff(
+	previous_rows: list[dict[str, Any]],
+	current_rows: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+	previous_exact = {_schedule_row_key(row): row for row in previous_rows}
+	current_exact = {_schedule_row_key(row): row for row in current_rows}
+	diff_rows = []
+	matched_previous = set()
+	matched_current = set()
+	for key in sorted(set(previous_exact) & set(current_exact)):
+		diff_rows.append(_build_schedule_diff_row(previous_exact[key], current_exact[key]))
+		matched_previous.add(key)
+		matched_current.add(key)
+
+	previous_grouped = defaultdict(list)
+	current_grouped = defaultdict(list)
+	for key, row in previous_exact.items():
+		if key not in matched_previous:
+			previous_grouped[_schedule_identity_key(row)].append(row)
+	for key, row in current_exact.items():
+		if key not in matched_current:
+			current_grouped[_schedule_identity_key(row)].append(row)
+	for identity in sorted(set(previous_grouped) | set(current_grouped)):
+		previous_group = sorted(previous_grouped.get(identity) or [], key=lambda row: str(row.get("schedule_date") or ""))
+		current_group = sorted(current_grouped.get(identity) or [], key=lambda row: str(row.get("schedule_date") or ""))
+		pairs = min(len(previous_group), len(current_group))
+		for index in range(pairs):
+			diff_rows.append(_build_schedule_diff_row(previous_group[index], current_group[index]))
+		for current in current_group[pairs:]:
+			diff_rows.append(_build_schedule_diff_row({}, current))
+		for previous in previous_group[pairs:]:
+			cancelled = dict(previous, qty=0, source_origin="cancelled_by_replace")
+			diff_rows.append(_build_schedule_diff_row(previous, cancelled))
+	return _sort_schedule_diff_rows(diff_rows)
+
+
+def _build_schedule_diff_row(previous: dict[str, Any], current: dict[str, Any]) -> dict[str, Any]:
+	row = dict(current)
+	previous_qty = flt(previous.get("qty"))
+	current_qty = flt(current.get("qty"))
+	row["previous_qty"] = previous_qty
+	row["new_qty"] = current_qty
+	row["qty"] = current_qty
+	row["delta_qty"] = current_qty - previous_qty
+	row["previous_schedule_date"] = previous.get("schedule_date")
+	row["new_schedule_date"] = current.get("schedule_date")
+	row["allocated_qty"] = flt(previous.get("allocated_qty"))
+	row["produced_qty"] = flt(previous.get("produced_qty"))
+	row["delivered_qty"] = flt(previous.get("delivered_qty"))
+	row["balance_qty"] = max(current_qty - row["delivered_qty"], 0)
+	row["change_type"] = _detect_change_type(previous, current)
+	return row
+
+
+def _sort_schedule_diff_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+	rows = sorted(
+		rows,
+		key=lambda row: (
+			str(row.get("schedule_date") or row.get("previous_schedule_date") or ""),
+			row.get("sales_order") or "",
+			row.get("item_code") or "",
+			row.get("customer_part_no") or "",
+		),
+	)
+	for index, row in enumerate(rows, start=1):
+		row["line_idx"] = index
+	return rows
+
+
+def _attach_schedule_import_impacts(
+	rows: list[dict[str, Any]],
+	*,
+	customer: str,
+	company: str,
+	import_strategy: str,
+) -> list[dict[str, Any]]:
+	frozen_qty = _get_schedule_frozen_qty(customer=customer, company=company)
+	for row in rows or []:
+		previous_date = row.get("previous_schedule_date") or row.get("schedule_date")
+		row["frozen_qty"] = flt(frozen_qty.get((row.get("item_code") or "", str(previous_date or ""))))
+		destructive = import_strategy != "Append" and row.get("change_type") in {
+			"Cancelled", "Reduced", "Advanced", "Delayed"
+		}
+		row["affects_produced"] = cint(destructive and flt(row.get("produced_qty")) > 0)
+		row["affects_delivered"] = cint(destructive and flt(row.get("delivered_qty")) > 0)
+		row["affects_frozen"] = cint(destructive and flt(row.get("frozen_qty")) > 0)
+		row["has_execution_impact"] = cint(
+			row["affects_produced"] or row["affects_delivered"] or row["affects_frozen"]
+		)
+		impact_parts = []
+		for label, fieldname in (
+			(_("Produced"), "produced_qty"),
+			(_("Delivered"), "delivered_qty"),
+			(_("Frozen"), "frozen_qty"),
+		):
+			if flt(row.get(fieldname)) > 0:
+				impact_parts.append(f"{label} {flt(row.get(fieldname)):g}")
+		row["execution_impact"] = " / ".join(impact_parts) if destructive and impact_parts else _("None")
+	return rows
+
+
+def _get_schedule_frozen_qty(customer: str, company: str) -> dict[tuple[str, str], float]:
+	qty_by_key = defaultdict(float)
+	if not frappe.db.exists("DocType", "APS Planning Run") or not frappe.db.exists("DocType", "APS Schedule Result"):
+		return qty_by_key
+	runs = frappe.get_all(
+		"APS Planning Run",
+		filters={"company": company},
+		fields=["name"],
+		order_by="modified desc",
+		limit=1,
+	)
+	if not runs:
+		return qty_by_key
+	results = frappe.get_all(
+		"APS Schedule Result",
+		filters={"planning_run": runs[0].name, "customer": customer},
+		fields=["name", "item_code", "requested_date", "is_locked", "machine_scheduled_qty"],
+	)
+	result_by_name = {row.name: row for row in results}
+	for row in results:
+		if cint(row.is_locked):
+			qty_by_key[(row.item_code or "", str(row.requested_date or ""))] += flt(row.machine_scheduled_qty)
+	if result_by_name and frappe.db.exists("DocType", "APS Schedule Segment"):
+		segments = frappe.get_all(
+			"APS Schedule Segment",
+			filters={"parent": ("in", list(result_by_name)), "is_locked": 1},
+			fields=["parent", "planned_qty"],
+		)
+		for segment in segments:
+			result = result_by_name.get(segment.parent)
+			if result and not cint(result.is_locked):
+				qty_by_key[(result.item_code or "", str(result.requested_date or ""))] += flt(segment.planned_qty)
+	return qty_by_key
+
+
+def _build_blocked_schedule_preview_rows(
+	rows: list[dict[str, Any]],
+	duplicate_groups: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+	duplicate_keys = {
+		(group.get("sales_order") or "", group.get("item_code") or "", group.get("schedule_date") or "", group.get("customer_part_no") or "")
+		for group in duplicate_groups
+	}
+	preview_rows = []
+	for index, source in enumerate(rows, start=1):
+		row = dict(source)
+		row["line_idx"] = index
+		row["previous_qty"] = None
+		row["new_qty"] = flt(row.get("qty"))
+		row["delta_qty"] = None
+		row["new_schedule_date"] = row.get("schedule_date")
+		row["change_type"] = (
+			"Duplicate Blocked"
+			if _schedule_row_key(row) in duplicate_keys
+			else "Validation Blocked"
+		)
+		row["execution_impact"] = _("Not evaluated")
+		preview_rows.append(row)
+	return preview_rows
+
+
+def _build_schedule_import_checks(
+	*,
+	import_strategy: str,
+	duplicate_policy: str,
+	duplicate_groups: list[dict[str, Any]],
+	row_issues: list[dict[str, Any]],
+	append_zero_rows: list[dict[str, Any]],
+	partial_ambiguities: list[dict[str, Any]],
+	replay: dict[str, Any] | None,
+) -> list[dict[str, Any]]:
+	checks = []
+	if row_issues:
+		details = [
+			_("Excel rows {0}: {1}").format(", ".join(str(value) for value in issue.get("excel_rows") or []) or "-", issue.get("message"))
+			for issue in row_issues
+		]
+		checks.append(_schedule_import_check("failed", _("Row validation"), _("Invalid schedule rows were found."), details, 1))
+	else:
+		checks.append(_schedule_import_check("passed", _("Row validation"), _("Every row has a valid item, date, and non-negative quantity.")))
+	if duplicate_groups and duplicate_policy == "Block":
+		details = [
+			_("Excel rows {0}: {1} / {2} / {3}, quantities {4}.").format(
+				", ".join(str(value) for value in group.get("excel_rows") or []),
+				group.get("sales_order") or _("No Sales Order"),
+				group.get("item_code"),
+				group.get("schedule_date"),
+				" + ".join(f"{flt(value):g}" for value in group.get("quantities") or []),
+			)
+			for group in duplicate_groups
+		]
+		checks.append(_schedule_import_check("failed", _("Duplicate identities"), _("Duplicates are blocked by default."), details, 1))
+	elif duplicate_groups:
+		details = [
+			_("Excel rows {0} are explicitly summed to {1}.").format(
+				", ".join(str(value) for value in group.get("excel_rows") or []), f"{flt(group.get('total_qty')):g}"
+			)
+			for group in duplicate_groups
+		]
+		checks.append(_schedule_import_check("warning", _("Duplicate identities"), _("Explicit Sum policy is active."), details))
+	else:
+		checks.append(_schedule_import_check("passed", _("Duplicate identities"), _("No duplicate business keys were found.")))
+	if append_zero_rows:
+		details = [
+			_("Excel rows {0} contain zero quantity.").format(", ".join(str(value) for value in _schedule_source_row_numbers(row)) or "-")
+			for row in append_zero_rows
+		]
+		checks.append(_schedule_import_check("failed", _("Zero quantity semantics"), _("Append creates independent demand and cannot cancel an existing row. Use Partial Update or Replace Scope."), details, 1))
+	else:
+		checks.append(_schedule_import_check("passed", _("Zero quantity semantics"), _("Zero quantities are preserved as explicit cancellations." if import_strategy != "Append" else "Append rows contain positive independent demand.")))
+	if partial_ambiguities:
+		details = [
+			_("Excel rows {0}: {1} has multiple possible previous dates ({2}).").format(
+				", ".join(str(value) for value in row.get("excel_rows") or []) or "-",
+				row.get("item_code"),
+				", ".join(row.get("previous_dates") or []),
+			)
+			for row in partial_ambiguities
+		]
+		checks.append(_schedule_import_check("failed", _("Partial update matching"), _("Date changes must identify one previous delivery row."), details, 1))
+	elif import_strategy == "Partial Update":
+		checks.append(_schedule_import_check("passed", _("Partial update matching"), _("Only file identities will change; omitted rows remain active.")))
+	if import_strategy == "Replace Scope":
+		checks.append(_schedule_import_check("passed", _("Replace scope"), _("Omitted active rows will be recorded as cancellations.")))
+	elif import_strategy == "Append":
+		checks.append(_schedule_import_check("passed", _("Append totals"), _("Preview quantities show active total plus the independent imported quantity.")))
+	if replay:
+		checks.append(_schedule_import_check("notice", _("Idempotency"), _("This semantic file was already imported; no demand will be added again."), [replay.get("import_batch")]))
+	else:
+		checks.append(_schedule_import_check("passed", _("Idempotency"), _("A semantic fingerprint will prevent duplicate application.")))
+	checks.append(_schedule_import_check("passed", _("Atomic write"), _("Batch, schedule, deltas, and optional rebuild run in one transaction.")))
+	return checks
+
+
+def _schedule_import_check(
+	status: str,
+	title: str,
+	summary: str,
+	details: list[str] | None = None,
+	blocking: int = 0,
+) -> dict[str, Any]:
+	return {
+		"status": status,
+		"title": title,
+		"summary": summary,
+		"details": details or [],
+		"blocking": cint(blocking),
+	}
+
+
+def _apply_customer_delivery_schedule_import(
+	*,
+	preview: dict[str, Any],
+	customer: str,
+	company: str,
+	version_no: str,
+	schedule_scope: str,
+	import_strategy: str,
+	duplicate_policy: str,
+	file_url: str | None,
+	source_type: str,
+) -> dict[str, Any]:
+	parse_context = preview.get("parse_context") or {}
+	import_batch = frappe.get_doc(
+		{
+			"doctype": "APS Schedule Import Batch",
+			"customer": customer,
+			"company": company,
+			"schedule_scope": schedule_scope,
+			"version_no": version_no,
+			"import_strategy": import_strategy,
+			"duplicate_policy": duplicate_policy,
+			"import_fingerprint": preview.get("import_fingerprint"),
+			"status": "Imported",
+			"imported_rows": cint(preview.get("source_row_count")),
+			"effective_rows": cint(preview.get("effective_row_count")),
+			"previous_total_qty": flt(preview.get("previous_total_qty")),
+			"post_import_total_qty": flt(preview.get("post_import_total_qty")),
+			"change_summary": json.dumps(preview.get("summary") or {}, ensure_ascii=True, sort_keys=True),
+			"duplicate_summary": json.dumps(preview.get("duplicate_groups") or [], ensure_ascii=True, sort_keys=True, default=str),
+			"source_type": source_type,
+			"uploaded_file": file_url,
+			"parser_mode": parse_context.get("parser_mode"),
+			"sheet_name": parse_context.get("sheet_name"),
+			"mapping_json": _serialize_diagnostic_json(parse_context.get("mapping")),
+		}
+	).insert(ignore_permissions=True)
+
+	if import_strategy in {"Replace Scope", "Partial Update"}:
+		for name in frappe.get_all(
+			"Customer Delivery Schedule",
+			filters={
+				"customer": customer,
+				"company": company,
+				"schedule_scope": schedule_scope,
+				"status": "Active",
+			},
+			pluck="name",
+		):
+			frappe.db.set_value("Customer Delivery Schedule", name, "status", "Superseded")
+
+	diff_by_key = {_schedule_row_key(row): row for row in preview.get("rows") or []}
+	items = []
+	for source in preview.get("effective_schedule_rows") or []:
+		row = dict(source)
+		diff = diff_by_key.get(_schedule_row_key(row)) or {}
+		qty = flt(row.get("qty"))
+		delivered_qty = flt(row.get("delivered_qty"))
+		items.append(
+			{
+				"sales_order": row.get("sales_order"),
+				"item_code": row.get("item_code"),
+				"customer_part_no": row.get("customer_part_no"),
+				"schedule_date": row.get("schedule_date"),
+				"qty": qty,
+				"allocated_qty": flt(row.get("allocated_qty")),
+				"produced_qty": flt(row.get("produced_qty")),
+				"delivered_qty": delivered_qty,
+				"balance_qty": max(qty - delivered_qty, 0),
+				"change_type": diff.get("change_type") or ("Appended" if import_strategy == "Append" else "Unchanged"),
+				"status": "Cancelled" if qty <= 0 else ("Open" if qty > delivered_qty else "Covered"),
+				"remark": row.get("remark"),
+				"source_origin": row.get("source_origin") or ("appended" if import_strategy == "Append" else "imported"),
+				"source_excel_row": cint(row.get("source_excel_row")),
+				"source_excel_rows": row.get("source_excel_rows"),
+				"manual_override": cint(row.get("manual_override")),
+				"manual_change_reason": row.get("manual_change_reason"),
+			}
+		)
+
+	schedule = frappe.get_doc(
+		{
+			"doctype": "Customer Delivery Schedule",
+			"customer": customer,
+			"company": company,
+			"schedule_scope": schedule_scope,
+			"version_no": version_no,
+			"import_strategy": import_strategy,
+			"import_batch": import_batch.name,
+			"source_type": source_type,
+			"status": "Active",
+			"schedule_total_qty": sum(flt(row.get("qty")) for row in items),
+			"change_summary": json.dumps(preview.get("summary") or {}, ensure_ascii=True, sort_keys=True),
+			"items": items,
+		}
+	).insert(ignore_permissions=True)
+	frappe.db.set_value("APS Schedule Import Batch", import_batch.name, "schedule_reference", schedule.name)
+	_record_schedule_deltas(
+		import_batch=import_batch.name,
+		schedule_name=schedule.name,
+		customer=customer,
+		company=company,
+		schedule_scope=schedule_scope,
+		diff_rows=preview.get("rows") or [],
+	)
+	return {
+		"import_batch": import_batch.name,
+		"schedule": schedule.name,
+		"summary": preview.get("summary") or {},
+		"import_fingerprint": preview.get("import_fingerprint"),
+		"idempotent_replay": 0,
+	}
 
 
 def _get_active_schedule_rows(customer: str, company: str, schedule_scope: str | None) -> list[dict[str, Any]]:
@@ -843,8 +1469,14 @@ def _get_active_schedule_rows(customer: str, company: str, schedule_scope: str |
 			"delivered_qty",
 			"balance_qty",
 			"remark",
+			"production_strategy",
+			"demand_confidence",
+			"cancellation_risk_percent",
+			"prebuild_allowed",
+			"max_prebuild_days",
 			"source_origin",
 			"source_excel_row",
+			"source_excel_rows",
 			"manual_override",
 			"manual_change_reason",
 		],
@@ -858,11 +1490,12 @@ def _aggregate_schedule_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]
 		key = _schedule_row_key(row)
 		existing = aggregated.get(key)
 		if not existing:
+			source_excel_rows = _schedule_source_row_numbers(row)
 			aggregated[key] = {
 				"sales_order": row.get("sales_order"),
 				"item_code": row.get("item_code"),
 				"customer_part_no": row.get("customer_part_no"),
-				"schedule_date": getdate(row.get("schedule_date")),
+				"schedule_date": getdate(row.get("schedule_date")) if row.get("schedule_date") else None,
 				"qty": flt(row.get("qty")),
 				"allocated_qty": flt(row.get("allocated_qty")),
 				"produced_qty": flt(row.get("produced_qty")),
@@ -870,7 +1503,8 @@ def _aggregate_schedule_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]
 				"balance_qty": flt(row.get("balance_qty")),
 				"remark": row.get("remark"),
 				"source_origin": row.get("source_origin") or "imported",
-				"source_excel_row": cint(row.get("source_excel_row")),
+				"source_excel_row": source_excel_rows[0] if source_excel_rows else 0,
+				"source_excel_rows": ", ".join(str(value) for value in source_excel_rows),
 				"manual_override": cint(row.get("manual_override")),
 				"manual_change_reason": row.get("manual_change_reason"),
 			}
@@ -880,6 +1514,11 @@ def _aggregate_schedule_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]
 		existing["produced_qty"] += flt(row.get("produced_qty"))
 		existing["delivered_qty"] += flt(row.get("delivered_qty"))
 		existing["balance_qty"] += flt(row.get("balance_qty"))
+		combined_source_rows = sorted(
+			set(_schedule_source_row_numbers(existing)) | set(_schedule_source_row_numbers(row))
+		)
+		existing["source_excel_row"] = combined_source_rows[0] if combined_source_rows else 0
+		existing["source_excel_rows"] = ", ".join(str(value) for value in combined_source_rows)
 	return list(aggregated.values())
 
 
@@ -895,8 +1534,8 @@ def _record_schedule_deltas(
 		return
 	for row in diff_rows or []:
 		previous_qty = flt(row.get("previous_qty"))
-		current_qty = flt(row.get("qty"))
-		delta_qty = current_qty - previous_qty
+		current_qty = flt(row.get("new_qty") if row.get("new_qty") is not None else row.get("qty"))
+		delta_qty = flt(row.get("delta_qty") if row.get("delta_qty") is not None else current_qty - previous_qty)
 		change_type = row.get("change_type") or "Unchanged"
 		if change_type == "Unchanged" and abs(delta_qty) < 0.0001:
 			continue
@@ -917,6 +1556,13 @@ def _record_schedule_deltas(
 				"current_qty": current_qty,
 				"delta_qty": delta_qty,
 				"change_type": change_type,
+				"source_excel_rows": row.get("source_excel_rows") or str(row.get("source_excel_row") or ""),
+				"produced_qty": flt(row.get("produced_qty")),
+				"delivered_qty": flt(row.get("delivered_qty")),
+				"frozen_qty": flt(row.get("frozen_qty")),
+				"affects_produced": cint(row.get("affects_produced")),
+				"affects_delivered": cint(row.get("affects_delivered")),
+				"affects_frozen": cint(row.get("affects_frozen")),
 				"remark": row.get("remark"),
 			}
 		).insert(ignore_permissions=True)
@@ -952,6 +1598,11 @@ def rebuild_demand_pool(company: str | None = None) -> dict[str, Any]:
 				"balance_qty",
 				"change_type",
 				"customer_part_no",
+				"production_strategy",
+				"demand_confidence",
+				"cancellation_risk_percent",
+				"prebuild_allowed",
+				"max_prebuild_days",
 			],
 		):
 			resolved_item_code = _resolve_item_name(row.item_code)
@@ -1002,6 +1653,13 @@ def rebuild_demand_pool(company: str | None = None) -> dict[str, Any]:
 				sales_order=row.sales_order,
 				remark=row.change_type,
 				customer_part_no=row.customer_part_no,
+				production_strategy=row.production_strategy,
+				demand_confidence=(
+					"Forecast" if (schedule.source_type or "") == "Forecast" else row.demand_confidence
+				),
+				cancellation_risk_percent=row.cancellation_risk_percent,
+				prebuild_allowed=row.prebuild_allowed,
+				max_prebuild_days=row.max_prebuild_days,
 			)
 			created_names.append(demand.insert(ignore_permissions=True).name)
 
@@ -1041,6 +1699,11 @@ def rebuild_net_requirements(
 			"qty",
 			"demand_source",
 			"is_urgent",
+			"production_strategy",
+			"demand_confidence",
+			"cancellation_risk_percent",
+			"prebuild_allowed",
+			"max_prebuild_days",
 		],
 		order_by="demand_date asc, priority_score desc, modified asc",
 	)
@@ -1074,7 +1737,19 @@ def rebuild_net_requirements(
 		if resolved_item_code != row.item_code:
 			frappe.db.set_value("APS Demand Pool", row.name, "item_code", resolved_item_code, update_modified=False)
 			row.item_code = resolved_item_code
-		grouped[(row.company, row.customer, resolved_item_code, row.demand_date)].append(row)
+		grouped[
+			(
+				row.company,
+				row.customer,
+				resolved_item_code,
+				row.demand_date,
+				row.production_strategy or "Auto Balance",
+				row.demand_confidence or ("Forecast" if row.demand_source == "Forecast" else "Confirmed"),
+				flt(row.cancellation_risk_percent),
+				cint(row.prebuild_allowed),
+				cint(row.max_prebuild_days),
+			)
+		].append(row)
 
 	has_safety_demand_by_item = {
 		_normalize_item_code(row.item_code)
@@ -1089,7 +1764,17 @@ def rebuild_net_requirements(
 	settings = get_settings_dict()
 
 	created_names = []
-	for (row_company, customer, item_code, demand_date), rows in grouped.items():
+	for (
+		row_company,
+		customer,
+		item_code,
+		demand_date,
+		production_strategy,
+		demand_confidence,
+		cancellation_risk_percent,
+		prebuild_allowed,
+		max_prebuild_days,
+	), rows in grouped.items():
 		demand_qty = sum(flt(row.qty) for row in rows)
 		safety_stock_qty = flt(_get_item_mapping_value(item_code, settings["item_safety_stock_field"]))
 		max_stock_qty = flt(_get_item_mapping_value(item_code, settings["item_max_stock_field"]))
@@ -1139,6 +1824,11 @@ def rebuild_net_requirements(
 				"max_stock_qty": max_stock_qty,
 				"overstock_qty": overstock_qty,
 				"minimum_batch_qty": minimum_batch_qty,
+				"production_strategy": production_strategy,
+				"demand_confidence": demand_confidence,
+				"cancellation_risk_percent": cancellation_risk_percent,
+				"prebuild_allowed": prebuild_allowed,
+				"max_prebuild_days": max_prebuild_days,
 				"planning_qty": planning_qty,
 				"net_requirement_qty": net_qty,
 				"reason_text": reason_text,
@@ -1234,6 +1924,11 @@ def run_planning_run(
 			"demand_qty",
 			"planning_qty",
 			"minimum_batch_qty",
+			"production_strategy",
+			"demand_confidence",
+			"cancellation_risk_percent",
+			"prebuild_allowed",
+			"max_prebuild_days",
 			"net_requirement_qty",
 			"reason_text",
 		],
@@ -1268,7 +1963,12 @@ def run_planning_run(
 			family_credit_map[row.item_code] = max(flt(family_credit_map.get(row.item_code)) - credit_applied, 0)
 		planning_qty = max(original_planning_qty - credit_applied, 0)
 		item_context = _get_item_context(row.item_code, settings)
-		demand_source = _get_primary_demand_source(row.item_code, row.customer, row.demand_date)
+		demand_source = _get_primary_demand_source(
+			row.item_code,
+			row.customer,
+			row.demand_date,
+			production_strategy=row.production_strategy,
+		)
 		best = {
 			"scheduled_qty": 0,
 			"unscheduled_qty": 0,
@@ -1388,6 +2088,11 @@ def run_planning_run(
 				"item_code": row.item_code,
 				"requested_date": row.demand_date,
 				"demand_source": demand_source,
+				"production_strategy": row.production_strategy or settings.get("default_production_strategy") or "Auto Balance",
+				"demand_confidence": row.demand_confidence or ("Forecast" if demand_source == "Forecast" else "Confirmed"),
+				"cancellation_risk_percent": flt(row.cancellation_risk_percent),
+				"prebuild_allowed": cint(row.prebuild_allowed),
+				"max_prebuild_days": cint(row.max_prebuild_days or settings.get("default_max_prebuild_days") or 7),
 				"planned_qty": original_planning_qty,
 				"scheduled_qty": total_scheduled_for_row,
 				"unscheduled_qty": total_unscheduled_for_row,
@@ -1455,6 +2160,23 @@ def run_planning_run(
 			+ len(overlap_summary["exception_names"])
 			+ len(mold_overlap_summary["exception_names"]),
 		)
+	consistency_summary = consistency.recalculate_plan_consistency(
+		run_doc.name,
+		reason="global or local planning run",
+	)
+	capacity_analysis = None
+	capacity_application = None
+	if result_names:
+		from injection_aps.services import capacity_balance
+
+		capacity_analysis = capacity_balance.analyze_capacity_balance(run_doc.name, persist=True)
+		if (
+			not capacity_analysis.get("summary", {}).get("blocked_demands")
+			and not capacity_analysis.get("summary", {}).get("unscheduled_qty")
+			and not capacity_analysis.get("summary", {}).get("requires_confirmation")
+		):
+			capacity_application = capacity_balance.apply_capacity_balance(run_doc.name)
+			consistency_summary = capacity_application.get("consistency") or consistency_summary
 
 	return {
 		"run": run_doc.name,
@@ -1467,11 +2189,25 @@ def run_planning_run(
 		"preflight_warnings": (demand_rebuild.get("warnings") or []) + (net_rebuild.get("warnings") or []),
 		"overlap_count": overlap_summary["count"],
 		"mold_overlap_count": mold_overlap_summary["count"],
+		"consistency": consistency_summary,
+		"capacity_balance": capacity_analysis,
+		"capacity_application": capacity_application,
 	}
 
 
 def approve_planning_run(run_name: str) -> dict[str, Any]:
 	run_doc = frappe.get_doc("APS Planning Run", run_name)
+	if getattr(run_doc, "capacity_balance_fingerprint", None) and getattr(
+		run_doc, "capacity_balance_status", None
+	) != "Applied":
+		frappe.throw(
+			_("Apply the analyzed capacity balance before confirming this planning run."),
+			frappe.ValidationError,
+		)
+	consistency_gate = consistency.assert_plan_consistent(
+		run_name,
+		reason="planning run approval",
+	)
 	mold_gate = validate_run_mold_readiness(run_name, persist_exceptions=True)
 	overlap_summary = _validate_run_segment_overlaps(run_name, persist_exceptions=True)
 	mold_overlap_summary = _validate_run_mold_overlaps(run_name, persist_exceptions=True)
@@ -1522,6 +2258,7 @@ def approve_planning_run(run_name: str) -> dict[str, Any]:
 		"mold_gate": mold_gate,
 		"overlap_count": overlap_summary["count"],
 		"mold_overlap_count": mold_overlap_summary["count"],
+		"consistency": consistency_gate,
 	}
 
 
@@ -1537,6 +2274,10 @@ def generate_work_order_proposals(run_name: str) -> dict[str, Any]:
 	run_doc = frappe.get_doc("APS Planning Run", run_name)
 	if run_doc.approval_state != "Approved":
 		frappe.throw(_("Approve the APS Planning Run before generating work order proposals."))
+	consistency.assert_plan_consistent(
+		run_name,
+		reason="work order proposal generation",
+	)
 	mold_gate = validate_run_mold_readiness(run_name, persist_exceptions=True)
 	if mold_gate["blocking_count"]:
 		frappe.throw(_("Fix mold master blockers before generating work order proposals."))
@@ -1545,8 +2286,8 @@ def generate_work_order_proposals(run_name: str) -> dict[str, Any]:
 	matched_work_orders = set()
 	for result in frappe.get_all(
 		"APS Schedule Result",
-		filters={"planning_run": run_name, "scheduled_qty": (">", 0), "status": ("!=", "Blocked")},
-		fields=["name", "customer", "item_code", "requested_date", "scheduled_qty"],
+		filters={"planning_run": run_name, "machine_scheduled_qty": (">", 0), "status": ("!=", "Blocked")},
+		fields=["name", "customer", "item_code", "requested_date", "machine_scheduled_qty"],
 		order_by="requested_date asc, item_code asc",
 	):
 		primary_segments = _get_primary_segments_for_result(result.name)
@@ -1566,7 +2307,7 @@ def generate_work_order_proposals(run_name: str) -> dict[str, Any]:
 			preferred_campaign_key=preferred_campaign_key,
 			excluded_work_orders=sorted(matched_work_orders),
 		)
-		proposed_qty = flt(result.scheduled_qty)
+		proposed_qty = flt(result.machine_scheduled_qty)
 		prefer_update_existing = bool(
 			existing
 			and (
@@ -1688,6 +2429,10 @@ def generate_work_order_proposals(run_name: str) -> dict[str, Any]:
 def apply_work_order_proposals(batch_name: str) -> dict[str, Any]:
 	batch = frappe.get_doc("APS Work Order Proposal Batch", batch_name)
 	run_doc = frappe.get_doc("APS Planning Run", batch.planning_run)
+	consistency.assert_plan_consistent(
+		batch.planning_run,
+		reason="work order proposal apply",
+	)
 	mold_gate = validate_run_mold_readiness(batch.planning_run, persist_exceptions=True)
 	if mold_gate["blocking_count"]:
 		frappe.throw(_("Fix mold master blockers before applying work order proposals."))
@@ -1921,6 +2666,10 @@ def generate_shift_schedule_proposals(
 		shift_type=shift_type,
 	)
 	run_doc = context["run_doc"]
+	consistency.assert_plan_consistent(
+		run_doc.name,
+		reason="shift schedule proposal generation",
+	)
 	wo_batch = context["work_order_proposal_batch_doc"]
 	release_from = context["release_from"]
 	release_to = context["release_to"]
@@ -2247,6 +2996,10 @@ def _validate_shift_proposal_work_order_totals(batch, approved_rows: list[Any]):
 
 def apply_shift_schedule_proposals(batch_name: str) -> dict[str, Any]:
 	batch = frappe.get_doc("APS Shift Schedule Proposal Batch", batch_name)
+	consistency.assert_plan_consistent(
+		batch.planning_run,
+		reason="formal shift schedule release",
+	)
 	overlap_summary = _validate_run_segment_overlaps(batch.planning_run, persist_exceptions=True)
 	mold_overlap_summary = _validate_run_mold_overlaps(batch.planning_run, persist_exceptions=True)
 	mold_gate = validate_run_mold_readiness(batch.planning_run, persist_exceptions=True)
@@ -2510,45 +3263,9 @@ def update_schedule_notes(
 
 
 def sync_execution_feedback_to_aps(run_name: str) -> dict[str, Any]:
-	run_doc = frappe.get_doc("APS Planning Run", run_name)
-	now_value = now_datetime()
-	updated_segments = 0
-	status_counts = defaultdict(int)
-	for result_name in frappe.get_all("APS Schedule Result", filters={"planning_run": run_name}, pluck="name"):
-		result_doc = frappe.get_doc("APS Schedule Result", result_name)
-		segment_statuses = []
-		result_progress = 0.0
-		actual_start_times = []
-		actual_end_times = []
-		for segment in result_doc.segments:
-			execution = _get_segment_execution_snapshot(segment)
-			segment.actual_status = execution["actual_status"]
-			segment.actual_completed_qty = execution["actual_completed_qty"]
-			segment.actual_start_time = execution["actual_start_time"]
-			segment.actual_end_time = execution["actual_end_time"]
-			segment.delay_minutes = execution["delay_minutes"]
-			segment.last_execution_sync_on = now_value
-			segment.linked_work_order = execution["linked_work_order"]
-			segment.linked_work_order_scheduling = execution["linked_work_order_scheduling"]
-			segment.linked_scheduling_item = execution["linked_scheduling_item"]
-			segment_statuses.append(execution["actual_status"])
-			status_counts[execution["actual_status"]] += 1
-			result_progress += flt(execution["actual_completed_qty"])
-			if execution["actual_start_time"]:
-				actual_start_times.append(execution["actual_start_time"])
-			if execution["actual_end_time"]:
-				actual_end_times.append(execution["actual_end_time"])
-			updated_segments += 1
-		result_doc.actual_status = _rollup_result_actual_status(segment_statuses)
-		result_doc.actual_progress_qty = result_progress
-		result_doc.actual_start_time = min(actual_start_times) if actual_start_times else None
-		result_doc.actual_end_time = max(actual_end_times) if actual_end_times else None
-		result_doc.delay_minutes = _rollup_delay_minutes(result_doc.segments)
-		result_doc.last_execution_sync_on = now_value
-		_sync_execution_exceptions(run_name, result_doc)
-		result_doc.save(ignore_permissions=True)
-	run_doc.db_set("exception_count", frappe.db.count("APS Exception Log", {"planning_run": run_name, "status": "Open"}))
-	return {"run": run_name, "updated_segments": updated_segments, "status_counts": dict(status_counts)}
+	from injection_aps.services import execution_sync
+
+	return execution_sync.sync_production_for_run(run_name)
 
 
 def get_execution_health_for_run(run_name: str, sync: bool = False) -> dict[str, Any]:
@@ -2731,6 +3448,11 @@ def _get_customer_schedule_progress_schedule_rows(
 			"balance_qty",
 			"status",
 			"remark",
+			"production_strategy",
+			"demand_confidence",
+			"cancellation_risk_percent",
+			"prebuild_allowed",
+			"max_prebuild_days",
 		],
 		order_by="schedule_date asc, parent asc, idx asc",
 	)
@@ -2757,7 +3479,14 @@ def _get_customer_schedule_progress_schedule_rows(
 				"customer_part_no": row.customer_part_no,
 				"schedule_date": getdate(row.schedule_date),
 				"required_qty": flt(row.qty),
+				"allocated_qty": flt(row.allocated_qty),
+				"actual_produced_qty": flt(row.produced_qty),
 				"delivered_qty": flt(row.delivered_qty),
+				"production_strategy": row.production_strategy or "Auto Balance",
+				"demand_confidence": row.demand_confidence or "Confirmed",
+				"cancellation_risk_percent": flt(row.cancellation_risk_percent),
+				"prebuild_allowed": cint(row.prebuild_allowed),
+				"max_prebuild_days": cint(row.max_prebuild_days),
 				"remark": row.remark,
 				"schedule_modified": schedule.modified,
 			}
@@ -2803,6 +3532,13 @@ def _build_customer_schedule_progress_rows(
 		company=company,
 		target_item_codes={row.get("item_code") for row in schedule_rows if row.get("item_code")},
 	)
+	from injection_aps.services import availability
+
+	fulfillment_results = (
+		availability.get_run_fulfillment_projection(run_doc.get("name"), persist=False).get("results") or []
+		if run_doc
+		else []
+	)
 	progress_rows = []
 
 	for source_row in schedule_rows:
@@ -2826,12 +3562,75 @@ def _build_customer_schedule_progress_rows(
 			}
 		)
 		_allocate_customer_schedule_progress_supply(row, supply_map)
+		_attach_customer_schedule_fulfillment(row, fulfillment_results)
 		_set_customer_schedule_progress_status(row)
 		row["routes"] = _get_customer_schedule_progress_routes(row)
 		row.pop("_supply_risk_reasons", None)
 		progress_rows.append(row)
 
 	return progress_rows
+
+
+def _attach_customer_schedule_fulfillment(row: dict[str, Any], fulfillment_results: list[dict[str, Any]]):
+	result_names = set(row.get("result_names") or [])
+	identity_matches = [
+		projection
+		for projection in fulfillment_results
+		if (
+			projection.get("customer") == row.get("customer")
+			and projection.get("item_code") == row.get("item_code")
+			and getdate(projection.get("requested_date")) == getdate(row.get("schedule_date"))
+		)
+	]
+	matches = identity_matches or [
+		projection
+		for projection in fulfillment_results
+		if projection.get("result") in result_names
+	]
+	row.update(
+		{
+			"prebuild_qty": sum(flt(item.get("prebuild_qty")) for item in matches),
+			"jit_qty": sum(flt(item.get("jit_qty")) for item in matches),
+			"early_days": max((flt(item.get("early_days")) for item in matches), default=0),
+			"actual_good_qty": sum(flt(item.get("actual_good_qty")) for item in matches),
+			"scrap_qty": sum(flt(item.get("scrap_qty")) for item in matches),
+			"current_deliverable_qty": min(
+				max(flt(row.get("required_qty")) - flt(row.get("delivered_qty")), 0),
+				sum(flt(item.get("current_deliverable_qty")) for item in matches),
+			),
+			"projected_peak_inventory_qty": max(
+				(flt(item.get("projected_peak_inventory_qty")) for item in matches), default=0
+			),
+			"late_qty_before_balance": sum(flt(item.get("late_qty_before_balance")) for item in matches),
+			"late_qty_after_balance": sum(flt(item.get("late_qty_after_balance")) for item in matches),
+			"prebuild_inventory_qty": sum(flt(item.get("prebuild_inventory_qty")) for item in matches),
+			"cancellation_inventory_risk_qty": sum(
+				flt(item.get("cancellation_inventory_risk_qty")) for item in matches
+			),
+			"last_actual_report_time": max(
+				(
+					get_datetime(item.get("last_actual_report_time"))
+					for item in matches
+					if item.get("last_actual_report_time")
+				),
+				default=None,
+			),
+			"production_source_documents": list(
+				dict.fromkeys(
+					doc
+					for item in matches
+					for doc in item.get("production_source_documents") or []
+				)
+			),
+			"delivery_source_documents": list(
+				dict.fromkeys(
+					doc
+					for item in matches
+					for doc in item.get("delivery_source_documents") or []
+				)
+			),
+		}
+	)
 
 
 def _get_customer_schedule_progress_production_supply_map(
@@ -2841,7 +3640,7 @@ def _get_customer_schedule_progress_production_supply_map(
 ):
 	if not run_name:
 		return {}
-	result_filters = {"planning_run": run_name, "scheduled_qty": (">", 0)}
+	result_filters = {"planning_run": run_name}
 	if company:
 		result_filters["company"] = company
 	results = frappe.get_all(
@@ -2854,7 +3653,7 @@ def _get_customer_schedule_progress_production_supply_map(
 			"item_code",
 			"customer",
 			"requested_date",
-			"scheduled_qty",
+			"machine_scheduled_qty",
 			"risk_status",
 			"status",
 			"blocking_reason",
@@ -2884,8 +3683,13 @@ def _get_customer_schedule_progress_production_supply_map(
 			"linked_scheduling_item",
 			"actual_status",
 			"actual_completed_qty",
+			"actual_good_qty",
+			"actual_scrap_qty",
 			"actual_start_time",
 			"actual_end_time",
+			"last_actual_report_time",
+			"last_execution_sync_on",
+			"production_mode",
 		],
 		order_by="end_time asc, start_time asc, idx asc",
 	)
@@ -2894,6 +3698,8 @@ def _get_customer_schedule_progress_production_supply_map(
 		result = result_map.get(segment.parent)
 		item_code = _get_customer_schedule_progress_segment_item(segment, result)
 		if not result or not item_code:
+			continue
+		if segment.segment_status in consistency.INACTIVE_SEGMENT_STATUSES:
 			continue
 		if target_item_codes and item_code not in target_item_codes:
 			continue
@@ -2905,7 +3711,15 @@ def _get_customer_schedule_progress_production_supply_map(
 		planned_qty = flt(segment.planned_qty)
 		if planned_qty <= 0:
 			continue
-		execution = execution_map.get(segment.name) or _get_segment_execution_snapshot(segment)
+		if segment.get("last_execution_sync_on"):
+			execution = {
+				"actual_status": segment.get("actual_status"),
+				"actual_completed_qty": segment.get("actual_good_qty"),
+				"actual_start_time": segment.get("actual_start_time"),
+				"actual_end_time": segment.get("actual_end_time"),
+			}
+		else:
+			execution = execution_map.get(segment.name) or _get_segment_execution_snapshot(segment)
 		actual_qty = min(max(flt(execution.get("actual_completed_qty")), 0), planned_qty)
 		if actual_qty > 0:
 			actual_completion_time = (
@@ -3164,6 +3978,15 @@ def _summarize_customer_schedule_progress_rows(rows: list[dict[str, Any]]) -> di
 		"rows": len(rows or []),
 		"required_qty": sum(flt(row.get("required_qty")) for row in rows or []),
 		"delivered_qty": sum(flt(row.get("delivered_qty")) for row in rows or []),
+		"actual_good_qty": sum(flt(row.get("actual_good_qty")) for row in rows or []),
+		"scrap_qty": sum(flt(row.get("scrap_qty")) for row in rows or []),
+		"current_deliverable_qty": sum(flt(row.get("current_deliverable_qty")) for row in rows or []),
+		"prebuild_qty": sum(flt(row.get("prebuild_qty")) for row in rows or []),
+		"jit_qty": sum(flt(row.get("jit_qty")) for row in rows or []),
+		"prebuild_inventory_qty": sum(flt(row.get("prebuild_inventory_qty")) for row in rows or []),
+		"cancellation_inventory_risk_qty": sum(
+			flt(row.get("cancellation_inventory_risk_qty")) for row in rows or []
+		),
 		"stock_covered_qty": sum(flt(row.get("stock_covered_qty")) for row in rows or []),
 		"production_covered_qty": sum(flt(row.get("production_covered_qty")) for row in rows or []),
 		"uncovered_qty": sum(flt(row.get("uncovered_qty")) for row in rows or []),
@@ -3204,35 +4027,33 @@ def _with_role_filtered_actions(context: dict[str, Any]) -> dict[str, Any]:
 
 
 def analyze_change_request_impact(change_request: str) -> dict[str, Any]:
-	doc = frappe.get_doc("APS Change Request", change_request)
-	impact = analyze_insert_order_impact(
-		company=doc.company,
-		plant_floor=doc.plant_floor,
-		plant_floors=getattr(doc, "selected_plant_floors", None),
-		item_code=doc.item_code,
-		qty=doc.qty,
-		required_date=doc.required_date,
-		customer=doc.customer,
-	)
-	doc.status = "Analyzed"
-	doc.impact_summary = json.dumps(
-		{
-			"scheduled_qty": impact.get("scheduled_qty"),
-			"unscheduled_qty": impact.get("unscheduled_qty"),
-			"displaced_segments": len(impact.get("displaced_segments") or []),
-		},
-		ensure_ascii=True,
-	)
-	doc.save(ignore_permissions=True)
-	return impact
+	from injection_aps.services import change_engine
+
+	return change_engine.analyze_change_request(change_request)
+
+
+def confirm_change_request(change_request: str) -> dict[str, Any]:
+	from injection_aps.services import change_engine
+
+	return change_engine.confirm_change_request(change_request)
+
+
+def approve_change_request(change_request: str) -> dict[str, Any]:
+	from injection_aps.services import change_engine
+
+	return change_engine.approve_change_request(change_request)
+
+
+def reject_change_request(change_request: str, reason: str | None = None) -> dict[str, Any]:
+	from injection_aps.services import change_engine
+
+	return change_engine.reject_change_request(change_request, reason=reason)
 
 
 def apply_change_request(change_request: str) -> dict[str, Any]:
-	doc = frappe.get_doc("APS Change Request", change_request)
-	doc.approval_state = "Approved"
-	doc.status = "Approved"
-	doc.save(ignore_permissions=True)
-	return {"change_request": doc.name, "status": doc.status}
+	from injection_aps.services import change_engine
+
+	return change_engine.apply_change_request(change_request)
 
 
 def analyze_insert_order_impact(
@@ -3380,30 +4201,19 @@ def analyze_insert_order_impact(
 def rebuild_exceptions(run_name: str) -> dict[str, Any]:
 	for name in frappe.get_all("APS Exception Log", filters={"planning_run": run_name}, pluck="name"):
 		frappe.delete_doc("APS Exception Log", name, force=1, ignore_permissions=True)
-
-	recreated = []
-	for row in frappe.get_all(
-		"APS Schedule Result",
-		filters={"planning_run": run_name, "risk_status": ("in", ["Attention", "Critical", "Blocked"])},
-		fields=["name", "customer", "item_code", "status", "risk_status", "unscheduled_qty"],
-	):
-		severity = "Critical" if row.risk_status in ("Critical", "Blocked") else "Warning"
-		doc = _create_exception(
-			planning_run=run_name,
-			severity=severity,
-			exception_type="Scheduling Risk",
-			message=_("Result {0} has risk state {1} and unscheduled qty {2}.").format(
-				row.name, row.risk_status, row.unscheduled_qty
-			),
-			item_code=row.item_code,
-			customer=row.customer,
-			source_doctype="APS Schedule Result",
-			source_name=row.name,
-			resolution_hint=_("Review the planned sequence, capacity and frozen segments."),
-			is_blocking=1 if row.risk_status == "Blocked" else 0,
-		)
-		recreated.append(doc.name)
-	return {"run": run_name, "exceptions": recreated}
+	validate_run_mold_readiness(run_name, persist_exceptions=True)
+	_validate_run_segment_overlaps(run_name, persist_exceptions=True)
+	_validate_run_mold_overlaps(run_name, persist_exceptions=True)
+	consistency_summary = consistency.recalculate_plan_consistency(
+		run_name,
+		reason="exception rebuild",
+	)
+	recreated = frappe.get_all(
+		"APS Exception Log",
+		filters={"planning_run": run_name, "status": "Open"},
+		pluck="name",
+	)
+	return {"run": run_name, "exceptions": recreated, "consistency": consistency_summary}
 
 
 def get_next_actions_for_context(doctype: str, docname: str) -> dict[str, Any]:
@@ -3482,6 +4292,7 @@ def get_next_actions_for_context(doctype: str, docname: str) -> dict[str, Any]:
 			)
 		)
 		context = _build_planning_run_context(doc)
+		is_consistent = doc.get("consistency_status") == "Valid"
 		return _with_role_filtered_actions({
 			**context,
 			"actions": [
@@ -3507,7 +4318,8 @@ def get_next_actions_for_context(doctype: str, docname: str) -> dict[str, Any]:
 					"action_key": "approve",
 					"method": "injection_aps.api.app.approve_planning_run",
 					"kwargs": {"run_name": doc.name},
-					"enabled": 1 if doc.approval_state != "Approved" and doc.status in ("Planned", "Risk", "Draft") else 0,
+					"enabled": 1 if is_consistent and doc.approval_state != "Approved" and doc.status in ("Planned", "Risk", "Draft") else 0,
+					"disabled_reason": "Plan consistency must be Valid before confirmation." if not is_consistent else "",
 					"confirm_required": 1,
 					"confirm_title": "Confirm APS Run",
 					"confirm_summary": [
@@ -3522,7 +4334,8 @@ def get_next_actions_for_context(doctype: str, docname: str) -> dict[str, Any]:
 					"action_key": "generate_work_order_proposals",
 					"method": "injection_aps.api.app.generate_work_order_proposals",
 					"kwargs": {"run_name": doc.name},
-					"enabled": 1 if doc.approval_state == "Approved" and doc.status in ("Approved",) else 0,
+					"enabled": 1 if is_consistent and doc.approval_state == "Approved" and doc.status in ("Approved",) else 0,
+					"disabled_reason": "Plan consistency must be Valid before release." if not is_consistent else "",
 					"confirm_required": 1,
 					"confirm_title": "Confirm Generate Work Order Proposals",
 					"confirm_summary": [
@@ -3535,7 +4348,8 @@ def get_next_actions_for_context(doctype: str, docname: str) -> dict[str, Any]:
 					"action_key": "generate_shift_schedule_proposals",
 					"method": "injection_aps.api.app.generate_shift_schedule_proposals",
 					"kwargs": {"run_name": doc.name},
-					"enabled": 1 if has_applied_wo_batch or doc.status == "Shift Proposed" else 0,
+					"enabled": 1 if is_consistent and (has_applied_wo_batch or doc.status == "Shift Proposed") else 0,
+					"disabled_reason": "Plan consistency must be Valid before release." if not is_consistent else "",
 					"confirm_required": 1,
 					"confirm_title": "Confirm Generate Day/Night Shift Proposals",
 					"confirm_summary": [
@@ -3560,6 +4374,7 @@ def get_next_actions_for_context(doctype: str, docname: str) -> dict[str, Any]:
 
 	if doctype == "APS Work Order Proposal Batch":
 		doc = frappe.get_doc(doctype, docname)
+		run_is_consistent = frappe.db.get_value("APS Planning Run", doc.planning_run, "consistency_status") == "Valid"
 		return _with_role_filtered_actions({
 			"doctype": doctype,
 			"docname": docname,
@@ -3578,7 +4393,8 @@ def get_next_actions_for_context(doctype: str, docname: str) -> dict[str, Any]:
 					"action_key": "apply_work_order_proposals",
 					"method": "injection_aps.api.app.apply_work_order_proposals",
 					"kwargs": {"batch_name": doc.name},
-					"enabled": 1 if doc.status in ("Ready For Review", "Partially Reviewed", "Reviewed") else 0,
+					"enabled": 1 if run_is_consistent and doc.status in ("Ready For Review", "Partially Reviewed", "Reviewed") else 0,
+					"disabled_reason": "Plan consistency must be Valid before formal apply." if not run_is_consistent else "",
 					"confirm_required": 1,
 					"confirm_title": "Confirm Apply Work Order Results",
 					"confirm_summary": [
@@ -3597,6 +4413,7 @@ def get_next_actions_for_context(doctype: str, docname: str) -> dict[str, Any]:
 
 	if doctype == "APS Shift Schedule Proposal Batch":
 		doc = frappe.get_doc(doctype, docname)
+		run_is_consistent = frappe.db.get_value("APS Planning Run", doc.planning_run, "consistency_status") == "Valid"
 		return _with_role_filtered_actions({
 			"doctype": doctype,
 			"docname": docname,
@@ -3615,7 +4432,8 @@ def get_next_actions_for_context(doctype: str, docname: str) -> dict[str, Any]:
 					"action_key": "apply_shift_schedule_proposals",
 					"method": "injection_aps.api.app.apply_shift_schedule_proposals",
 					"kwargs": {"batch_name": doc.name},
-					"enabled": 1 if doc.status in ("Ready For Review", "Partially Reviewed", "Reviewed") else 0,
+					"enabled": 1 if run_is_consistent and doc.status in ("Ready For Review", "Partially Reviewed", "Reviewed") else 0,
+					"disabled_reason": "Plan consistency must be Valid before formal apply." if not run_is_consistent else "",
 					"confirm_required": 1,
 					"confirm_title": "Confirm Apply Day/Night Shift Results",
 					"confirm_summary": [
@@ -4403,9 +5221,23 @@ def _get_segment_with_result(segment_name: str) -> tuple[dict[str, Any], Any, An
 			"linked_scheduling_item",
 			"actual_status",
 			"actual_completed_qty",
+			"actual_good_qty",
+			"actual_scrap_qty",
 			"actual_start_time",
 			"actual_end_time",
 			"delay_minutes",
+			"last_actual_report_time",
+			"execution_source_documents",
+			"last_execution_sync_on",
+			"production_mode",
+			"capacity_bucket_start",
+			"capacity_bucket_end",
+			"available_capacity_qty",
+			"occupied_capacity_qty",
+			"remaining_capacity_qty",
+			"load_percent",
+			"projected_late_qty",
+			"prebuildable_qty",
 			"anchor_strength",
 			"execution_anchor_source",
 			"color_code",
@@ -4888,7 +5720,7 @@ def apply_segment_split(
 	if segment.family_group:
 		_apply_family_split_for_primary(result_doc, segment, first, second, preview)
 	result_doc.save(ignore_permissions=True)
-	_refresh_result_after_manual_adjustment(result_doc.name)
+	consistency_summary = _refresh_result_after_manual_adjustment(result_doc.name)
 	if run_doc.status in ("Approved", "Work Order Proposed", "Shift Proposed", "Applied"):
 		run_doc.db_set({"status": "Planned", "approval_state": "Pending"})
 	_record_segment_adjustment(
@@ -4911,6 +5743,7 @@ def apply_segment_split(
 		"segment_name": segment_name,
 		"new_segment_name": new_child.name,
 		"split_group": preview.get("split_group"),
+		"consistency": consistency_summary,
 		"next_actions": get_next_actions_for_context("APS Planning Run", run_doc.name),
 	}
 
@@ -4983,6 +5816,7 @@ def create_or_update_downtime_window(
 	workstation: str | None = None,
 	start_time=None,
 	end_time=None,
+	available_capacity_percent: float | None = None,
 	reason: str | None = None,
 	status: str | None = "Active",
 	planning_run: str | None = None,
@@ -5002,6 +5836,8 @@ def create_or_update_downtime_window(
 	doc.workstation = workstation or doc.workstation
 	doc.start_time = get_datetime(start_time or doc.start_time)
 	doc.end_time = get_datetime(end_time or doc.end_time)
+	if available_capacity_percent is not None:
+		doc.available_capacity_percent = flt(available_capacity_percent)
 	doc.reason = reason if reason is not None else doc.reason
 	doc.status = status or doc.status or "Active"
 	doc.planning_run = planning_run or doc.planning_run
@@ -5058,10 +5894,16 @@ def _get_run_impact_segments(run_name: str) -> list[dict[str, Any]]:
 	return segment_rows
 
 
-def _build_schedule_impact_preview(run_name: str, downtime_window: str | None = None) -> dict[str, Any]:
+def _build_schedule_impact_preview(
+	run_name: str,
+	downtime_window: str | None = None,
+	windows_override: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
 	run_doc = frappe.get_doc("APS Planning Run", run_name)
 	windows = []
-	if downtime_window:
+	if windows_override is not None:
+		windows = [dict(row) for row in windows_override]
+	elif downtime_window:
 		if not frappe.db.exists("APS Downtime Window", downtime_window):
 			frappe.throw(_("APS Downtime Window {0} was not found.").format(downtime_window))
 		windows = [frappe.get_doc("APS Downtime Window", downtime_window).as_dict()]
@@ -5082,6 +5924,8 @@ def _build_schedule_impact_preview(run_name: str, downtime_window: str | None = 
 		segment_start = get_datetime(segment.start_time)
 		segment_end = get_datetime(segment.end_time)
 		duration = segment_end - segment_start
+		duration_hours = max(duration.total_seconds() / 3600, 0)
+		hourly_capacity = flt(segment.planned_qty) / duration_hours if duration_hours > 0 else 0
 		matching_windows = _get_matching_downtime_windows(windows, workstation=segment.workstation, plant_floor=segment.plant_floor, company=run_doc.company)
 		is_relevant = any(_intervals_overlap(segment_start, segment_end, row.get("start_time"), row.get("end_time")) or segment_start >= get_datetime(row.get("start_time")) for row in matching_windows)
 		current_workstation_available = availability_by_workstation.get(segment.workstation)
@@ -5106,18 +5950,17 @@ def _build_schedule_impact_preview(run_name: str, downtime_window: str | None = 
 			continue
 		new_start = max(segment_start, current_workstation_available or segment_start, current_mold_available or segment_start)
 		new_start = _shift_start_past_downtime(new_start, matching_windows)
-		new_end = new_start + duration
-		while True:
-			shifted = _shift_start_past_downtime(new_start, matching_windows)
-			if shifted != new_start:
-				new_start = shifted
-				new_end = new_start + duration
-				continue
-			overlap = next((row for row in matching_windows if _intervals_overlap(new_start, new_end, row.get("start_time"), row.get("end_time"))), None)
-			if not overlap:
-				break
-			new_start = get_datetime(overlap.get("end_time"))
-			new_end = new_start + duration
+		new_end = (
+			_estimate_end_for_qty_around_downtime(
+				start_time=new_start,
+				qty=segment.planned_qty,
+				hourly_capacity_qty=hourly_capacity,
+				downtime_windows=matching_windows,
+				horizon_end=run_doc.horizon_end,
+			)
+			if hourly_capacity > 0
+			else new_start + duration
+		)
 		if new_start != segment_start or new_end != segment_end:
 			risk = ""
 			if segment.requested_date and new_end > _get_due_datetime(segment.requested_date):
@@ -5139,6 +5982,9 @@ def _build_schedule_impact_preview(run_name: str, downtime_window: str | None = 
 					"linked_work_order_scheduling": segment.linked_work_order_scheduling,
 					"wos_action": "Move Existing" if segment.linked_work_order_scheduling else "New",
 					"delivery_risk": risk,
+					"available_capacity_percent": min(
+						[_downtime_capacity_factor(row) * 100 for row in matching_windows] or [100]
+					),
 				}
 			)
 		availability_by_workstation[segment.workstation] = new_end
@@ -5149,6 +5995,7 @@ def _build_schedule_impact_preview(run_name: str, downtime_window: str | None = 
 		"allowed": 0 if blockers else 1,
 		"planning_run": run_name,
 		"downtime_window": downtime_window,
+		"capacity_windows": windows,
 		"proposed_updates": proposed_updates,
 		"affected_count": len(proposed_updates),
 		"blockers": blockers,
@@ -5182,7 +6029,6 @@ def apply_schedule_impact(run_name: str, downtime_window: str | None = None) -> 
 		frappe.throw("\n".join(row.get("reason") or row.get("segment_name") for row in preview.get("blockers") or []))
 	run_doc = frappe.get_doc("APS Planning Run", run_name)
 	applied = 0
-	result_names = set()
 	for row in preview.get("proposed_updates") or []:
 		segment, result_doc, _run_doc = _get_segment_with_result(row.get("segment_name"))
 		frappe.db.set_value(
@@ -5210,10 +6056,7 @@ def apply_schedule_impact(run_name: str, downtime_window: str | None = None) -> 
 			payload=row,
 			status="Applied",
 		)
-		result_names.add(result_doc.name)
 		applied += 1
-	for result_name in result_names:
-		_refresh_result_after_manual_adjustment(result_name)
 	if applied and run_doc.status in ("Approved", "Work Order Proposed", "Shift Proposed", "Applied"):
 		run_doc.db_set({"status": "Planned", "approval_state": "Pending"})
 	for risk in preview.get("delivery_risks") or []:
@@ -5232,11 +6075,16 @@ def apply_schedule_impact(run_name: str, downtime_window: str | None = None) -> 
 		)
 	overlap_summary = _validate_run_segment_overlaps(run_name, persist_exceptions=True)
 	mold_overlap_summary = _validate_run_mold_overlaps(run_name, persist_exceptions=True)
+	consistency_summary = consistency.recalculate_plan_consistency(
+		run_name,
+		reason="downtime schedule impact",
+	)
 	return {
 		"planning_run": run_name,
 		"applied_count": applied,
 		"overlap_count": overlap_summary.get("count"),
 		"mold_overlap_count": mold_overlap_summary.get("count"),
+		"consistency": consistency_summary,
 		"next_actions": get_next_actions_for_context("APS Planning Run", run_name),
 	}
 
@@ -5351,7 +6199,6 @@ def apply_manual_schedule_adjustment(
 			"schedule_explanation": preview.get("schedule_explanation"),
 		}
 	)
-	_refresh_result_after_manual_adjustment(result_doc.name)
 	if is_overproduction or run_doc.status in ("Approved", "Work Order Proposed", "Shift Proposed", "Applied"):
 		run_doc.db_set({"status": "Planned", "approval_state": "Pending"})
 	if cint(allow_risk_override):
@@ -5412,6 +6259,10 @@ def apply_manual_schedule_adjustment(
 		impact_summary=manual_note or preview.get("schedule_explanation"),
 		payload=adjustment_payload,
 	)
+	consistency_summary = consistency.recalculate_plan_consistency(
+		run_doc.name,
+		reason="manual schedule adjustment applied",
+	)
 
 	return {
 		"segment_name": segment_name,
@@ -5424,34 +6275,18 @@ def apply_manual_schedule_adjustment(
 		"overproduction_qty": preview.get("overproduction_qty"),
 		"requires_overproduction_confirmation": 0,
 		"max_conflict_free_qty": preview.get("max_conflict_free_qty"),
+		"consistency": consistency_summary,
 		"next_actions": get_next_actions_for_context("APS Planning Run", run_doc.name),
 	}
 
 
 def _refresh_result_after_manual_adjustment(result_name: str):
-	primary_segments = _get_primary_segments_for_result(result_name)
-	if not primary_segments:
-		return
-	total_scheduled_qty = sum(flt(row.get("planned_qty")) for row in primary_segments)
-	selected_moulds = list(
-		dict.fromkeys(row.get("mould_reference") for row in primary_segments if row.get("mould_reference"))
-	)
-	result_doc = frappe.get_doc("APS Schedule Result", result_name)
-	unscheduled_qty = max(flt(result_doc.planned_qty) - total_scheduled_qty, 0)
-	overproduction_qty = max(total_scheduled_qty - flt(result_doc.planned_qty), 0)
-	has_quantity_variance = unscheduled_qty > 0 or overproduction_qty > 0
-	frappe.db.set_value(
-		"APS Schedule Result",
-		result_name,
-		{
-			"scheduled_qty": total_scheduled_qty,
-			"unscheduled_qty": unscheduled_qty,
-			"primary_mould_reference": selected_moulds[0] if selected_moulds else "",
-			"selected_moulds": "\n".join(selected_moulds),
-			"plant_floor": _get_primary_result_plant_floor(primary_segments, result_doc.plant_floor),
-			"status": "Risk" if has_quantity_variance else result_doc.status,
-			"risk_status": "Attention" if has_quantity_variance else result_doc.risk_status,
-		},
+	run_name = frappe.db.get_value("APS Schedule Result", result_name, "planning_run")
+	if not run_name:
+		return None
+	return consistency.recalculate_plan_consistency(
+		run_name,
+		reason="manual segment adjustment",
 	)
 
 
@@ -5492,10 +6327,12 @@ def get_schedule_result_detail(result_name: str) -> dict[str, Any]:
 			"co_product_item_code",
 			"mould_reference",
 			"segment_status",
+			"risk_status",
 			"is_locked",
 			"is_manual",
 			"schedule_explanation",
 			"risk_flags",
+			"schedule_delay_minutes",
 			"segment_note",
 			"manual_change_note",
 			"original_segment",
@@ -5507,9 +6344,23 @@ def get_schedule_result_detail(result_name: str) -> dict[str, Any]:
 			"linked_scheduling_item",
 			"actual_status",
 			"actual_completed_qty",
+			"actual_good_qty",
+			"actual_scrap_qty",
 			"actual_start_time",
 			"actual_end_time",
 			"delay_minutes",
+			"last_actual_report_time",
+			"execution_source_documents",
+			"last_execution_sync_on",
+			"production_mode",
+			"capacity_bucket_start",
+			"capacity_bucket_end",
+			"available_capacity_qty",
+			"occupied_capacity_qty",
+			"remaining_capacity_qty",
+			"load_percent",
+			"projected_late_qty",
+			"prebuildable_qty",
 		],
 		order_by="sequence_no asc, idx asc",
 	)
@@ -5542,6 +6393,85 @@ def get_schedule_result_detail(result_name: str) -> dict[str, Any]:
 	)
 	for row in segments:
 		row.update(_build_segment_capacity_snapshot(row, mold_rows, capability_map, settings))
+	from injection_aps.services import availability
+
+	fulfillment_projection = availability.get_result_fulfillment_projection(result_name)
+	production_allocations = frappe.get_all(
+		"APS Production Allocation",
+		filters={"schedule_result": result_name},
+		fields=[
+			"segment",
+			"source_stock_entry",
+			"source_stock_entry_detail",
+			"scheduling_item",
+			"output_type",
+			"allocation_method",
+			"good_qty",
+			"scrap_qty",
+			"effective_qty",
+			"is_effective",
+			"source_posting_time",
+			"reversal_reason",
+		],
+		order_by="source_posting_time desc, creation desc",
+	)
+	for row in production_allocations:
+		row["source_route"] = _build_form_route("Stock Entry", row.source_stock_entry)
+		row["scheduling_item_route"] = _build_form_route("Scheduling Item", row.scheduling_item)
+	latest_entry_by_segment = {}
+	for allocation in production_allocations:
+		if allocation.is_effective and allocation.segment and allocation.source_stock_entry:
+			latest_entry_by_segment.setdefault(allocation.segment, allocation.source_stock_entry)
+	for segment in segments:
+		ledger_entry = latest_entry_by_segment.get(segment.name)
+		if ledger_entry or segment.get("last_execution_sync_on"):
+			segment["latest_stock_entry"] = ledger_entry
+			segment["latest_stock_entry_route"] = _build_form_route("Stock Entry", ledger_entry)
+	delivery_allocations = []
+	schedule_item_names = {
+		row.get("customer_schedule_item")
+		for row in frappe.get_all(
+			"APS Production Allocation",
+			filters={"schedule_result": result_name, "customer_schedule_item": ("is", "set")},
+			fields=["customer_schedule_item"],
+		)
+		if row.get("customer_schedule_item")
+	}
+	schedule_item_names.update(
+		frappe.db.sql_list(
+			"""
+			select i.name
+			from `tabCustomer Delivery Schedule Item` i
+			inner join `tabCustomer Delivery Schedule` s on s.name = i.parent
+			where s.company = %s
+				and ifnull(s.customer, '') = ifnull(%s, '')
+				and i.item_code = %s
+				and i.schedule_date = %s
+			""",
+			(result.company, result.customer, result.item_code, getdate(result.requested_date)),
+		)
+	)
+	for schedule_item in schedule_item_names:
+		delivery_allocations.extend(
+			frappe.get_all(
+				"APS Delivery Allocation",
+				filters={"customer_schedule_item": schedule_item},
+				fields=[
+					"customer_schedule_item",
+					"source_delivery_note",
+					"source_delivery_note_item",
+					"allocation_method",
+					"effective_qty",
+					"is_return",
+					"is_effective",
+					"source_posting_time",
+					"reversal_reason",
+				],
+				order_by="source_posting_time desc, creation desc",
+			)
+		)
+	for row in delivery_allocations:
+		row["source_route"] = _build_form_route("Delivery Note", row.source_delivery_note)
 	return {
 		"result": result.as_dict(),
 		"segments": segments,
@@ -5549,6 +6479,9 @@ def get_schedule_result_detail(result_name: str) -> dict[str, Any]:
 		"source_rows": source_rows,
 		"exception_rows": exception_rows,
 		"mold_rows": mold_rows,
+		"fulfillment_projection": fulfillment_projection,
+		"production_allocations": production_allocations,
+		"delivery_allocations": delivery_allocations,
 		"routes": {
 			"planning_run": _build_form_route("APS Planning Run", result.planning_run),
 			"net_requirement": _build_form_route("APS Net Requirement", result.net_requirement),
@@ -5612,6 +6545,11 @@ def get_settings_dict() -> dict[str, Any]:
 		"planning_horizon_days": cint(settings.planning_horizon_days or 14),
 		"release_horizon_days": cint(settings.release_horizon_days or 1),
 		"freeze_days": cint(settings.freeze_days or 2),
+		"default_production_strategy": settings.default_production_strategy or "Auto Balance",
+		"capacity_bucket_mode": settings.capacity_bucket_mode or "Shift",
+		"default_max_prebuild_days": cint(settings.default_max_prebuild_days or 7),
+		"high_cancellation_risk_percent": flt(settings.high_cancellation_risk_percent or 60),
+		"require_pmc_confirmation_for_risk": cint(settings.require_pmc_confirmation_for_risk),
 		"minimum_parallel_split_qty": flt(settings.minimum_parallel_split_qty or 500),
 		"minimum_run_window_hours": flt(settings.minimum_run_window_hours or 2),
 		"default_setup_minutes": flt(settings.default_setup_minutes or 30),
@@ -5624,7 +6562,7 @@ def get_settings_dict() -> dict[str, Any]:
 		"item_color_field": settings.item_color_field or "color",
 		"item_material_field": settings.item_material_field or "material",
 		"item_safety_stock_field": settings.item_safety_stock_field or "safety_stock",
-		"item_max_stock_field": settings.item_max_stock_field or "max_stock_qty",
+		"item_max_stock_field": settings.item_max_stock_field or "custom_aps_max_stock_qty",
 		"item_min_batch_field": settings.item_min_batch_field or "min_order_qty",
 		"customer_short_name_field": settings.customer_short_name_field or "custom_customer_short_name",
 		"workstation_risk_field": settings.workstation_risk_field or "custom_production_risk_category",
@@ -5693,11 +6631,18 @@ def _normalize_schedule_rows(
 		data_start_row_no = cint(mapping.get("data_start_row_no") or (header_row_no + 1))
 		header_idx = max(header_row_no - 1, 0)
 		headers = [_normalize_header(cell) for cell in (raw_rows[header_idx] if len(raw_rows) > header_idx else [])]
-		data_rows = [
-			{headers[idx]: row[idx] for idx in range(min(len(headers), len(row))) if headers[idx]}
-			for row in raw_rows[max(data_start_row_no - 1, header_idx + 1) :]
-			if any(cell not in (None, "") for cell in row)
-		]
+		data_rows = []
+		start_index = max(data_start_row_no - 1, header_idx + 1)
+		for row_index, row in enumerate(raw_rows[start_index:], start=start_index + 1):
+			if not any(cell not in (None, "") for cell in row):
+				continue
+			normalized_row = {
+				headers[idx]: row[idx]
+				for idx in range(min(len(headers), len(row)))
+				if headers[idx]
+			}
+			normalized_row["source_excel_row"] = row_index
+			data_rows.append(normalized_row)
 		parse_context.update(
 			{
 				"sheet_name": workbook_context.get("sheet_name"),
@@ -5717,20 +6662,27 @@ def _normalize_schedule_rows_from_long_rows(data_rows: list[dict[str, Any]]) -> 
 	normalized = []
 	for idx, row in enumerate(data_rows or [], start=1):
 		item_code = row.get("item_code") or row.get("item") or row.get("item code")
-		if not item_code:
-			continue
-		item_code = _resolve_item_name(item_code) or item_code
+		item_code = (_resolve_item_name(item_code) or item_code) if item_code else ""
 		schedule_date = row.get("schedule_date") or row.get("schedule date") or row.get("delivery_date") or row.get("delivery date")
+		previous_schedule_date = (
+			row.get("previous_schedule_date")
+			or row.get("previous schedule date")
+			or row.get("old_delivery_date")
+			or row.get("old delivery date")
+		)
+		qty_value = row.get("qty") if row.get("qty") is not None else row.get("quantity")
 		normalized.append(
 			{
 				"sales_order": row.get("sales_order") or row.get("sales order"),
 				"item_code": item_code,
 				"customer_part_no": row.get("customer_part_no") or row.get("customer part no"),
-				"schedule_date": getdate(schedule_date) if schedule_date else getdate(today()),
-				"qty": flt(row.get("qty") or row.get("quantity")),
+				"schedule_date": getdate(schedule_date) if schedule_date else None,
+				"previous_schedule_date": getdate(previous_schedule_date) if previous_schedule_date else None,
+				"qty": flt(qty_value),
 				"remark": row.get("remark") or row.get("remarks"),
 				"source_origin": row.get("source_origin") or "imported",
 				"source_excel_row": cint(row.get("source_excel_row") or row.get("excel_row") or row.get("row_no") or 0) or idx,
+				"source_excel_rows": row.get("source_excel_rows"),
 				"manual_override": cint(row.get("manual_override")),
 				"manual_change_reason": row.get("manual_change_reason"),
 			}
@@ -5760,7 +6712,6 @@ def _normalize_schedule_rows_from_matrix(
 	row_type_idx = _coerce_excel_column_index(mapping.get("row_type_column"))
 	remark_idx = _coerce_excel_column_index(mapping.get("remark_column"))
 	demand_row_type_value = str(mapping.get("demand_row_type_value") or "").strip()
-	skip_zero_qty = cint(mapping.get("skip_zero_qty") if mapping.get("skip_zero_qty") is not None else 1)
 	date_columns = _resolve_matrix_date_columns(headers, mapping)
 	if item_idx is None:
 		frappe.throw(_("Please select Item Reference Column before previewing matrix schedule import."))
@@ -5787,8 +6738,6 @@ def _normalize_schedule_rows_from_matrix(
 		for date_column in date_columns:
 			column_idx = date_column["index"]
 			qty = flt(_get_row_value(row, column_idx))
-			if skip_zero_qty and abs(qty) < 0.000001:
-				continue
 			normalized.append(
 				{
 					"sales_order": sales_order,
@@ -6430,10 +7379,11 @@ def _is_schedulable_item(item_code: str | None) -> bool:
 
 
 def _schedule_row_key(row: dict[str, Any]) -> tuple:
+	schedule_date = row.get("schedule_date")
 	return (
 		row.get("sales_order") or "",
 		row.get("item_code") or "",
-		str(getdate(row.get("schedule_date"))),
+		str(getdate(schedule_date)) if schedule_date else "",
 		row.get("customer_part_no") or "",
 	)
 
@@ -6451,9 +7401,11 @@ def _detect_change_type(previous: dict[str, Any], current: dict[str, Any]) -> st
 		return "Added"
 	if previous and flt(current.get("qty")) <= 0:
 		return "Cancelled"
-	if previous and getdate(current.get("schedule_date")) < getdate(previous.get("schedule_date")):
+	previous_date = previous.get("schedule_date")
+	current_date = current.get("schedule_date")
+	if previous and previous_date and current_date and getdate(current_date) < getdate(previous_date):
 		return "Advanced"
-	if previous and getdate(current.get("schedule_date")) > getdate(previous.get("schedule_date")):
+	if previous and previous_date and current_date and getdate(current_date) > getdate(previous_date):
 		return "Delayed"
 	if flt(current.get("qty")) > flt(previous.get("qty")):
 		return "Increased"
@@ -6482,7 +7434,14 @@ def _build_demand_row(
 	remark: str | None = None,
 	customer_part_no: str | None = None,
 	is_urgent: int = 0,
+	production_strategy: str | None = None,
+	demand_confidence: str | None = None,
+	cancellation_risk_percent: float | None = None,
+	prebuild_allowed: int | None = None,
+	max_prebuild_days: int | None = None,
 ) -> frappe.model.document.Document:
+	from injection_aps.services.capacity_balance import normalize_production_strategy
+
 	settings = get_settings_dict()
 	item_code = _require_item_name(item_code)
 	if not _is_schedulable_item(item_code):
@@ -6494,6 +7453,22 @@ def _build_demand_row(
 			)
 		)
 	item_context = _get_item_context(item_code, settings)
+	item_meta = frappe.get_meta("Item")
+	item_prebuild_allowed = (
+		cint(frappe.db.get_value("Item", item_code, "custom_aps_prebuild_allowed"))
+		if item_meta.has_field("custom_aps_prebuild_allowed")
+		else 1
+	)
+	item_max_prebuild_days = (
+		cint(frappe.db.get_value("Item", item_code, "custom_aps_max_prebuild_days"))
+		if item_meta.has_field("custom_aps_max_prebuild_days")
+		else 0
+	)
+	item_cancellation_risk = (
+		flt(frappe.db.get_value("Item", item_code, "custom_aps_cancellation_risk_percent"))
+		if item_meta.has_field("custom_aps_cancellation_risk_percent")
+		else 0
+	)
 	return frappe.get_doc(
 		{
 			"doctype": "APS Demand Pool",
@@ -6505,6 +7480,20 @@ def _build_demand_row(
 			"demand_source": demand_source,
 			"demand_date": demand_date,
 			"qty": qty,
+			"production_strategy": normalize_production_strategy(
+				production_strategy,
+				default=settings.get("default_production_strategy") or "Auto Balance",
+			),
+			"demand_confidence": demand_confidence or ("Forecast" if demand_source == "Forecast" else "Confirmed"),
+			"cancellation_risk_percent": (
+				flt(cancellation_risk_percent)
+				if cancellation_risk_percent not in (None, "")
+				else item_cancellation_risk
+			),
+			"prebuild_allowed": item_prebuild_allowed if prebuild_allowed in (None, "") else cint(prebuild_allowed),
+			"max_prebuild_days": cint(
+				max_prebuild_days or item_max_prebuild_days or settings.get("default_max_prebuild_days") or 7
+			),
 			"status": "Open",
 			"priority_score": _score_demand(
 				demand_source=demand_source,
@@ -7030,16 +8019,24 @@ def _get_family_output_rows(
 	return frappe.db.sql(query, params, as_dict=True)
 
 
-def _get_primary_demand_source(item_code: str, customer: str | None, demand_date) -> str:
+def _get_primary_demand_source(
+	item_code: str,
+	customer: str | None,
+	demand_date,
+	production_strategy: str | None = None,
+) -> str:
 	item_code = _resolve_item_name(item_code) or item_code
+	filters = {
+		"item_code": item_code,
+		"customer": customer,
+		"demand_date": demand_date,
+		"status": ("!=", "Cancelled"),
+	}
+	if production_strategy:
+		filters["production_strategy"] = production_strategy
 	row = frappe.get_all(
 		"APS Demand Pool",
-		filters={
-			"item_code": item_code,
-			"customer": customer,
-			"demand_date": demand_date,
-			"status": ("!=", "Cancelled"),
-		},
+		filters=filters,
 		fields=["demand_source", "priority_score"],
 		order_by="priority_score desc, modified asc",
 		limit=1,
@@ -7138,7 +8135,12 @@ def _get_result_exception_rows(result) -> list[dict[str, Any]]:
 		order_by="modified desc",
 	)
 	relevant = []
-	relevant_names = {result.name, result.net_requirement}
+	segment_names = frappe.get_all(
+		"APS Schedule Segment",
+		filters={"parent": result.name, "parenttype": "APS Schedule Result"},
+		pluck="name",
+	)
+	relevant_names = {result.name, result.net_requirement, *segment_names}
 	for row in rows:
 		if row.get("source_name") in relevant_names:
 			diagnostic = _parse_diagnostic_json(row.get("diagnostic_json"))
@@ -8640,7 +9642,7 @@ def validate_run_mold_readiness(run_name: str, persist_exceptions: bool = False)
 	exception_names = []
 	for result in frappe.get_all(
 		"APS Schedule Result",
-		filters={"planning_run": run_name, "scheduled_qty": (">", 0)},
+		filters={"planning_run": run_name, "machine_scheduled_qty": (">", 0)},
 		fields=["name", "item_code", "customer", "primary_mould_reference"],
 	):
 		primary_segments = _get_primary_segments_for_result(result.name)
@@ -8857,6 +9859,8 @@ def _get_primary_segments_for_result(result_name: str) -> list[dict[str, Any]]:
 			"parent": result_name,
 			"parenttype": "APS Schedule Result",
 			"segment_kind": ("!=", "Family Co-Product"),
+			"segment_status": ("not in", list(consistency.INACTIVE_SEGMENT_STATUSES)),
+			"planned_qty": (">", 0),
 		},
 		fields=[
 			"name",
@@ -8870,6 +9874,8 @@ def _get_primary_segments_for_result(result_name: str) -> list[dict[str, Any]]:
 			"anchor_strength",
 			"execution_anchor_source",
 			"segment_status",
+			"risk_status",
+			"schedule_delay_minutes",
 			"linked_work_order",
 			"linked_work_order_scheduling",
 			"linked_scheduling_item",
@@ -9942,8 +10948,8 @@ def _sync_delivery_plan(run_doc) -> str | None:
 
 	result_rows = frappe.get_all(
 		"APS Schedule Result",
-		filters={"planning_run": run_doc.name, "scheduled_qty": (">", 0)},
-		fields=["customer", "item_code", "requested_date", "scheduled_qty"],
+		filters={"planning_run": run_doc.name, "machine_scheduled_qty": (">", 0)},
+		fields=["customer", "item_code", "requested_date", "machine_scheduled_qty"],
 		order_by="requested_date asc, item_code asc",
 	)
 	if not result_rows:
@@ -9966,8 +10972,8 @@ def _sync_delivery_plan(run_doc) -> str | None:
 			"item_qties": [
 				{
 					"item_code": row.item_code,
-					"planned_delivery_qty": row.scheduled_qty,
-					"staging_qty": row.scheduled_qty,
+					"planned_delivery_qty": row.machine_scheduled_qty,
+					"staging_qty": row.machine_scheduled_qty,
 					"required_arrival_date": row.requested_date,
 				}
 				for row in result_rows
@@ -9983,7 +10989,7 @@ def _sync_existing_work_orders_to_scheduling(run_doc) -> str | None:
 
 	result_rows = frappe.get_all(
 		"APS Schedule Result",
-		filters={"planning_run": run_doc.name, "scheduled_qty": (">", 0)},
+		filters={"planning_run": run_doc.name, "machine_scheduled_qty": (">", 0)},
 		fields=["name", "item_code"],
 	)
 	items = []

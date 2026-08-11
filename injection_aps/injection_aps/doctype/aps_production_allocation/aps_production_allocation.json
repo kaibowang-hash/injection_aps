@@ -1,0 +1,232 @@
+{
+ "actions": [],
+ "autoname": "hash",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "allocation_key",
+  "planning_run",
+  "schedule_result",
+  "segment",
+  "customer_schedule",
+  "customer_schedule_item",
+  "work_order",
+  "work_order_scheduling",
+  "scheduling_item",
+  "source_stock_entry",
+  "source_stock_entry_detail",
+  "source_docstatus",
+  "source_posting_time",
+  "output_type",
+  "allocation_method",
+  "source_qty",
+  "allocated_qty",
+  "good_qty",
+  "scrap_qty",
+  "effective_qty",
+  "reversed_qty",
+  "is_effective",
+  "reversal_reason",
+  "source_fingerprint",
+  "last_synced_on"
+ ],
+ "fields": [
+  {
+   "fieldname": "allocation_key",
+   "fieldtype": "Data",
+   "label": "Allocation Key",
+   "read_only": 1,
+   "reqd": 1,
+   "unique": 1
+  },
+  {
+   "fieldname": "planning_run",
+   "fieldtype": "Link",
+   "label": "Planning Run",
+   "options": "APS Planning Run",
+   "read_only": 1,
+   "reqd": 1,
+   "search_index": 1
+  },
+  {
+   "fieldname": "schedule_result",
+   "fieldtype": "Link",
+   "label": "Schedule Result",
+   "options": "APS Schedule Result",
+   "read_only": 1,
+   "reqd": 1,
+   "search_index": 1
+  },
+  {
+   "fieldname": "segment",
+   "fieldtype": "Data",
+   "label": "APS Segment",
+   "read_only": 1,
+   "reqd": 1,
+   "search_index": 1
+  },
+  {
+   "fieldname": "customer_schedule",
+   "fieldtype": "Link",
+   "label": "Customer Schedule",
+   "options": "Customer Delivery Schedule",
+   "read_only": 1
+  },
+  {
+   "fieldname": "customer_schedule_item",
+   "fieldtype": "Link",
+   "label": "Customer Schedule Item",
+   "options": "Customer Delivery Schedule Item",
+   "read_only": 1,
+   "search_index": 1
+  },
+  {
+   "fieldname": "work_order",
+   "fieldtype": "Link",
+   "label": "Work Order",
+   "options": "Work Order",
+   "read_only": 1,
+   "reqd": 1,
+   "search_index": 1
+  },
+  {
+   "fieldname": "work_order_scheduling",
+   "fieldtype": "Link",
+   "label": "Work Order Scheduling",
+   "options": "Work Order Scheduling",
+   "read_only": 1
+  },
+  {
+   "fieldname": "scheduling_item",
+   "fieldtype": "Link",
+   "label": "Scheduling Item",
+   "options": "Scheduling Item",
+   "read_only": 1,
+   "search_index": 1
+  },
+  {
+   "fieldname": "source_stock_entry",
+   "fieldtype": "Link",
+   "label": "Source Stock Entry",
+   "options": "Stock Entry",
+   "read_only": 1,
+   "reqd": 1,
+   "search_index": 1
+  },
+  {
+   "fieldname": "source_stock_entry_detail",
+   "fieldtype": "Data",
+   "label": "Source Stock Entry Detail",
+   "read_only": 1,
+   "reqd": 1,
+   "search_index": 1
+  },
+  {
+   "fieldname": "source_docstatus",
+   "fieldtype": "Int",
+   "label": "Source Docstatus",
+   "read_only": 1
+  },
+  {
+   "fieldname": "source_posting_time",
+   "fieldtype": "Datetime",
+   "label": "Source Posting Time",
+   "read_only": 1
+  },
+  {
+   "fieldname": "output_type",
+   "fieldtype": "Select",
+   "label": "Output Type",
+   "options": "Good\nScrap",
+   "read_only": 1,
+   "reqd": 1
+  },
+  {
+   "fieldname": "allocation_method",
+   "fieldtype": "Select",
+   "label": "Allocation Method",
+   "options": "Direct\nExecution Detail FIFO",
+   "read_only": 1,
+   "reqd": 1
+  },
+  {
+   "fieldname": "source_qty",
+   "fieldtype": "Float",
+   "label": "Source Qty",
+   "read_only": 1
+  },
+  {
+   "fieldname": "allocated_qty",
+   "fieldtype": "Float",
+   "label": "Allocated Qty",
+   "read_only": 1
+  },
+  {
+   "fieldname": "good_qty",
+   "fieldtype": "Float",
+   "label": "Good Qty",
+   "read_only": 1
+  },
+  {
+   "fieldname": "scrap_qty",
+   "fieldtype": "Float",
+   "label": "Scrap Qty",
+   "read_only": 1
+  },
+  {
+   "fieldname": "effective_qty",
+   "fieldtype": "Float",
+   "label": "Effective Qty",
+   "read_only": 1
+  },
+  {
+   "fieldname": "reversed_qty",
+   "fieldtype": "Float",
+   "label": "Reversed Qty",
+   "read_only": 1
+  },
+  {
+   "fieldname": "is_effective",
+   "fieldtype": "Check",
+   "label": "Effective",
+   "read_only": 1,
+   "search_index": 1
+  },
+  {
+   "fieldname": "reversal_reason",
+   "fieldtype": "Small Text",
+   "label": "Reversal Reason",
+   "read_only": 1
+  },
+  {
+   "fieldname": "source_fingerprint",
+   "fieldtype": "Data",
+   "label": "Source Fingerprint",
+   "read_only": 1
+  },
+  {
+   "fieldname": "last_synced_on",
+   "fieldtype": "Datetime",
+   "label": "Last Synced On",
+   "read_only": 1
+  }
+ ],
+ "links": [],
+ "module": "Injection APS",
+ "name": "APS Production Allocation",
+ "permissions": [
+  {
+   "read": 1,
+   "report": 1,
+   "role": "System Manager"
+  },
+  {
+   "read": 1,
+   "report": 1,
+   "role": "Manufacturing Manager"
+  }
+ ],
+ "sort_field": "source_posting_time",
+ "sort_order": "DESC",
+ "track_changes": 1
+}

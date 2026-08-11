@@ -28,7 +28,19 @@ doctype_js = {
 	"APS Shift Schedule Proposal Batch": "public/js/aps_shift_schedule_proposal_batch.js",
 	"Customer Delivery Schedule": "public/js/customer_delivery_schedule.js",
 	"APS Schedule Import Batch": "public/js/aps_schedule_import_batch.js",
+	"APS Change Request": "public/js/aps_change_request.js",
 	"APS Release Batch": "public/js/aps_release_batch.js",
+}
+
+doc_events = {
+	"Delivery Note": {
+		"on_submit": "injection_aps.services.delivery_sync.queue_delivery_sync",
+		"on_cancel": "injection_aps.services.delivery_sync.queue_delivery_sync",
+	},
+	"Stock Entry": {
+		"on_submit": "injection_aps.services.execution_sync.queue_production_sync",
+		"on_cancel": "injection_aps.services.execution_sync.queue_production_sync",
+	},
 }
 
 after_install = "injection_aps.install.after_install"

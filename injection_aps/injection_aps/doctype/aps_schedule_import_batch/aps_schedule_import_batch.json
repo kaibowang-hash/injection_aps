@@ -10,6 +10,9 @@
   "schedule_scope",
   "version_no",
   "import_strategy",
+  "duplicate_policy",
+  "import_fingerprint",
+  "schedule_reference",
   "source_type",
   "uploaded_file",
   "parser_mode",
@@ -17,7 +20,10 @@
   "status",
   "imported_rows",
   "effective_rows",
+  "previous_total_qty",
+  "post_import_total_qty",
   "change_summary",
+  "duplicate_summary",
   "mapping_json"
  ],
  "fields": [
@@ -55,7 +61,30 @@
    "fieldname": "import_strategy",
    "fieldtype": "Select",
    "label": "Import Strategy",
-   "options": "\nReplace Scope\nPartial Item Update\nAppend",
+   "options": "\nReplace Scope\nPartial Update\nAppend",
+   "read_only": 1
+  },
+  {
+   "default": "Block",
+   "fieldname": "duplicate_policy",
+   "fieldtype": "Select",
+   "label": "Duplicate Policy",
+   "options": "\nBlock\nSum",
+   "read_only": 1
+  },
+  {
+   "fieldname": "import_fingerprint",
+   "fieldtype": "Data",
+   "label": "Import Fingerprint",
+   "read_only": 1,
+   "search_index": 1,
+   "unique": 1
+  },
+  {
+   "fieldname": "schedule_reference",
+   "fieldtype": "Link",
+   "label": "Schedule Reference",
+   "options": "Customer Delivery Schedule",
    "read_only": 1
   },
   {
@@ -105,9 +134,27 @@
    "read_only": 1
   },
   {
+   "fieldname": "previous_total_qty",
+   "fieldtype": "Float",
+   "label": "Previous Total Qty",
+   "read_only": 1
+  },
+  {
+   "fieldname": "post_import_total_qty",
+   "fieldtype": "Float",
+   "label": "Post Import Total Qty",
+   "read_only": 1
+  },
+  {
    "fieldname": "change_summary",
    "fieldtype": "Small Text",
    "label": "Change Summary",
+   "read_only": 1
+  },
+  {
+   "fieldname": "duplicate_summary",
+   "fieldtype": "Long Text",
+   "label": "Duplicate Summary",
    "read_only": 1
   },
   {

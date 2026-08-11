@@ -47,6 +47,10 @@ class TestManualQuantityAdjustment(TestCase):
 
 		with (
 			patch("injection_aps.services.planning.frappe.get_precision", return_value=3),
+			patch(
+				"injection_aps.services.planning.frappe.get_system_settings",
+				return_value="Banker's Rounding (legacy)",
+			),
 			patch("injection_aps.services.planning.frappe.db.get_value", side_effect=get_value),
 		):
 			with self.assertRaises(frappe.ValidationError):
@@ -66,6 +70,10 @@ class TestManualQuantityAdjustment(TestCase):
 
 		with (
 			patch("injection_aps.services.planning.frappe.get_precision", return_value=2),
+			patch(
+				"injection_aps.services.planning.frappe.get_system_settings",
+				return_value="Banker's Rounding (legacy)",
+			),
 			patch("injection_aps.services.planning.frappe.db.get_value", side_effect=get_value),
 		):
 			self.assertEqual(planning._normalize_manual_target_qty("ITEM-1", 1.236), 1.24)

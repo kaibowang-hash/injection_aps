@@ -41,6 +41,11 @@ frappe.provide("injection_aps.ui");
 		rebuild_exceptions: ["System Manager", "GMC", "PMC", "Manufacturing Manager"],
 		edit_net_requirement: ["System Manager", "GMC", "PMC", "Manufacturing Manager"],
 		delete_net_requirement: ["System Manager", "GMC", "PMC", "Manufacturing Manager"],
+		analyze_change_request: ["System Manager", "GMC", "PMC", "Sales Manager", "Sales User", "Manufacturing Manager"],
+		confirm_change_request: ["System Manager", "GMC", "PMC", "Manufacturing Manager"],
+		approve_change_request: ["System Manager", "GMC", "Manufacturing Manager"],
+		reject_change_request: ["System Manager", "GMC", "Manufacturing Manager"],
+		apply_change_request: ["System Manager", "GMC", "Manufacturing Manager"],
 	};
 
 	injection_aps.ui.ensure_styles = function () {

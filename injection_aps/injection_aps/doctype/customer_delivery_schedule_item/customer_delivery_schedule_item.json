@@ -8,8 +8,14 @@
   "customer_part_no",
   "schedule_date",
   "qty",
+  "production_strategy",
+  "demand_confidence",
+  "cancellation_risk_percent",
+  "prebuild_allowed",
+  "max_prebuild_days",
   "source_origin",
   "source_excel_row",
+  "source_excel_rows",
   "manual_override",
   "manual_change_reason",
   "allocated_qty",
@@ -55,17 +61,53 @@
    "reqd": 1
   },
   {
+   "default": "Auto Balance",
+   "fieldname": "production_strategy",
+   "fieldtype": "Select",
+   "label": "Production Strategy",
+   "options": "Auto Balance\nForce Prebuild\nForce JIT"
+  },
+  {
+   "default": "Confirmed",
+   "fieldname": "demand_confidence",
+   "fieldtype": "Select",
+   "label": "Demand Confidence",
+   "options": "Confirmed\nForecast"
+  },
+  {
+   "fieldname": "cancellation_risk_percent",
+   "fieldtype": "Percent",
+   "label": "Cancellation Risk Percent"
+  },
+  {
+   "default": "1",
+   "fieldname": "prebuild_allowed",
+   "fieldtype": "Check",
+   "label": "Prebuild Allowed"
+  },
+  {
+   "fieldname": "max_prebuild_days",
+   "fieldtype": "Int",
+   "label": "Max Prebuild Days"
+  },
+  {
    "default": "imported",
    "fieldname": "source_origin",
    "fieldtype": "Select",
    "label": "Source Origin",
-   "options": "\nimported\nretained_existing\nmanual_added\nmanual_adjusted",
+   "options": "\nimported\nretained_existing\nsummed_duplicate\nappended\ncancelled_by_replace\nmanual_added\nmanual_adjusted",
    "read_only": 1
   },
   {
    "fieldname": "source_excel_row",
    "fieldtype": "Int",
    "label": "Source Excel Row",
+   "read_only": 1
+  },
+  {
+   "fieldname": "source_excel_rows",
+   "fieldtype": "Data",
+   "label": "Source Excel Rows",
    "read_only": 1
   },
   {
@@ -108,7 +150,7 @@
    "fieldname": "change_type",
    "fieldtype": "Select",
    "label": "Change Type",
-   "options": "\nUnchanged\nAdded\nIncreased\nReduced\nAdvanced\nDelayed\nCancelled",
+   "options": "\nUnchanged\nAdded\nAppended\nIncreased\nReduced\nAdvanced\nDelayed\nCancelled",
    "read_only": 1
   },
   {

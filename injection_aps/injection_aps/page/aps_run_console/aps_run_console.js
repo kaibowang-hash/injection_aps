@@ -87,8 +87,13 @@ class InjectionAPSRunConsole {
 			{ label: __("Approval"), fieldname: "approval_state" },
 			{ label: __("Existing WO Policy"), fieldname: "existing_work_order_policy" },
 			{ label: __("Plan Qty"), fieldname: "total_net_requirement_qty" },
-			{ label: __("Scheduled"), fieldname: "total_scheduled_qty" },
+			{ label: __("Machine Scheduled"), fieldname: "total_machine_scheduled_qty" },
+			{ label: __("Demand Covered"), fieldname: "total_demand_covered_qty" },
+			{ label: __("Overproduction"), fieldname: "total_overproduction_qty" },
 			{ label: __("Unscheduled"), fieldname: "total_unscheduled_qty" },
+			{ label: __("Produced"), fieldname: "total_produced_qty" },
+			{ label: __("Delivered"), fieldname: "total_delivered_qty" },
+			{ label: __("Consistency"), fieldname: "consistency_status" },
 			{ label: __("Exceptions"), fieldname: "exception_count" },
 			{ label: __("Exec"), fieldname: "execution_health" },
 			{ label: __("Next Step"), fieldname: "next_step" },
@@ -114,6 +119,12 @@ class InjectionAPSRunConsole {
 				if (column.fieldname === "approval_state") {
 					return injection_aps.ui.pill(injection_aps.ui.translate(value), value === "Approved" ? "green" : "orange");
 				}
+				if (column.fieldname === "consistency_status") {
+					return injection_aps.ui.pill(
+						injection_aps.ui.translate(value || "Unchecked"),
+						value === "Valid" ? "green" : value === "Invalid" ? "red" : "orange"
+					);
+				}
 				if (column.fieldname === "existing_work_order_policy") {
 					return injection_aps.ui.escape(injection_aps.ui.get_existing_work_order_policy_label(value));
 				}
@@ -123,7 +134,15 @@ class InjectionAPSRunConsole {
 				if (column.fieldname === "selected_plant_floor_summary") {
 					return injection_aps.ui.escape(value || row.plant_floor || "");
 				}
-				if (["total_net_requirement_qty", "total_scheduled_qty", "total_unscheduled_qty"].includes(column.fieldname)) {
+				if ([
+					"total_net_requirement_qty",
+					"total_machine_scheduled_qty",
+					"total_demand_covered_qty",
+					"total_overproduction_qty",
+					"total_unscheduled_qty",
+					"total_produced_qty",
+					"total_delivered_qty",
+				].includes(column.fieldname)) {
 					return frappe.format(value || 0, { fieldtype: "Float" });
 				}
 				if (column.fieldname === "next_step") {

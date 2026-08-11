@@ -190,6 +190,45 @@ class TestCustomerScheduleProgress(FrappeTestCase):
 		assert row["production_covered_qty"] == 50
 		assert row["status"] == "On Track"
 
+	def test_fulfillment_metrics_do_not_duplicate_a_later_demand_used_as_fifo_supply(self):
+		row = {
+			"customer": self.customer_a,
+			"item_code": self.item,
+			"schedule_date": add_days(today(), 2),
+			"required_qty": 100,
+			"delivered_qty": 20,
+			"result_names": ["RESULT-EARLY", "RESULT-LATER"],
+		}
+		projections = [
+			{
+				"result": "RESULT-EARLY",
+				"customer": self.customer_a,
+				"item_code": self.item,
+				"requested_date": add_days(today(), 2),
+				"prebuild_qty": 30,
+				"jit_qty": 70,
+				"actual_good_qty": 45,
+				"current_deliverable_qty": 25,
+			},
+			{
+				"result": "RESULT-LATER",
+				"customer": self.customer_a,
+				"item_code": self.item,
+				"requested_date": add_days(today(), 3),
+				"prebuild_qty": 30,
+				"jit_qty": 0,
+				"actual_good_qty": 30,
+				"current_deliverable_qty": 0,
+			},
+		]
+
+		planning._attach_customer_schedule_fulfillment(row, projections)
+
+		assert row["prebuild_qty"] == 30
+		assert row["jit_qty"] == 70
+		assert row["actual_good_qty"] == 45
+		assert row["current_deliverable_qty"] == 25
+
 	def test_api_requires_read_access_only(self):
 		from injection_aps.api import app
 

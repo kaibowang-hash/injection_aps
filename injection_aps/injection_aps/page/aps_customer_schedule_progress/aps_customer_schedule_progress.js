@@ -151,8 +151,13 @@ class InjectionAPSCustomerScheduleProgress {
 		injection_aps.ui.render_cards(this.summary, [
 			{ label: __("Rows"), value: summary.rows || 0 },
 			{ label: __("Schedule Qty"), value: injection_aps.ui.format_number(summary.required_qty || 0) },
+			{ label: __("Actual Good"), value: injection_aps.ui.format_number(summary.actual_good_qty || 0) },
+			{ label: __("Current Deliverable"), value: injection_aps.ui.format_number(summary.current_deliverable_qty || 0) },
+			{ label: __("Delivered", null, "Injection APS"), value: injection_aps.ui.format_number(summary.delivered_qty || 0) },
 			{ label: __("Stock Covered"), value: injection_aps.ui.format_number(summary.stock_covered_qty || 0) },
 			{ label: __("Production Covered"), value: injection_aps.ui.format_number(summary.production_covered_qty || 0) },
+			{ label: __("Prebuild / JIT"), value: `${injection_aps.ui.format_number(summary.prebuild_qty || 0)} / ${injection_aps.ui.format_number(summary.jit_qty || 0)}` },
+			{ label: __("Cancel Stock Risk"), value: injection_aps.ui.format_number(summary.cancellation_inventory_risk_qty || 0) },
 			{ label: __("Uncovered"), value: injection_aps.ui.format_number(summary.uncovered_qty || 0) },
 			{ label: __("Risk / Late"), value: `${summary.risk_rows || 0} / ${summary.late_rows || 0}` },
 		]);
@@ -167,8 +172,19 @@ class InjectionAPSCustomerScheduleProgress {
 			{ label: __("Item"), fieldname: "item_code" },
 			{ label: __("Customer Part No"), fieldname: "customer_part_no" },
 			{ label: __("Delivery Date"), fieldname: "schedule_date" },
+			{ label: __("Strategy"), fieldname: "production_strategy" },
 			{ label: __("Qty"), fieldname: "required_qty", fieldtype: "Float" },
+			{ label: __("Prebuild"), fieldname: "prebuild_qty", fieldtype: "Float" },
+			{ label: __("JIT"), fieldname: "jit_qty", fieldtype: "Float" },
+			{ label: __("Early Days"), fieldname: "early_days", fieldtype: "Float" },
+			{ label: __("Actual Good"), fieldname: "actual_good_qty", fieldtype: "Float" },
+			{ label: __("Scrap"), fieldname: "scrap_qty", fieldtype: "Float" },
+			{ label: __("Deliverable"), fieldname: "current_deliverable_qty", fieldtype: "Float" },
 			{ label: __("Delivered", null, "Injection APS"), fieldname: "delivered_qty", fieldtype: "Float" },
+			{ label: __("Peak Inventory"), fieldname: "projected_peak_inventory_qty", fieldtype: "Float" },
+			{ label: __("Late Before / After"), fieldname: "late_balance" },
+			{ label: __("Cancel Stock Risk"), fieldname: "cancellation_inventory_risk_qty", fieldtype: "Float" },
+			{ label: __("Last Report"), fieldname: "last_actual_report_time" },
 			{ label: __("Stock"), fieldname: "stock_covered_qty", fieldtype: "Float" },
 			{ label: __("Production"), fieldname: "production_covered_qty", fieldtype: "Float" },
 			{ label: __("Uncovered"), fieldname: "uncovered_qty", fieldtype: "Float" },
@@ -209,8 +225,17 @@ class InjectionAPSCustomerScheduleProgress {
 		if (column.fieldname === "schedule_date") {
 			return injection_aps.ui.format_date(value);
 		}
-		if (["required_qty", "delivered_qty", "stock_covered_qty", "production_covered_qty", "uncovered_qty"].includes(column.fieldname)) {
+		if (["required_qty", "prebuild_qty", "jit_qty", "early_days", "actual_good_qty", "scrap_qty", "current_deliverable_qty", "delivered_qty", "projected_peak_inventory_qty", "cancellation_inventory_risk_qty", "stock_covered_qty", "production_covered_qty", "uncovered_qty"].includes(column.fieldname)) {
 			return injection_aps.ui.escape(injection_aps.ui.format_number(value || 0));
+		}
+		if (column.fieldname === "production_strategy") {
+			return injection_aps.ui.pill(injection_aps.ui.translate(value || "Auto Balance"), value === "Force JIT" ? "blue" : value === "Force Prebuild" ? "orange" : "green");
+		}
+		if (column.fieldname === "late_balance") {
+			return `${injection_aps.ui.escape(injection_aps.ui.format_number(row.late_qty_before_balance || 0))} / ${injection_aps.ui.escape(injection_aps.ui.format_number(row.late_qty_after_balance || 0))}`;
+		}
+		if (column.fieldname === "last_actual_report_time") {
+			return injection_aps.ui.format_datetime(value);
 		}
 		if (column.fieldname === "projected_completion_time") {
 			return injection_aps.ui.format_datetime(value);

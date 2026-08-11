@@ -14,11 +14,39 @@
   "item_code",
   "requested_date",
   "demand_source",
+  "production_strategy",
+  "demand_confidence",
+  "cancellation_risk_percent",
+  "prebuild_allowed",
+  "max_prebuild_days",
   "planned_qty",
+  "machine_scheduled_qty",
+  "demand_covered_qty",
+  "overproduction_qty",
   "scheduled_qty",
   "unscheduled_qty",
+  "produced_qty",
+  "good_produced_qty",
+  "scrap_qty",
+  "delivered_qty",
+  "prebuild_qty",
+  "jit_qty",
+  "early_days",
+  "projected_peak_inventory_qty",
+  "late_qty_before_balance",
+  "late_qty_after_balance",
+  "current_deliverable_qty",
+  "prebuild_inventory_qty",
+  "cancellation_inventory_risk_qty",
+  "last_actual_report_time",
+  "execution_source_documents",
+  "capacity_balance_status",
+  "capacity_balance_requires_confirmation",
+  "capacity_balance_details",
   "status",
   "risk_status",
+  "projected_completion_time",
+  "schedule_delay_minutes",
   "flow_step",
   "next_step_hint",
   "blocking_reason",
@@ -104,7 +132,42 @@
    "fieldname": "demand_source",
    "fieldtype": "Select",
    "label": "Demand Source",
-   "options": "\nCustomer Delivery Schedule\nSales Order Backlog\nSafety Stock\nUrgent Order\nTrial Production\nComplaint Replenishment",
+   "options": "\nCustomer Delivery Schedule\nForecast\nSales Order Backlog\nSafety Stock\nUrgent Order\nTrial Production\nComplaint Replenishment",
+   "read_only": 1
+  },
+  {
+   "default": "Auto Balance",
+   "fieldname": "production_strategy",
+   "fieldtype": "Select",
+   "label": "Production Strategy",
+   "options": "Auto Balance\nForce Prebuild\nForce JIT",
+   "read_only": 1
+  },
+  {
+   "default": "Confirmed",
+   "fieldname": "demand_confidence",
+   "fieldtype": "Select",
+   "label": "Demand Confidence",
+   "options": "Confirmed\nForecast",
+   "read_only": 1
+  },
+  {
+   "fieldname": "cancellation_risk_percent",
+   "fieldtype": "Percent",
+   "label": "Cancellation Risk Percent",
+   "read_only": 1
+  },
+  {
+   "default": "1",
+   "fieldname": "prebuild_allowed",
+   "fieldtype": "Check",
+   "label": "Prebuild Allowed",
+   "read_only": 1
+  },
+  {
+   "fieldname": "max_prebuild_days",
+   "fieldtype": "Int",
+   "label": "Max Prebuild Days",
    "read_only": 1
   },
   {
@@ -116,14 +179,143 @@
   {
    "fieldname": "scheduled_qty",
    "fieldtype": "Float",
+   "hidden": 1,
+   "label": "Scheduled Qty (Legacy Mirror)",
+   "read_only": 1
+  },
+  {
+   "fieldname": "machine_scheduled_qty",
+   "fieldtype": "Float",
    "in_list_view": 1,
-   "label": "Scheduled Qty",
+   "label": "Machine Scheduled Qty",
+   "read_only": 1
+  },
+  {
+   "fieldname": "demand_covered_qty",
+   "fieldtype": "Float",
+   "label": "Demand Covered Qty",
+   "read_only": 1
+  },
+  {
+   "fieldname": "overproduction_qty",
+   "fieldtype": "Float",
+   "label": "Overproduction Qty",
    "read_only": 1
   },
   {
    "fieldname": "unscheduled_qty",
    "fieldtype": "Float",
    "label": "Unscheduled Qty",
+   "read_only": 1
+  },
+  {
+   "fieldname": "produced_qty",
+   "fieldtype": "Float",
+   "label": "Produced Qty",
+   "read_only": 1
+  },
+  {
+   "fieldname": "good_produced_qty",
+   "fieldtype": "Float",
+   "label": "Good Produced Qty",
+   "read_only": 1
+  },
+  {
+   "fieldname": "scrap_qty",
+   "fieldtype": "Float",
+   "label": "Scrap Qty",
+   "read_only": 1
+  },
+  {
+   "fieldname": "delivered_qty",
+   "fieldtype": "Float",
+   "label": "Delivered Qty",
+   "read_only": 1
+  },
+  {
+   "fieldname": "prebuild_qty",
+   "fieldtype": "Float",
+   "label": "Prebuild Qty",
+   "read_only": 1
+  },
+  {
+   "fieldname": "jit_qty",
+   "fieldtype": "Float",
+   "label": "JIT Qty",
+   "read_only": 1
+  },
+  {
+   "fieldname": "early_days",
+   "fieldtype": "Float",
+   "label": "Early Days",
+   "read_only": 1
+  },
+  {
+   "fieldname": "projected_peak_inventory_qty",
+   "fieldtype": "Float",
+   "label": "Projected Peak Inventory Qty",
+   "read_only": 1
+  },
+  {
+   "fieldname": "late_qty_before_balance",
+   "fieldtype": "Float",
+   "label": "Late Qty Before Balance",
+   "read_only": 1
+  },
+  {
+   "fieldname": "late_qty_after_balance",
+   "fieldtype": "Float",
+   "label": "Late Qty After Balance",
+   "read_only": 1
+  },
+  {
+   "fieldname": "current_deliverable_qty",
+   "fieldtype": "Float",
+   "label": "Current Deliverable Qty",
+   "read_only": 1
+  },
+  {
+   "fieldname": "prebuild_inventory_qty",
+   "fieldtype": "Float",
+   "label": "Prebuild Inventory Qty",
+   "read_only": 1
+  },
+  {
+   "fieldname": "cancellation_inventory_risk_qty",
+   "fieldtype": "Float",
+   "label": "Cancellation Inventory Risk Qty",
+   "read_only": 1
+  },
+  {
+   "fieldname": "last_actual_report_time",
+   "fieldtype": "Datetime",
+   "label": "Last Actual Report Time",
+   "read_only": 1
+  },
+  {
+   "fieldname": "execution_source_documents",
+   "fieldtype": "Long Text",
+   "label": "Execution Source Documents",
+   "read_only": 1
+  },
+  {
+   "default": "Not Analyzed",
+   "fieldname": "capacity_balance_status",
+   "fieldtype": "Select",
+   "label": "Capacity Balance Status",
+   "options": "Not Analyzed\nBalanced\nSuggestion\nConfirmation Required\nBlocked",
+   "read_only": 1
+  },
+  {
+   "fieldname": "capacity_balance_requires_confirmation",
+   "fieldtype": "Check",
+   "label": "Capacity Balance Requires Confirmation",
+   "read_only": 1
+  },
+  {
+   "fieldname": "capacity_balance_details",
+   "fieldtype": "Long Text",
+   "label": "Capacity Balance Details",
    "read_only": 1
   },
   {
@@ -143,6 +335,18 @@
    "options": "\nNormal\nAttention\nCritical\nBlocked",
    "read_only": 1,
    "search_index": 1
+  },
+  {
+   "fieldname": "projected_completion_time",
+   "fieldtype": "Datetime",
+   "label": "Projected Completion Time",
+   "read_only": 1
+  },
+  {
+   "fieldname": "schedule_delay_minutes",
+   "fieldtype": "Float",
+   "label": "Schedule Delay Minutes",
+   "read_only": 1
   },
   {
    "fieldname": "flow_step",

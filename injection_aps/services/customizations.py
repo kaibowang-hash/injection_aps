@@ -19,6 +19,9 @@ APS_TRANSACTION_DOCTYPES = (
 	"APS Work Order Proposal Batch",
 	"APS Shift Schedule Proposal Batch",
 	"APS Change Request",
+	"APS Change Application Log",
+	"APS Production Allocation",
+	"APS Delivery Allocation",
 	"APS Downtime Window",
 	"APS Segment Adjustment",
 	"APS Release Batch",
@@ -37,6 +40,10 @@ def ensure_default_settings():
 	settings.planning_horizon_days = settings.planning_horizon_days or 14
 	settings.release_horizon_days = settings.release_horizon_days or 1
 	settings.freeze_days = settings.freeze_days or 2
+	settings.default_production_strategy = settings.default_production_strategy or "Auto Balance"
+	settings.capacity_bucket_mode = settings.capacity_bucket_mode or "Shift"
+	settings.default_max_prebuild_days = settings.default_max_prebuild_days or 7
+	settings.high_cancellation_risk_percent = settings.high_cancellation_risk_percent or 60
 	settings.minimum_parallel_split_qty = settings.minimum_parallel_split_qty or 500
 	settings.minimum_run_window_hours = settings.minimum_run_window_hours or 2
 	settings.default_setup_minutes = settings.default_setup_minutes or 30
@@ -49,7 +56,8 @@ def ensure_default_settings():
 	settings.item_color_field = settings.item_color_field or "color"
 	settings.item_material_field = settings.item_material_field or "material"
 	settings.item_safety_stock_field = settings.item_safety_stock_field or "safety_stock"
-	settings.item_max_stock_field = settings.item_max_stock_field or "max_stock_qty"
+	if not settings.item_max_stock_field or settings.item_max_stock_field == "max_stock_qty":
+		settings.item_max_stock_field = "custom_aps_max_stock_qty"
 	settings.item_min_batch_field = settings.item_min_batch_field or "min_order_qty"
 	settings.customer_short_name_field = settings.customer_short_name_field or "custom_customer_short_name"
 	settings.workstation_risk_field = settings.workstation_risk_field or "custom_production_risk_category"
@@ -72,9 +80,24 @@ def ensure_default_settings():
 
 def ensure_seed_records():
 	_ensure_default_freeze_rule()
+	_normalize_change_request_types()
 	sync_machine_capabilities_from_workstations()
 	backfill_schedule_scope_defaults()
 	frappe.clear_cache()
+
+
+def _normalize_change_request_types():
+	if not frappe.db.exists("DocType", "APS Change Request"):
+		return
+	for previous, current in {
+		"Insert Order": "Urgent Order",
+		"Advance": "Pull In",
+		"Delay": "Push Out",
+	}.items():
+		frappe.db.sql(
+			"update `tabAPS Change Request` set change_type = %s where change_type = %s",
+			(current, previous),
+		)
 
 
 def ensure_safe_to_uninstall():
@@ -226,8 +249,13 @@ def backfill_schedule_scope_defaults():
 			update `tabCustomer Delivery Schedule`
 			set
 				schedule_scope = ifnull(nullif(version_no, ''), 'Default Scope'),
-				import_strategy = ifnull(nullif(import_strategy, ''), 'Replace Scope')
-			where ifnull(schedule_scope, '') = '' or ifnull(import_strategy, '') = ''
+				import_strategy = case
+					when import_strategy = 'Partial Item Update' then 'Partial Update'
+					else ifnull(nullif(import_strategy, ''), 'Replace Scope')
+				end
+			where ifnull(schedule_scope, '') = ''
+				or ifnull(import_strategy, '') = ''
+				or import_strategy = 'Partial Item Update'
 			"""
 		)
 	if frappe.db.exists("DocType", "APS Schedule Import Batch"):
@@ -236,8 +264,13 @@ def backfill_schedule_scope_defaults():
 			update `tabAPS Schedule Import Batch`
 			set
 				schedule_scope = ifnull(nullif(version_no, ''), 'Default Scope'),
-				import_strategy = ifnull(nullif(import_strategy, ''), 'Replace Scope')
-			where ifnull(schedule_scope, '') = '' or ifnull(import_strategy, '') = ''
+				import_strategy = case
+					when import_strategy = 'Partial Item Update' then 'Partial Update'
+					else ifnull(nullif(import_strategy, ''), 'Replace Scope')
+				end
+			where ifnull(schedule_scope, '') = ''
+				or ifnull(import_strategy, '') = ''
+				or import_strategy = 'Partial Item Update'
 			"""
 		)
 	if frappe.db.exists("DocType", "APS Demand Delta") and frappe.db.exists("DocType", "Customer Delivery Schedule"):

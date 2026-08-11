@@ -1,15 +1,27 @@
-frappe.require("/assets/injection_aps/js/injection_aps_shared.js");
+const PLANNING_RUN_SHARED_READY = frappe.require("/assets/injection_aps/js/injection_aps_shared.js");
 
 frappe.ui.form.on("APS Planning Run", {
 	async refresh(frm) {
 		if (frm.is_new()) {
 			return;
 		}
+		await PLANNING_RUN_SHARED_READY;
 		injection_aps.ui.ensure_styles();
 		await render_flow(frm);
+		render_quantity_indicators(frm);
 		add_actions(frm);
 	},
 });
+
+function render_quantity_indicators(frm) {
+	frm.dashboard.add_indicator(`${__("Prebuild")}: ${injection_aps.ui.format_number(frm.doc.total_prebuild_qty || 0)}`, "orange");
+	frm.dashboard.add_indicator(`${__("JIT")}: ${injection_aps.ui.format_number(frm.doc.total_jit_qty || 0)}`, "blue");
+	frm.dashboard.add_indicator(`${__("Current Deliverable")}: ${injection_aps.ui.format_number(frm.doc.total_current_deliverable_qty || 0)}`, "green");
+	frm.dashboard.add_indicator(`${__("Actual / Scrap")}: ${injection_aps.ui.format_number(frm.doc.total_produced_qty || 0)} / ${injection_aps.ui.format_number(frm.doc.total_scrap_qty || 0)}`, "gray");
+	if (Number(frm.doc.total_cancellation_inventory_risk_qty || 0) > 0) {
+		frm.dashboard.add_indicator(`${__("Cancel Stock Risk")}: ${injection_aps.ui.format_number(frm.doc.total_cancellation_inventory_risk_qty || 0)}`, "red");
+	}
+}
 
 async function render_flow(frm) {
 	try {
@@ -83,6 +95,72 @@ function add_actions(frm) {
 			injection_aps.ui.show_warnings(result, __("Planning Warnings"), "preflight_warning_count");
 			await frm.reload_doc();
 		}, null, "primary", "run_trial");
+	}
+
+	if (["Draft", "Planned", "Risk"].includes(frm.doc.status || "Draft") && frm.doc.capacity_balance_status !== "Applied") {
+		addButton("Analyze Capacity", async () => {
+			const response = await injection_aps.ui.xcall(
+				{
+					message: __("Analyzing shift capacity..."),
+					success_message: __("Capacity proposal refreshed."),
+					busy_key: `planning-capacity-analyze:${frm.doc.name}`,
+				},
+				"injection_aps.api.app.analyze_capacity_balance",
+				{ run_name: frm.doc.name }
+			);
+			if (response) {
+				await frm.reload_doc();
+			}
+		}, "Capacity", null, "analyze_capacity_balance");
+	}
+
+	if (frm.doc.capacity_balance_status === "Confirmation Required" && !frm.doc.capacity_balance_confirmed_by) {
+		addButton("PMC Confirm", async () => {
+			const response = await confirmAndCall(
+				{ action_key: "confirm_capacity_balance", confirm_required: 1 },
+				{
+					title: __("Confirm Capacity Suggestion"),
+					summary_lines: [
+						__("Prebuild Qty: {0}").replace("{0}", injection_aps.ui.format_number(frm.doc.total_prebuild_qty || 0)),
+						__("Forecast, cancellation, material, or inventory risk requires PMC confirmation."),
+					],
+					message: __("Recording PMC confirmation..."),
+					success_message: __("Capacity proposal confirmed."),
+					busy_key: `planning-capacity-confirm:${frm.doc.name}`,
+				},
+				"injection_aps.api.app.confirm_capacity_balance",
+				{ run_name: frm.doc.name }
+			);
+			if (response) {
+				await frm.reload_doc();
+			}
+		}, "Capacity", null, "confirm_capacity_balance");
+	}
+
+	if (
+		frm.doc.capacity_balance_status === "Suggestion Ready" ||
+		(frm.doc.capacity_balance_status === "Confirmation Required" && frm.doc.capacity_balance_confirmed_by)
+	) {
+		addButton("Apply Balance", async () => {
+			const response = await confirmAndCall(
+				{ action_key: "apply_capacity_balance", confirm_required: 1 },
+				{
+					title: __("Apply Capacity Balance"),
+					summary_lines: [
+						__("Prebuild Qty: {0}").replace("{0}", injection_aps.ui.format_number(frm.doc.total_prebuild_qty || 0)),
+						__("JIT Qty: {0}").replace("{0}", injection_aps.ui.format_number(frm.doc.total_jit_qty || 0)),
+					],
+					message: __("Applying capacity balance..."),
+					success_message: __("Capacity balance applied."),
+					busy_key: `planning-capacity-apply:${frm.doc.name}`,
+				},
+				"injection_aps.api.app.apply_capacity_balance",
+				{ run_name: frm.doc.name }
+			);
+			if (response) {
+				await frm.reload_doc();
+			}
+		}, "Capacity", "primary", "apply_capacity_balance");
 	}
 
 	if (frm.doc.approval_state !== "Approved") {
