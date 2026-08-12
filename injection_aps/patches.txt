@@ -4,3 +4,4 @@
 injection_aps.patches.v0_0_2.backfill_existing_work_order_policy
 injection_aps.patches.v0_0_2.upgrade_applied_fulfillment_baseline_v3
 injection_aps.patches.v0_0_2.migrate_aps_food_grade_field
+injection_aps.patches.v0_0_2.retire_stale_net_requirement_exception_sources

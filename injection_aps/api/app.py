@@ -228,17 +228,37 @@ def _has_linked_document_access(doctype, docname, *, access_cache=None):
 	"""Check a linked source, including child rows that inherit parent permission."""
 	if not doctype or not docname:
 		return True
-	if doctype == "Customer Delivery Schedule Item":
-		parent = frappe.db.get_value(doctype, docname, "parent")
-		return bool(parent) and _has_scoped_document_access(
-			"Customer Delivery Schedule", parent, access_cache=access_cache
-		)
-	if doctype == "Scheduling Item":
-		parent = frappe.db.get_value(doctype, docname, "parent")
-		return bool(parent) and _has_document_access("Work Order Scheduling", parent, ptype="read")
-	if doctype in APS_CONTEXT_DOCTYPES:
-		return _has_scoped_document_access(doctype, docname, access_cache=access_cache)
-	return _has_document_access(doctype, docname, ptype="read")
+	cache = access_cache if access_cache is not None else {}
+	cache_key = ("linked", doctype, docname, "read")
+	if cache_key in cache:
+		return cache[cache_key]
+
+	# Exception sources are audit links, not durable business identities.  A source
+	# may be retired between the list query and this permission check (notably an
+	# APS Net Requirement during a rebuild).  Missing sources must make the linked
+	# row inaccessible instead of letting ``frappe.has_permission(doc=name)`` raise
+	# DoesNotExistError and break the whole workbench for non-Administrator users.
+	try:
+		if not frappe.db.exists(doctype, docname):
+			cache[cache_key] = False
+			return False
+		if doctype == "Customer Delivery Schedule Item":
+			parent = frappe.db.get_value(doctype, docname, "parent")
+			allowed = bool(parent) and _has_scoped_document_access(
+				"Customer Delivery Schedule", parent, access_cache=cache
+			)
+		elif doctype == "Scheduling Item":
+			parent = frappe.db.get_value(doctype, docname, "parent")
+			allowed = bool(parent) and _has_document_access("Work Order Scheduling", parent, ptype="read")
+		elif doctype in APS_CONTEXT_DOCTYPES:
+			allowed = _has_scoped_document_access(doctype, docname, access_cache=cache)
+		else:
+			allowed = _has_document_access(doctype, docname, ptype="read")
+	except frappe.DoesNotExistError:
+		# Covers the narrow race where the source is deleted after ``exists``.
+		allowed = False
+	cache[cache_key] = bool(allowed)
+	return cache[cache_key]
 
 
 def _get_document_scope(doctype, docname):

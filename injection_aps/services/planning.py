@@ -2523,6 +2523,7 @@ def rebuild_demand_pool(company: str | None = None) -> dict[str, Any]:
 			_("Company is required for an APS Demand Pool rebuild.", context="Injection APS"),
 			frappe.ValidationError,
 		)
+	_lock_company_for_aps_planning(company)
 	reference_repair = repair_item_references(company=company, include_standard=0, include_aps=1)
 	_delete_system_generated_rows("APS Demand Pool", company=company)
 
@@ -2648,6 +2649,14 @@ def _schedule_row_open_demand_qty(row: dict[str, Any] | Any) -> float:
 	return max(flt(balance_qty), 0)
 
 
+def _lock_company_for_aps_planning(company: str):
+	"""Serialize company-wide generated demand and planning mutations."""
+	frappe.db.sql(
+		"select name from `tabCompany` where name = %s for update",
+		(company,),
+	)
+
+
 def rebuild_net_requirements(
 	company: str | None = None,
 	existing_work_order_policy: str | None = None,
@@ -2659,6 +2668,7 @@ def rebuild_net_requirements(
 			frappe.ValidationError,
 		)
 	existing_work_order_policy = _normalize_existing_work_order_policy(existing_work_order_policy)
+	_lock_company_for_aps_planning(company)
 	reference_repair = repair_item_references(company=company, include_standard=0, include_aps=1)
 	_delete_system_generated_rows("APS Net Requirement", company=company)
 
@@ -3229,6 +3239,11 @@ def run_planning_run(
 		required=True,
 	)
 	run_doc.company = run_doc.company or company
+	# Acquire the shared company lock before an existing Run is saved.  Keeping the
+	# Company -> Run order aligns recalculation with capacity/release transactions
+	# and ensures another rebuild cannot create NR-backed exceptions in the delete
+	# window below.
+	_lock_company_for_aps_planning(run_doc.company)
 	run_doc.planning_date = run_doc.planning_date or today()
 	run_doc.horizon_days = horizon_days
 	run_doc.horizon_start = horizon_start
@@ -15547,6 +15562,84 @@ def _get_work_order_warehouse_values(
 	return values
 
 
+def _retire_net_requirement_exception_sources(
+	net_requirement_names=None,
+	*,
+	exception_names=None,
+	reason: str = "APS Net Requirement rebuild",
+):
+	"""Resolve and detach exception links before transient NR names are recycled.
+
+	APS Net Requirement rows are generated output and their naming-series values can
+	be reused after deletion.  Keeping a Dynamic Link to the old name can therefore
+	either break a workbench when the row is absent or, worse, point an old exception
+	at an unrelated requirement created by a later rebuild.  Preserve the original
+	identity in diagnostic JSON and Version history, but remove the live link.
+	"""
+	if not frappe.db.exists("DocType", "APS Exception Log"):
+		return {"retired": [], "planning_runs": []}
+
+	net_requirement_names = sorted({name for name in net_requirement_names or [] if name})
+	exception_names = sorted({name for name in exception_names or [] if name})
+	if not net_requirement_names and not exception_names:
+		return {"retired": [], "planning_runs": []}
+
+	filters = {"source_doctype": "APS Net Requirement"}
+	if exception_names:
+		filters["name"] = ("in", exception_names)
+	else:
+		filters["source_name"] = ("in", net_requirement_names)
+	rows = frappe.get_all(
+		"APS Exception Log",
+		filters=filters,
+		fields=["name", "planning_run", "source_name"],
+		limit_page_length=0,
+	)
+	allowed_sources = set(net_requirement_names)
+	retired = []
+	planning_runs = set()
+	retired_on = now_datetime()
+	try:
+		retired_by = frappe.session.user or "Administrator"
+	except (AttributeError, RuntimeError):
+		retired_by = "Administrator"
+
+	for row in rows:
+		doc = frappe.get_doc("APS Exception Log", row.name)
+		if doc.get("source_doctype") != "APS Net Requirement" or not doc.get("source_name"):
+			continue
+		if allowed_sources and doc.get("source_name") not in allowed_sources:
+			continue
+		diagnostic = _parse_diagnostic_json(doc.get("diagnostic_json"))
+		diagnostic["source_retirement"] = {
+			"source_doctype": doc.get("source_doctype"),
+			"source_name": doc.get("source_name"),
+			"reason": reason,
+			"retired_on": str(retired_on),
+			"retired_by": retired_by,
+		}
+		if doc.get("status") in (None, "", "Open", "Reviewed"):
+			doc.status = "Resolved"
+		doc.diagnostic_json = _serialize_diagnostic_json(diagnostic=diagnostic)
+		doc.source_name = None
+		doc.save(ignore_permissions=True)
+		retired.append(doc.name)
+		if doc.get("planning_run"):
+			planning_runs.add(doc.get("planning_run"))
+
+	for run_name in sorted(planning_runs):
+		if not frappe.db.exists("APS Planning Run", run_name):
+			continue
+		frappe.db.set_value(
+			"APS Planning Run",
+			run_name,
+			"exception_count",
+			frappe.db.count("APS Exception Log", {"planning_run": run_name, "status": "Open"}),
+			update_modified=False,
+		)
+	return {"retired": retired, "planning_runs": sorted(planning_runs)}
+
+
 def _delete_system_generated_rows(doctype: str, company: str | None = None):
 	if not frappe.db.exists("DocType", doctype):
 		return
@@ -15554,15 +15647,20 @@ def _delete_system_generated_rows(doctype: str, company: str | None = None):
 	if company and frappe.get_meta(doctype).has_field("company"):
 		filters["company"] = company
 	names = frappe.get_all(doctype, filters=filters, pluck="name")
-	if doctype == "APS Net Requirement" and names and frappe.db.exists("DocType", "APS Schedule Result"):
-		frappe.db.sql(
-			"""
-			update `tabAPS Schedule Result`
-			set net_requirement = ''
-			where net_requirement in %s
-			""",
-			[tuple(names)],
+	if doctype == "APS Net Requirement" and names:
+		_retire_net_requirement_exception_sources(
+			names,
+			reason="APS Net Requirement rebuild",
 		)
+		if frappe.db.exists("DocType", "APS Schedule Result"):
+			frappe.db.sql(
+				"""
+				update `tabAPS Schedule Result`
+				set net_requirement = ''
+				where net_requirement in %s
+				""",
+				[tuple(names)],
+			)
 	for name in names:
 		frappe.delete_doc(doctype, name, force=1, ignore_permissions=True)
 
