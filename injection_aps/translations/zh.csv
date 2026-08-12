@@ -3240,3 +3240,69 @@ APS delivery allocation has no submitted locked Delivery Note source.,APS 交货
 Manufacture source {0} is not fully represented by the locked APS production ledger. Run production synchronization and retry.,生产来源 {0} 未被已锁定的 APS 生产账本完整记录。请运行生产同步后重试。,Injection APS
 Manufacture source {0} changed after production synchronization.,生产来源 {0} 在生产同步后发生变化。,Injection APS
 APS production allocation has no submitted locked Stock Entry source.,APS 生产分配没有已提交且已锁定的库存凭证来源。,Injection APS
+Run / Date,运算 / 日期,Injection APS
+Scope / Policy,范围 / 策略,Injection APS
+Status / Approval,状态 / 审批,Injection APS
+Scheduling Summary,排产概况,Injection APS
+Variance / Fulfillment,差异 / 履约,Injection APS
+Risk / Execution,风险 / 执行,Injection APS
+Next Step / Actions,下一步 / 操作,Injection APS
+Running,运行中,Injection APS
+Late Delivery,交期延误,Injection APS
+Unscheduled Quantity,未排数量,Injection APS
+Plan Consistency Error,计划一致性错误,Injection APS
+Demand Lineage Changed,需求钩稽已变更,Injection APS
+Invalid Segment,无效排产段,Injection APS
+Frozen / Locked,已冻结 / 已锁定,Injection APS
+Execution: Delayed,执行：延期,Injection APS
+Execution: Slow Progress,执行：进度缓慢,Injection APS
+Execution: No Recent Update,执行：近期无更新,Injection APS
+Execution: Overproduced,执行：超产,Injection APS
+Adjustment Replay Skipped,已跳过调整回放,Injection APS
+Downtime Capacity Loss,停机产能损失,Injection APS
+Downtime Split,停机拆分,Injection APS
+Family Co-Product Requires Explicit Allocation,家族模联产品需要明确分配,Injection APS
+Downtime Start Shift,停机导致开工顺延,Injection APS
+Missing Mold Cycle,缺少模具周期,Injection APS
+Family Co-Production,家族模联产,Injection APS
+Capacity Late Quantity,产能导致延期数量,Injection APS
+Customer Schedule Changed After Planning,客户排期在计划后发生变更,Injection APS
+Cancellation Retained Production,取消后保留生产,Injection APS
+Mold Occupancy Overlap,模具占用重叠,Injection APS
+Missing Capacity,缺少产能,Injection APS
+No Insertion Slot,无可用插单时段,Injection APS
+Invalid End Time,无效结束时间,Injection APS
+Late Delivery Risk,交期延误风险,Injection APS
+FDA Override,FDA 特批,Injection APS
+Manual Overproduction,手工超产,Injection APS
+Mold Unavailable,模具不可用,Injection APS
+Machine Unavailable,机台不可用,Injection APS
+Copy Mold Parallelized,复制模并行,Injection APS
+Low Qty High Changeover Risk,小批量高换模风险,Injection APS
+FDA Conflict,FDA 冲突,Injection APS
+Color Transition Blocked,换色阻断,Injection APS
+Color Transition,换色,Injection APS
+Material Changeover,换料,Injection APS
+First Article Confirmation,首件确认,Injection APS
+Mould Changeover,换模,Injection APS
+Primary Segment Overlap,主排产段重叠,Injection APS
+Residual Scheduling Frozen,剩余排产已冻结,Injection APS
+Shift Scheduling Frozen,班次排产已冻结,Injection APS
+Attention,关注,Injection APS
+Critical,严重,Injection APS
+Existing WO,现有工单,Injection APS
+Urgent Order,紧急订单,Injection APS
+Mold Master Missing,缺少模具主数据,Injection APS
+Primary Segment Missing,缺少主排产段,Injection APS
+Mold Reference Empty,模具引用为空,Injection APS
+Mold Product Missing,缺少模具产品,Injection APS
+Mold Status Blocked,模具状态阻断,Injection APS
+Mold Cycle Missing,缺少模具周期,Injection APS
+Slow Progress,进度缓慢,Injection APS
+Delayed Execution,执行延期,Injection APS
+No Recent Update,近期无更新,Injection APS
+Actual Output Mismatch,实际产出不匹配,Injection APS
+There are still {0} APS exceptions waiting for review.,当前仍有 {0} 条 APS 异常待处理。,Injection APS
+Plan consistency is {0}. Recalculate and resolve consistency errors before release.,计划一致性当前为“{0}”。正式下发前请重新计算并处理一致性错误。,Injection APS
+There is still unscheduled quantity: {0}.,仍有未排数量：{0}。,Injection APS
+Plan consistency: {0},计划一致性：{0},Injection APS

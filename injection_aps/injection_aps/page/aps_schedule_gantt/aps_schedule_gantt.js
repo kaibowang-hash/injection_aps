@@ -96,6 +96,72 @@ class InjectionAPSScheduleGantt {
 		return `ia-export-${prefix}-${Math.random().toString(36).slice(2, 8)}`;
 	}
 
+	getRiskValues(value) {
+		const source = Array.isArray(value) ? value : [value];
+		const values = [];
+		source.forEach((entry) => {
+			String(entry || "")
+				.split(/\r?\n/)
+				.map((item) => item.trim())
+				.filter(Boolean)
+				.forEach((item) => values.push(item));
+		});
+		return Array.from(new Set(values));
+	}
+
+	translateRiskValues(value) {
+		return this.getRiskValues(value).map((item) => injection_aps.ui.translate(item));
+	}
+
+	translateRiskText(value, separator) {
+		return this.translateRiskValues(value).join(separator || " / ");
+	}
+
+	translateRiskMessage(value) {
+		const message = String(value || "");
+		if (!message) {
+			return "";
+		}
+		const directTranslation = injection_aps.ui.translate(message);
+		if (directTranslation !== message) {
+			return directTranslation;
+		}
+		const patterns = [
+			{
+				pattern: /^There are still (.+) APS exceptions waiting for review\.$/,
+				message: "There are still {0} APS exceptions waiting for review.",
+				values: (match) => [match[1]],
+			},
+			{
+				pattern: /^Plan consistency is (.+)\. Recalculate and resolve consistency errors before release\.$/,
+				message: "Plan consistency is {0}. Recalculate and resolve consistency errors before release.",
+				values: (match) => [injection_aps.ui.translate(match[1])],
+			},
+			{
+				pattern: /^There is still unscheduled quantity: (.+)\.$/,
+				message: "There is still unscheduled quantity: {0}.",
+				values: (match) => [match[1]],
+			},
+			{
+				pattern: /^Plan consistency: (.+)$/,
+				message: "Plan consistency: {0}",
+				values: (match) => [injection_aps.ui.translate(match[1])],
+			},
+		];
+		for (const entry of patterns) {
+			const match = message.match(entry.pattern);
+			if (!match) {
+				continue;
+			}
+			let translated = injection_aps.ui.translate(entry.message);
+			(entry.values(match) || []).forEach((value, index) => {
+				translated = translated.replace(`{${index}}`, String(value));
+			});
+			return translated;
+		}
+		return message;
+	}
+
 	canEditManualSchedule() {
 		return injection_aps.ui.can_run_action("apply_manual_schedule_adjustment");
 	}
@@ -170,7 +236,7 @@ class InjectionAPSScheduleGantt {
 						<td>${injection_aps.ui.escape(injection_aps.ui.format_datetime(row.old_start_time))}</td>
 						<td>${injection_aps.ui.escape(injection_aps.ui.format_datetime(row.new_start_time))}</td>
 						<td>${injection_aps.ui.escape(row.wos_action || "")}</td>
-						<td>${row.delivery_risk ? injection_aps.ui.pill(row.delivery_risk, "orange") : ""}</td>
+						<td>${row.delivery_risk ? injection_aps.ui.pill(this.translateRiskText(row.delivery_risk), "orange") : ""}</td>
 					</tr>
 				`
 			)
@@ -913,7 +979,7 @@ class InjectionAPSScheduleGantt {
 									<span class="ia-risk-main">
 										<span class="ia-risk-item">${injection_aps.ui.escape(row.item_code || "")}</span>
 										<span class="ia-risk-name">${injection_aps.ui.escape(injection_aps.ui.shorten(row.item_name || "", 28))}</span>
-										${row.diagnostic_summary ? `<span class="ia-muted">${injection_aps.ui.escape(injection_aps.ui.shorten(row.diagnostic_summary || "", 72))}</span>` : ""}
+										${row.diagnostic_summary ? `<span class="ia-muted">${injection_aps.ui.escape(injection_aps.ui.shorten(this.translateRiskMessage(row.diagnostic_summary), 72))}</span>` : ""}
 									</span>
 									<span class="ia-risk-side">
 										${row.requested_date ? `<span>${injection_aps.ui.escape(injection_aps.ui.format_date(row.requested_date))}</span>` : ""}
@@ -921,7 +987,7 @@ class InjectionAPSScheduleGantt {
 										<span>${__("Machine", null, "Injection APS")}: ${injection_aps.ui.escape(injection_aps.ui.format_number(row.machine_scheduled_qty || 0))}</span>
 										${row.unscheduled_qty ? `<span>${__("Unscheduled", null, "Injection APS")}: ${injection_aps.ui.escape(injection_aps.ui.format_number(row.unscheduled_qty))}</span>` : ""}
 										${row.overproduction_qty ? `<span>${__("Overproduction", null, "Injection APS")}: ${injection_aps.ui.escape(injection_aps.ui.format_number(row.overproduction_qty))}</span>` : ""}
-										${(row.exception_types || []).slice(0, 1).map((flag) => `<span class="ia-risk-badge">${injection_aps.ui.escape(injection_aps.ui.translate(flag))}</span>`).join("")}
+										${this.translateRiskValues(row.exception_types || []).slice(0, 1).map((flag) => `<span class="ia-risk-badge">${injection_aps.ui.escape(flag)}</span>`).join("")}
 									</span>
 								</button>
 							`
@@ -960,7 +1026,9 @@ class InjectionAPSScheduleGantt {
 				],
 				rows.map((row) => {
 					return Object.assign({}, row, {
-						exception_summary: (row.exception_types || []).join(", "),
+						risk_status: this.translateRiskText(row.risk_status || ""),
+						blocking_reason: this.translateRiskMessage(row.blocking_reason || ""),
+						exception_summary: this.translateRiskText(row.exception_types || [], ", "),
 					});
 				}),
 				__("Demands that are still blocked or high-risk in the current APS run.")
@@ -1135,7 +1203,7 @@ class InjectionAPSScheduleGantt {
 									<span class="ia-gantt-meta-text">${injection_aps.ui.escape(metaParts.join(" | "))}</span>
 									<span class="ia-gantt-inline-flags">
 										${markers.map((flag) => `<span class="ia-gantt-flag blue">${flag}</span>`).join("")}
-										${visibleRiskFlags.map((flag) => `<span class="ia-gantt-flag ${String(flag).includes("FDA") ? "red" : "orange"}">${injection_aps.ui.escape(flag)}</span>`).join("")}
+										${visibleRiskFlags.map((flag) => `<span class="ia-gantt-flag ${String(flag).includes("FDA") ? "red" : "orange"}">${injection_aps.ui.escape(this.translateRiskText(flag))}</span>`).join("")}
 									</span>
 								</div>
 								${isDragLocked ? "" : `<span class="ia-gantt-resize-handle" data-resize-segment="${injection_aps.ui.escape(details.segment_name || "")}" title="${injection_aps.ui.escape(__("Resize Segment Duration"))}"></span>`}
@@ -2438,8 +2506,8 @@ class InjectionAPSScheduleGantt {
 								.map(
 									(row) => `
 										<tr>
-											<td>${injection_aps.ui.pill(row.severity || "", row.is_blocking ? "red" : "orange")}</td>
-											<td>${injection_aps.ui.escape(injection_aps.ui.translate(row.exception_type || ""))}</td>
+											<td>${injection_aps.ui.pill(this.translateRiskText(row.severity || ""), row.is_blocking ? "red" : "orange")}</td>
+											<td>${injection_aps.ui.escape(this.translateRiskText(row.exception_type || ""))}</td>
 											<td>${injection_aps.ui.escape(injection_aps.ui.translate(row.root_cause_text || row.message || ""))}</td>
 										</tr>
 									`
@@ -2619,7 +2687,7 @@ class InjectionAPSScheduleGantt {
 												<td>${injection_aps.ui.escape(injection_aps.ui.format_number(row.planned_qty || 0))}</td>
 												<td>${injection_aps.ui.escape(injection_aps.ui.translate(row.production_mode || ""))} / ${injection_aps.ui.escape(injection_aps.ui.format_number(row.load_percent || 0, 2))}%</td>
 												<td>${injection_aps.ui.escape(injection_aps.ui.translate(row.actual_status || ""))} / ${injection_aps.ui.escape(injection_aps.ui.format_number(row.actual_good_qty || 0))} / ${injection_aps.ui.escape(injection_aps.ui.format_number(row.actual_scrap_qty || 0))}</td>
-												<td>${injection_aps.ui.escape(injection_aps.ui.translate(row.risk_flags || ""))}</td>
+												<td>${injection_aps.ui.escape(this.translateRiskText(row.risk_flags || ""))}</td>
 												<td>${injection_aps.ui.escape(injection_aps.ui.format_datetime(row.start_time))} - ${injection_aps.ui.escape(injection_aps.ui.format_datetime(row.end_time))}</td>
 											</tr>
 										`
@@ -2721,7 +2789,12 @@ class InjectionAPSScheduleGantt {
 					{ label: __("Source Doctype"), fieldname: "source_doctype" },
 					{ label: __("Source Name", null, "Injection APS"), fieldname: "source_name" },
 				],
-				exceptionRows,
+				exceptionRows.map((row) =>
+					Object.assign({}, row, {
+						severity: this.translateRiskText(row.severity || ""),
+						exception_type: this.translateRiskText(row.exception_type || ""),
+					})
+				),
 				`${result.item_code || ""} / ${result.customer || ""}`
 			);
 		});
@@ -2742,7 +2815,12 @@ class InjectionAPSScheduleGantt {
 					{ label: __("Work Order", null, "Injection APS"), fieldname: "linked_work_order" },
 					{ label: __("Scheduling", null, "Injection APS"), fieldname: "linked_work_order_scheduling" },
 				],
-				segments,
+				segments.map((row) =>
+					Object.assign({}, row, {
+						actual_status: injection_aps.ui.translate(row.actual_status || ""),
+						risk_flags: this.translateRiskText(row.risk_flags || ""),
+					})
+				),
 				`${result.item_code || ""} / ${result.customer || ""}`
 			);
 		});
