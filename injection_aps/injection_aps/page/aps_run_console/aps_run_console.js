@@ -73,6 +73,56 @@ class InjectionAPSRunConsole {
 		}
 	}
 
+	getRunStatusTone(value) {
+		if (["Approved", "Work Order Proposed", "Shift Proposed", "Applied"].includes(value)) {
+			return "green";
+		}
+		return value === "Planned" ? "orange" : "blue";
+	}
+
+	formatRunQty(value) {
+		return frappe.format(value || 0, { fieldtype: "Float" });
+	}
+
+	renderRunMetric(label, value, tone) {
+		return `
+			<div class="ia-run-metric${tone ? ` ${tone}` : ""}">
+				<span class="ia-run-metric-label">${injection_aps.ui.escape(label)}</span>
+				<strong class="ia-run-metric-value">${injection_aps.ui.escape(this.formatRunQty(value))}</strong>
+			</div>
+		`;
+	}
+
+	getExecutionHealthText(row) {
+		const health = row.execution_health || {};
+		return `${__("Running", null, "Injection APS")}:${health.running || 0} / ${__("Delayed", null, "Injection APS")}:${health.delayed || 0} / ${__("No Update")}:${health.no_recent_update || 0}`;
+	}
+
+	renderRunActions(row) {
+		const displayActions = (injection_aps.ui.get_value(row, "next_actions.actions", []) || [])
+			.filter((action) => !["open_gantt", "open_release_center"].includes(action.action_key))
+			.filter((action) => injection_aps.ui.can_run_action(action))
+			.sort((left, right) => Number(right.enabled || 0) - Number(left.enabled || 0))
+			.slice(0, 2);
+		return `
+			<div class="ia-run-action-list">
+				<button class="btn btn-xs btn-default" data-run-action="open_gantt" data-run-name="${injection_aps.ui.escape(row.name)}">${__("Board")}</button>
+				<button class="btn btn-xs btn-default" data-run-action="open_release" data-run-name="${injection_aps.ui.escape(row.name)}">${__("Execution", null, "Injection APS")}</button>
+				${displayActions
+					.map(
+						(action, index) => `
+							<button
+								class="btn btn-xs ${index === 0 ? "btn-primary" : "btn-default"}"
+								data-inline-action='${injection_aps.ui.escape(encodeURIComponent(JSON.stringify(action)))}'
+								${Number(action.enabled || 0) === 1 ? "" : "disabled"}
+							>${injection_aps.ui.escape(injection_aps.ui.get_action_label(action))}</button>
+						`
+					)
+					.join("")}
+			</div>
+		`;
+	}
+
 	renderRuns(rows) {
 		if (!rows.length) {
 			injection_aps.ui.render_table(this.table, [{ label: __("Info", null, "Injection APS"), fieldname: "message" }], []);
@@ -80,105 +130,109 @@ class InjectionAPSRunConsole {
 		}
 
 		const columns = [
+			{ label: __("Run / Date", null, "Injection APS"), fieldname: "run_identity", className: "ia-run-col-identity" },
+			{ label: __("Scope / Policy", null, "Injection APS"), fieldname: "scope_policy", className: "ia-run-col-scope" },
+			{ label: __("Status / Approval", null, "Injection APS"), fieldname: "state_summary", className: "ia-run-col-state" },
+			{ label: __("Scheduling Summary", null, "Injection APS"), fieldname: "schedule_summary", className: "ia-run-col-schedule" },
+			{ label: __("Variance / Fulfillment", null, "Injection APS"), fieldname: "fulfillment_summary", className: "ia-run-col-fulfillment" },
+			{ label: __("Risk / Execution", null, "Injection APS"), fieldname: "risk_execution", className: "ia-run-col-risk" },
+			{ label: __("Next Step / Actions", null, "Injection APS"), fieldname: "next_actions", className: "ia-run-col-actions" },
+		];
+		const exportColumns = [
 			{ label: __("Run", null, "Injection APS"), fieldname: "name" },
 			{ label: __("Plant Floors"), fieldname: "selected_plant_floor_summary" },
 			{ label: __("Planning Date"), fieldname: "planning_date" },
 			{ label: __("Status", null, "Injection APS"), fieldname: "status" },
 			{ label: __("Approval", null, "Injection APS"), fieldname: "approval_state" },
 			{ label: __("Existing WO Policy"), fieldname: "existing_work_order_policy" },
-			{ label: __("Plan Qty", null, "Injection APS"), fieldname: "total_net_requirement_qty" },
-			{ label: __("Machine Scheduled", null, "Injection APS"), fieldname: "total_machine_scheduled_qty" },
-			{ label: __("Demand Covered", null, "Injection APS"), fieldname: "total_demand_covered_qty" },
-			{ label: __("Overproduction", null, "Injection APS"), fieldname: "total_overproduction_qty" },
-			{ label: __("Unscheduled", null, "Injection APS"), fieldname: "total_unscheduled_qty" },
-			{ label: __("Produced", null, "Injection APS"), fieldname: "total_produced_qty" },
-			{ label: __("Delivered", null, "Injection APS"), fieldname: "total_delivered_qty" },
+			{ label: __("Plan Qty", null, "Injection APS"), fieldname: "total_net_requirement_qty", fieldtype: "Float" },
+			{ label: __("Machine Scheduled", null, "Injection APS"), fieldname: "total_machine_scheduled_qty", fieldtype: "Float" },
+			{ label: __("Demand Covered", null, "Injection APS"), fieldname: "total_demand_covered_qty", fieldtype: "Float" },
+			{ label: __("Overproduction", null, "Injection APS"), fieldname: "total_overproduction_qty", fieldtype: "Float" },
+			{ label: __("Unscheduled", null, "Injection APS"), fieldname: "total_unscheduled_qty", fieldtype: "Float" },
+			{ label: __("Produced", null, "Injection APS"), fieldname: "total_produced_qty", fieldtype: "Float" },
+			{ label: __("Delivered", null, "Injection APS"), fieldname: "total_delivered_qty", fieldtype: "Float" },
 			{ label: __("Consistency", null, "Injection APS"), fieldname: "consistency_status" },
-			{ label: __("Exceptions", null, "Injection APS"), fieldname: "exception_count" },
+			{ label: __("Exceptions", null, "Injection APS"), fieldname: "exception_count", fieldtype: "Int" },
 			{ label: __("Exec"), fieldname: "execution_health" },
 			{ label: __("Next Step"), fieldname: "next_step" },
-			{ label: __("Actions", null, "Injection APS"), fieldname: "actions_html" },
 		];
 
 		injection_aps.ui.render_table(
 			this.table,
 			columns,
 			rows,
-			(column, value, row) => {
-				if (column.fieldname === "name") {
-					return injection_aps.ui.route_link(value, `aps-planning-run/${encodeURIComponent(value)}`);
-				}
-				if (column.fieldname === "status") {
-					const tone = ["Approved", "Work Order Proposed", "Shift Proposed", "Applied"].includes(value)
-						? "green"
-						: value === "Planned"
-							? "orange"
-							: "blue";
-					return injection_aps.ui.pill(injection_aps.ui.translate(value), tone);
-				}
-				if (column.fieldname === "approval_state") {
-					return injection_aps.ui.pill(injection_aps.ui.translate(value), value === "Approved" ? "green" : "orange");
-				}
-				if (column.fieldname === "consistency_status") {
-					return injection_aps.ui.pill(
-						injection_aps.ui.translate(value || "Unchecked"),
-						value === "Valid" ? "green" : value === "Invalid" ? "red" : "orange"
-					);
-				}
-				if (column.fieldname === "existing_work_order_policy") {
-					return injection_aps.ui.escape(injection_aps.ui.get_existing_work_order_policy_label(value));
-				}
-				if (column.fieldname === "planning_date") {
-					return injection_aps.ui.format_date(value);
-				}
-				if (column.fieldname === "selected_plant_floor_summary") {
-					return injection_aps.ui.escape(value || row.plant_floor || "");
-				}
-				if ([
-					"total_net_requirement_qty",
-					"total_machine_scheduled_qty",
-					"total_demand_covered_qty",
-					"total_overproduction_qty",
-					"total_unscheduled_qty",
-					"total_produced_qty",
-					"total_delivered_qty",
-				].includes(column.fieldname)) {
-					return frappe.format(value || 0, { fieldtype: "Float" });
-				}
-				if (column.fieldname === "next_step") {
-					return injection_aps.ui.escape(
-						injection_aps.ui.translate(injection_aps.ui.get_value(row, "next_actions.next_step", ""))
-					);
-				}
-				if (column.fieldname === "execution_health") {
-					const health = row.execution_health || {};
-					return `${__("Run", null, "Injection APS Execution")}:${health.running || 0} / ${__("Delay", null, "Injection APS Execution")}:${health.delayed || 0} / ${__("No Update")}:${health.no_recent_update || 0}`;
-				}
-					if (column.fieldname === "actions_html") {
-						const displayActions = (injection_aps.ui.get_value(row, "next_actions.actions", []) || [])
-							.filter((action) => !["open_gantt", "open_release_center"].includes(action.action_key))
-							.filter((action) => injection_aps.ui.can_run_action(action))
-							.sort((left, right) => Number(right.enabled || 0) - Number(left.enabled || 0))
-							.slice(0, 2);
+			(column, _value, row) => {
+				if (column.fieldname === "run_identity") {
 					return `
-						<div class="ia-chip-row">
-							<button class="btn btn-xs btn-default" data-run-action="open_gantt" data-run-name="${injection_aps.ui.escape(row.name)}">${__("Board")}</button>
-							<button class="btn btn-xs btn-default" data-run-action="open_release" data-run-name="${injection_aps.ui.escape(row.name)}">${__("Execution", null, "Injection APS")}</button>
-							${displayActions
-								.map(
-									(action, index) => `
-										<button
-											class="btn btn-xs ${index === 0 ? "btn-primary" : "btn-default"}"
-											data-inline-action='${encodeURIComponent(JSON.stringify(action))}'
-											${Number(action.enabled || 0) === 1 ? "" : "disabled"}
-										>${injection_aps.ui.escape(injection_aps.ui.get_action_label(action))}</button>
-									`
-								)
-								.join("")}
+						<div class="ia-run-cell-stack">
+							<div class="ia-run-name">${injection_aps.ui.route_link(row.name, `aps-planning-run/${encodeURIComponent(row.name)}`)}</div>
+							<div class="ia-run-cell-note">${injection_aps.ui.escape(injection_aps.ui.format_date(row.planning_date))}</div>
 						</div>
 					`;
 				}
-				return injection_aps.ui.escape(value);
+				if (column.fieldname === "scope_policy") {
+					const scope = row.selected_plant_floor_summary || row.plant_floor || "-";
+					return `
+						<div class="ia-run-cell-stack">
+							<div class="ia-run-floor" title="${injection_aps.ui.escape(scope)}">${injection_aps.ui.escape(scope)}</div>
+							<div class="ia-run-cell-note"><span>${__("Existing WO", null, "Injection APS")}:</span> ${injection_aps.ui.escape(injection_aps.ui.get_existing_work_order_policy_label(row.existing_work_order_policy))}</div>
+						</div>
+					`;
+				}
+				if (column.fieldname === "state_summary") {
+					const consistencyValue = row.consistency_status || "Unchecked";
+					return `
+						<div class="ia-run-cell-stack">
+							<div class="ia-run-pill-row">
+								${injection_aps.ui.pill(injection_aps.ui.translate(row.status), this.getRunStatusTone(row.status))}
+								${injection_aps.ui.pill(injection_aps.ui.translate(row.approval_state), row.approval_state === "Approved" ? "green" : "orange")}
+							</div>
+							<div class="ia-run-consistency">
+								<span class="ia-run-cell-note">${__("Consistency", null, "Injection APS")}</span>
+								${injection_aps.ui.pill(injection_aps.ui.translate(consistencyValue), consistencyValue === "Valid" ? "green" : consistencyValue === "Invalid" ? "red" : "orange")}
+							</div>
+						</div>
+					`;
+				}
+				if (column.fieldname === "schedule_summary") {
+					return `<div class="ia-run-metrics">
+						${this.renderRunMetric(__("Plan Qty", null, "Injection APS"), row.total_net_requirement_qty)}
+						${this.renderRunMetric(__("Machine Scheduled", null, "Injection APS"), row.total_machine_scheduled_qty)}
+						${this.renderRunMetric(__("Demand Covered", null, "Injection APS"), row.total_demand_covered_qty)}
+					</div>`;
+				}
+				if (column.fieldname === "fulfillment_summary") {
+					return `<div class="ia-run-metrics ia-run-metrics-grid">
+						${this.renderRunMetric(__("Unscheduled", null, "Injection APS"), row.total_unscheduled_qty, Number(row.total_unscheduled_qty || 0) > 0 ? "warning" : "")}
+						${this.renderRunMetric(__("Overproduction", null, "Injection APS"), row.total_overproduction_qty, Number(row.total_overproduction_qty || 0) > 0 ? "warning" : "")}
+						${this.renderRunMetric(__("Produced", null, "Injection APS"), row.total_produced_qty)}
+						${this.renderRunMetric(__("Delivered", null, "Injection APS"), row.total_delivered_qty)}
+					</div>`;
+				}
+				if (column.fieldname === "risk_execution") {
+					const health = row.execution_health || {};
+					const exceptionTone = Number(row.exception_count || 0) > 0 ? "red" : "blue";
+					return `
+						<div class="ia-run-cell-stack">
+							<div class="ia-run-exception-line"><span>${__("Exceptions", null, "Injection APS")}</span>${injection_aps.ui.pill(String(row.exception_count || 0), exceptionTone)}</div>
+							<div class="ia-run-execution-grid">
+								${this.renderRunMetric(__("Running", null, "Injection APS"), health.running || 0)}
+								${this.renderRunMetric(__("Delayed", null, "Injection APS"), health.delayed || 0, Number(health.delayed || 0) > 0 ? "warning" : "")}
+								${this.renderRunMetric(__("No Update"), health.no_recent_update || 0, Number(health.no_recent_update || 0) > 0 ? "warning" : "")}
+							</div>
+						</div>
+					`;
+				}
+				if (column.fieldname === "next_actions") {
+					return `
+						<div class="ia-run-cell-stack">
+							<div class="ia-run-next-step">${injection_aps.ui.escape(injection_aps.ui.translate(injection_aps.ui.get_value(row, "next_actions.next_step", "")))}</div>
+							${this.renderRunActions(row)}
+						</div>
+					`;
+				}
+				return "";
 			},
 			{
 				exportable: true,
@@ -186,6 +240,28 @@ class InjectionAPSRunConsole {
 				export_sheet_name: __("APS Runs"),
 				export_file_name: "aps_planning_runs",
 				export_subtitle: __("APS run list with execution health and next actions."),
+				export_columns: exportColumns,
+				export_formatter: (column, value, row) => {
+					if (["status", "approval_state", "consistency_status"].includes(column.fieldname)) {
+						return injection_aps.ui.translate(value || (column.fieldname === "consistency_status" ? "Unchecked" : ""));
+					}
+					if (column.fieldname === "existing_work_order_policy") {
+						return injection_aps.ui.get_existing_work_order_policy_label(value);
+					}
+					if (column.fieldname === "planning_date") {
+						return injection_aps.ui.format_date(value);
+					}
+					if (column.fieldname === "selected_plant_floor_summary") {
+						return value || row.plant_floor || "";
+					}
+					if (column.fieldname === "execution_health") {
+						return this.getExecutionHealthText(row);
+					}
+					if (column.fieldname === "next_step") {
+						return injection_aps.ui.translate(injection_aps.ui.get_value(row, "next_actions.next_step", ""));
+					}
+					return value;
+				},
 			}
 		);
 

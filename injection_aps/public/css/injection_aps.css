@@ -612,6 +612,151 @@
 	cursor: default;
 }
 
+.ia-run-table .ia-table {
+	min-width: 1280px;
+	table-layout: fixed;
+}
+
+.ia-run-table .ia-run-col-identity {
+	width: 138px;
+}
+
+.ia-run-table .ia-run-col-scope {
+	width: 210px;
+}
+
+.ia-run-table .ia-run-col-state {
+	width: 158px;
+}
+
+.ia-run-table .ia-run-col-schedule {
+	width: 172px;
+}
+
+.ia-run-table .ia-run-col-fulfillment {
+	width: 190px;
+}
+
+.ia-run-table .ia-run-col-risk {
+	width: 174px;
+}
+
+.ia-run-table .ia-run-col-actions {
+	width: 268px;
+}
+
+.ia-run-table .ia-table tbody td {
+	padding: 9px 10px;
+	vertical-align: middle;
+}
+
+.ia-run-cell-stack,
+.ia-run-metrics {
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+	min-width: 0;
+}
+
+.ia-run-name,
+.ia-run-name .ia-link,
+.ia-run-cell-note,
+.ia-run-metric-value {
+	white-space: nowrap;
+}
+
+.ia-run-name {
+	font-weight: 800;
+	font-variant-numeric: tabular-nums;
+	letter-spacing: 0.01em;
+}
+
+.ia-run-cell-note,
+.ia-run-metric-label {
+	font-size: 9px;
+	line-height: 1.25;
+	color: var(--ia-muted);
+}
+
+.ia-run-floor {
+	display: -webkit-box;
+	overflow: hidden;
+	-webkit-box-orient: vertical;
+	-webkit-line-clamp: 2;
+	font-weight: 650;
+	line-height: 1.35;
+	overflow-wrap: anywhere;
+}
+
+.ia-run-pill-row,
+.ia-run-consistency,
+.ia-run-exception-line,
+.ia-run-action-list {
+	display: flex;
+	align-items: center;
+	flex-wrap: wrap;
+	gap: 5px;
+}
+
+.ia-run-consistency,
+.ia-run-exception-line {
+	justify-content: space-between;
+}
+
+.ia-run-metric {
+	display: flex;
+	align-items: baseline;
+	justify-content: space-between;
+	gap: 8px;
+	min-width: 0;
+}
+
+.ia-run-metric-value {
+	color: var(--ia-ink);
+	font-size: 11px;
+	font-weight: 750;
+	font-variant-numeric: tabular-nums;
+}
+
+.ia-run-metric.warning .ia-run-metric-label,
+.ia-run-metric.warning .ia-run-metric-value {
+	color: #c2410c;
+}
+
+.ia-run-metrics-grid {
+	display: grid;
+	grid-template-columns: repeat(2, minmax(0, 1fr));
+	column-gap: 12px;
+	row-gap: 6px;
+}
+
+.ia-run-execution-grid {
+	display: grid;
+	grid-template-columns: repeat(3, minmax(0, 1fr));
+	gap: 6px;
+}
+
+.ia-run-execution-grid .ia-run-metric {
+	align-items: flex-start;
+	flex-direction: column;
+	gap: 1px;
+}
+
+.ia-run-next-step {
+	min-height: 18px;
+	font-weight: 650;
+	line-height: 1.35;
+	overflow-wrap: anywhere;
+}
+
+.ia-run-action-list {
+	align-items: stretch;
+}
+
+.ia-run-action-list .btn {
+	white-space: nowrap;
+}
+
 .ia-pill {
 	display: inline-flex;
 	align-items: center;
@@ -1918,6 +2063,54 @@
 		max-height: 62vh;
 	}
 
+	.ia-run-table .ia-table,
+	.ia-run-table .ia-table tbody {
+		display: block;
+		min-width: 0;
+		width: 100%;
+	}
+
+	.ia-run-table .ia-table thead {
+		display: none;
+	}
+
+	.ia-run-table .ia-table tbody {
+		display: grid;
+		gap: 10px;
+	}
+
+	.ia-run-table .ia-table tbody tr {
+		display: grid;
+		grid-template-columns: repeat(2, minmax(0, 1fr));
+		border: 1px solid var(--ia-border);
+		border-radius: 12px;
+		background: var(--ia-surface);
+		overflow: hidden;
+	}
+
+	.ia-run-table .ia-table tbody td {
+		display: block;
+		width: auto;
+		border-right: 1px solid var(--ia-border-soft);
+		border-bottom: 1px solid var(--ia-border-soft);
+	}
+
+	.ia-run-table .ia-run-col-state,
+	.ia-run-table .ia-run-col-fulfillment {
+		border-right: 0;
+	}
+
+	.ia-run-table .ia-run-col-identity,
+	.ia-run-table .ia-run-col-risk,
+	.ia-run-table .ia-run-col-actions {
+		grid-column: 1 / -1;
+		border-right: 0;
+	}
+
+	.ia-run-table .ia-run-col-actions {
+		border-bottom: 0;
+	}
+
 	.ia-drawer-panel {
 		width: 100vw;
 	}
@@ -1929,5 +2122,20 @@
 	.ia-change-secondary-band > div {
 		border-right: 0;
 		border-bottom: 1px solid var(--border-color);
+	}
+}
+
+@media (max-width: 640px) {
+	.ia-run-table .ia-table tbody tr {
+		grid-template-columns: minmax(0, 1fr);
+	}
+
+	.ia-run-table .ia-table tbody td {
+		grid-column: 1;
+		border-right: 0;
+	}
+
+	.ia-run-table .ia-run-col-actions {
+		border-bottom: 0;
 	}
 }

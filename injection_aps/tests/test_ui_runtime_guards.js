@@ -9,6 +9,13 @@ const APP_ROOT = path.resolve(__dirname, "..");
 
 function loadPage(relativePath, pageName, className) {
 	const context = {
+		$: () => ({
+			find() {
+				return {
+					each() {},
+				};
+			},
+		}),
 		console,
 		document: {},
 		injection_aps: {
@@ -41,6 +48,138 @@ function loadPage(relativePath, pageName, className) {
 		filename: relativePath,
 	});
 	return { Controller: context.__TestController, context };
+}
+
+async function testGanttRiskValuesTranslateEachEnum() {
+	const { Controller, context } = loadPage(
+		"injection_aps/page/aps_schedule_gantt/aps_schedule_gantt.js",
+		"aps-schedule-gantt",
+		"InjectionAPSScheduleGantt"
+	);
+	const controller = Object.create(Controller.prototype);
+	const translations = {
+		"Late Delivery": "交期延误",
+		"Unscheduled Quantity": "未排数量",
+		"Copy Mold Parallelized": "复制模并行",
+	};
+	context.injection_aps.ui.translate = (value) => translations[value] || String(value || "");
+
+	assert.deepEqual(
+		Array.from(controller.getRiskValues(["Late Delivery\nCopy Mold Parallelized", "Late Delivery", ""])),
+		["Late Delivery", "Copy Mold Parallelized"]
+	);
+	assert.deepEqual(
+		Array.from(controller.translateRiskValues(["Late Delivery", "Unscheduled Quantity"])),
+		["交期延误", "未排数量"]
+	);
+	assert.equal(
+		controller.translateRiskText("Late Delivery\nCopy Mold Parallelized"),
+		"交期延误 / 复制模并行"
+	);
+	context.injection_aps.ui.translate = (value) => {
+		const messages = {
+			"There are still {0} APS exceptions waiting for review.": "当前仍有 {0} 条 APS 异常待处理。",
+			"There is still unscheduled quantity: {0}.": "仍有未排数量：{0}。",
+			"Plan consistency: {0}": "计划一致性：{0}",
+			Invalid: "无效",
+		};
+		return messages[value] || String(value || "");
+	};
+	assert.equal(
+		controller.translateRiskMessage("There are still 3 APS exceptions waiting for review."),
+		"当前仍有 3 条 APS 异常待处理。"
+	);
+	assert.equal(
+		controller.translateRiskMessage("There is still unscheduled quantity: 125.5."),
+		"仍有未排数量：125.5。"
+	);
+	assert.equal(controller.translateRiskMessage("Plan consistency: Invalid"), "计划一致性：无效");
+}
+
+async function testRunConsoleRendersSevenStackedColumnsAndKeepsFullExport() {
+	const { Controller, context } = loadPage(
+		"injection_aps/page/aps_run_console/aps_run_console.js",
+		"aps-run-console",
+		"InjectionAPSRunConsole"
+	);
+	const controller = Object.create(Controller.prototype);
+	controller.table = {};
+	let rendered;
+	Object.assign(context.injection_aps.ui, {
+		can_run_action() {
+			return true;
+		},
+		format_date(value) {
+			return String(value || "");
+		},
+		get_action_label(action) {
+			return action.label || "";
+		},
+		get_existing_work_order_policy_label(value) {
+			return value === "Include" ? "考虑现有工单" : "不考虑现有工单";
+		},
+		get_value(value, pathValue, fallback) {
+			return String(pathValue || "")
+				.split(".")
+				.reduce((current, key) => (current && current[key] !== undefined ? current[key] : fallback), value);
+		},
+		pill(label, tone) {
+			return `<span class="${tone}">${label}</span>`;
+		},
+		render_table(_target, columns, rows, formatter, options) {
+			rendered = {
+				columns,
+				cells: columns.map((column) => formatter(column, rows[0][column.fieldname], rows[0])),
+				options,
+			};
+		},
+		route_link(label) {
+			return `<a>${label}</a>`;
+		},
+	});
+	context.frappe.format = (value) => String(value);
+	controller.renderRuns([
+		{
+			name: "APS-RUN-00008",
+			planning_date: "2026-08-12",
+			selected_plant_floor_summary: "TH - Injection 1 / TH - Injection 2",
+			existing_work_order_policy: "Exclude",
+			status: "Planned",
+			approval_state: "Pending",
+			consistency_status: "Valid",
+			total_net_requirement_qty: 100,
+			total_machine_scheduled_qty: 90,
+			total_demand_covered_qty: 90,
+			total_unscheduled_qty: 10,
+			total_overproduction_qty: 0,
+			total_produced_qty: 2,
+			total_delivered_qty: 1,
+			exception_count: 3,
+			execution_health: { running: 1, delayed: 2, no_recent_update: 3 },
+			next_actions: { next_step: "Confirm Run", actions: [] },
+		},
+	]);
+
+	assert.equal(rendered.columns.length, 7);
+	assert.deepEqual(
+		Array.from(rendered.columns, (column) => column.fieldname),
+		["run_identity", "scope_policy", "state_summary", "schedule_summary", "fulfillment_summary", "risk_execution", "next_actions"]
+	);
+	assert.match(rendered.cells[0], /APS-RUN-00008/);
+	assert.match(rendered.cells[0], /2026-08-12/);
+	assert.match(rendered.cells[3], /100/);
+	assert.match(rendered.cells[4], /10/);
+	assert.match(rendered.cells[5], /3/);
+	assert.equal(rendered.options.export_columns.length, 17);
+	assert.ok(rendered.options.export_columns.some((column) => column.fieldname === "total_delivered_qty"));
+	assert.equal(
+		rendered.options.export_formatter(
+			{ fieldname: "selected_plant_floor_summary" },
+			"",
+			{ plant_floor: "TH - Injection 1" }
+		),
+		"TH - Injection 1"
+	);
 }
 
 function makeInspectionDialog(values) {
@@ -242,6 +381,8 @@ async function testCustomerProgressIgnoresOlderResponse() {
 
 async function main() {
 	const tests = [
+		testGanttRiskValuesTranslateEachEnum,
+		testRunConsoleRendersSevenStackedColumnsAndKeepsFullExport,
 		testSheetChangeReplacesOldMapping,
 		testHeaderChangePreservesHeaderAndReplacesOldMapping,
 		testSourceChangeDuringMappingApplyRejectsResponse,

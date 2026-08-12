@@ -53,6 +53,111 @@ OFFICIAL_CONTEXTLESS_FALLBACKS = {
 
 
 class TestUIStaticContracts(unittest.TestCase):
+	def test_run_console_uses_compact_stacked_columns_without_losing_export_fields(self):
+		source = (
+			APP_ROOT
+			/ "injection_aps/page/aps_run_console/aps_run_console.js"
+		).read_text(encoding="utf-8")
+		visible_columns = source[
+			source.index("\t\tconst columns = [") : source.index("\n\t\tconst exportColumns = [")
+		]
+		self.assertEqual(visible_columns.count("fieldname:"), 7)
+		for marker in (
+			'fieldname: "run_identity"',
+			'fieldname: "scope_policy"',
+			'fieldname: "state_summary"',
+			'fieldname: "schedule_summary"',
+			'fieldname: "fulfillment_summary"',
+			'fieldname: "risk_execution"',
+			'fieldname: "next_actions"',
+			'class="ia-run-cell-stack"',
+			'class="ia-run-metrics ia-run-metrics-grid"',
+			'class="ia-run-action-list"',
+			"export_columns: exportColumns",
+		):
+			with self.subTest(marker=marker):
+				self.assertIn(marker, source)
+
+		for original_field in (
+			"total_net_requirement_qty",
+			"total_machine_scheduled_qty",
+			"total_demand_covered_qty",
+			"total_overproduction_qty",
+			"total_unscheduled_qty",
+			"total_produced_qty",
+			"total_delivered_qty",
+			"execution_health",
+		):
+			with self.subTest(export_field=original_field):
+				self.assertIn(f'fieldname: "{original_field}"', source)
+
+		css = (APP_ROOT / "public/css/injection_aps.css").read_text(encoding="utf-8")
+		for marker in (
+			".ia-run-table .ia-table",
+			"min-width: 1280px",
+			".ia-run-metrics-grid",
+			".ia-run-action-list",
+			"@media (max-width: 640px)",
+		):
+			with self.subTest(css_marker=marker):
+				self.assertIn(marker, css)
+
+	def test_gantt_risk_values_are_translated_per_enum_across_all_render_paths(self):
+		source = (
+			APP_ROOT
+			/ "injection_aps/page/aps_schedule_gantt/aps_schedule_gantt.js"
+		).read_text(encoding="utf-8")
+		for marker in (
+			"getRiskValues(value)",
+			"translateRiskValues(value)",
+			"translateRiskText(value, separator)",
+			"translateRiskMessage(value)",
+			"this.translateRiskValues(row.exception_types || [])",
+			"this.translateRiskText(flag)",
+			"risk_status: this.translateRiskText(row.risk_status || \"\")",
+			"blocking_reason: this.translateRiskMessage(row.blocking_reason || \"\")",
+			"exception_summary: this.translateRiskText(row.exception_types || [], \", \")",
+			"risk_flags: this.translateRiskText(row.risk_flags || \"\")",
+		):
+			with self.subTest(marker=marker):
+				self.assertIn(marker, source)
+		self.assertNotIn(
+			'visibleRiskFlags.map((flag) => `<span class="ia-gantt-flag ${String(flag).includes("FDA") ? "red" : "orange"}">${injection_aps.ui.escape(flag)}</span>`)',
+			source,
+		)
+
+		rows = _read_translation_rows(APP_ROOT / "translations/zh.csv")
+		keys = {(row[0], row[2] if len(row) > 2 else "") for row in rows}
+		for value in (
+			"Late Delivery",
+			"Unscheduled Quantity",
+			"Copy Mold Parallelized",
+			"Plan Consistency Error",
+			"Demand Lineage Changed",
+			"Frozen / Locked",
+			"Execution: Delayed",
+			"Execution: Slow Progress",
+			"Execution: No Recent Update",
+			"Execution: Overproduced",
+			"Urgent Order",
+			"Mold Master Missing",
+			"Primary Segment Missing",
+			"Mold Reference Empty",
+			"Mold Product Missing",
+			"Mold Status Blocked",
+			"Mold Cycle Missing",
+			"Slow Progress",
+			"Delayed Execution",
+			"No Recent Update",
+			"Actual Output Mismatch",
+			"There are still {0} APS exceptions waiting for review.",
+			"Plan consistency is {0}. Recalculate and resolve consistency errors before release.",
+			"There is still unscheduled quantity: {0}.",
+			"Plan consistency: {0}",
+		):
+			with self.subTest(value=value):
+				self.assertIn((value, "Injection APS"), keys)
+
 	def test_schedule_preview_preserves_all_p1_policy_fields(self):
 		source = (
 			APP_ROOT
