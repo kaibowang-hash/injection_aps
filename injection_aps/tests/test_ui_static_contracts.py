@@ -53,7 +53,7 @@ OFFICIAL_CONTEXTLESS_FALLBACKS = {
 
 
 class TestUIStaticContracts(unittest.TestCase):
-	def test_run_console_uses_compact_stacked_columns_without_losing_export_fields(self):
+	def test_run_console_groups_decisions_into_four_columns_without_losing_export_fields(self):
 		source = (
 			APP_ROOT
 			/ "injection_aps/page/aps_run_console/aps_run_console.js"
@@ -61,18 +61,18 @@ class TestUIStaticContracts(unittest.TestCase):
 		visible_columns = source[
 			source.index("\t\tconst columns = [") : source.index("\n\t\tconst exportColumns = [")
 		]
-		self.assertEqual(visible_columns.count("fieldname:"), 7)
+		self.assertEqual(visible_columns.count("fieldname:"), 4)
 		for marker in (
-			'fieldname: "run_identity"',
-			'fieldname: "scope_policy"',
-			'fieldname: "state_summary"',
-			'fieldname: "schedule_summary"',
-			'fieldname: "fulfillment_summary"',
+			'fieldname: "run_overview"',
+			'fieldname: "planning_fulfillment"',
 			'fieldname: "risk_execution"',
 			'fieldname: "next_actions"',
-			'class="ia-run-cell-stack"',
-			'class="ia-run-metrics ia-run-metrics-grid"',
-			'class="ia-run-action-list"',
+			'class="ia-run-overview"',
+			'class="ia-run-quantity-sections"',
+			'class="ia-run-risk-stack"',
+			'class="ia-run-action-stack"',
+			'action_key: "open_run"',
+			'aps_run_console.css?v=20260815.1',
 			"export_columns: exportColumns",
 			"return injection_aps.ui.format_number(value);",
 		):
@@ -97,12 +97,14 @@ class TestUIStaticContracts(unittest.TestCase):
 			with self.subTest(export_field=original_field):
 				self.assertIn(f'fieldname: "{original_field}"', source)
 
-		css = (APP_ROOT / "public/css/injection_aps.css").read_text(encoding="utf-8")
+		css = (APP_ROOT / "public/css/aps_run_console.css").read_text(encoding="utf-8")
 		for marker in (
 			".ia-run-table .ia-table",
-			"min-width: 1280px",
-			".ia-run-metrics-grid",
-			".ia-run-action-list",
+			"min-width: 1160px",
+			".ia-run-metric-grid-3",
+			".ia-run-metric-grid-4",
+			".ia-run-nav-actions",
+			"@media (max-width: 960px)",
 			"@media (max-width: 640px)",
 		):
 			with self.subTest(css_marker=marker):

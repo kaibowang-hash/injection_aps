@@ -3266,8 +3266,12 @@ Scope / Policy,范围 / 策略,Injection APS
 Status / Approval,状态 / 审批,Injection APS
 Scheduling Summary,排产概况,Injection APS
 Variance / Fulfillment,差异 / 履约,Injection APS
+Run / Scope,运算 / 范围,Injection APS
+Planning / Fulfillment,排产 / 履约,Injection APS
 Risk / Execution,风险 / 执行,Injection APS
 Next Step / Actions,下一步 / 操作,Injection APS
+Fulfillment,履约,Injection APS
+Related Views,相关页面,Injection APS
 Running,运行中,Injection APS
 Late Delivery,交期延误,Injection APS
 Unscheduled Quantity,未排数量,Injection APS
@@ -4430,6 +4434,7 @@ Family Campaign output {0} has more than one Run-level Result; consolidate exact
 "Your role cannot perform this action.","您的角色不能执行此操作。","Injection APS"
 "These rows are read-only until Apply.","应用前这些行均为只读。","Injection APS"
 "Apply the analyzed capacity plan before confirming this run.","确认本次运算前，请先应用已分析的产能方案。","Injection APS"
+"Re-analyze and Apply capacity after the latest execution-layer change before the next release step.","执行层数据更新后，请重新分析并应用产能方案，再继续下发。","Injection APS"
 "Capacity balance failed plan consistency with {0} error(s): {1}","产能平衡未通过计划一致性检查，共有 {0} 个错误：{1}"
 "No error detail was returned.","未返回错误明细。"
 "V2 solver Apply created {0} workstation overlap(s) and {1} mold overlap(s).","V2 求解方案应用后产生 {0} 个机台重叠和 {1} 个模具重叠。"

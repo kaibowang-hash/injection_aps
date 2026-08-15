@@ -96,7 +96,7 @@ async function testGanttRiskValuesTranslateEachEnum() {
 	assert.equal(controller.translateRiskMessage("Plan consistency: Invalid"), "计划一致性：无效");
 }
 
-async function testRunConsoleRendersSevenStackedColumnsAndKeepsFullExport() {
+async function testRunConsoleRendersFourDecisionColumnsAndKeepsFullExport() {
 	const { Controller, context } = loadPage(
 		"injection_aps/page/aps_run_console/aps_run_console.js",
 		"aps-run-console",
@@ -150,32 +150,47 @@ async function testRunConsoleRendersSevenStackedColumnsAndKeepsFullExport() {
 			status: "Planned",
 			approval_state: "Pending",
 			consistency_status: "Valid",
-			total_net_requirement_qty: 100,
-			total_machine_scheduled_qty: 90,
-			total_demand_covered_qty: 90,
-			total_unscheduled_qty: 10,
+			total_net_requirement_qty: 394684,
+			total_machine_scheduled_qty: 478962,
+			total_demand_covered_qty: 390534,
+			total_unscheduled_qty: 88428,
 			total_overproduction_qty: 0,
-			total_produced_qty: 2,
-			total_delivered_qty: 1,
+			total_produced_qty: 127628,
+			total_delivered_qty: 0,
 			exception_count: 3,
 			execution_health: { running: 1, delayed: 2, no_recent_update: 3 },
-			next_actions: { next_step: "Confirm Run", actions: [] },
+			v2_admission_available: 1,
+			next_actions: {
+				next_step: "Analyze and Apply Capacity",
+				blocking_reason: "Apply the analyzed capacity plan before confirming this run.",
+				actions: [
+					{ action_key: "run_trial", enabled: 1, label: "Recalculate" },
+					{ action_key: "approve", enabled: 0, label: "Confirm Run" },
+				],
+			},
 		},
 	]);
 
-	assert.equal(rendered.columns.length, 7);
+	assert.equal(rendered.columns.length, 4);
 	assert.deepEqual(
 		Array.from(rendered.columns, (column) => column.fieldname),
-		["run_identity", "scope_policy", "state_summary", "schedule_summary", "fulfillment_summary", "risk_execution", "next_actions"]
+		["run_overview", "planning_fulfillment", "risk_execution", "next_actions"]
 	);
 	assert.match(rendered.cells[0], /APS-RUN-00008/);
 	assert.match(rendered.cells[0], /2026-08-12/);
-	assert.match(rendered.cells[3], /100/);
-	assert.match(rendered.cells[4], /10/);
-	assert.match(rendered.cells[5], /3/);
-	assert.doesNotMatch(rendered.cells[3], /text-align|&lt;div/i);
-	assert.doesNotMatch(rendered.cells[4], /text-align|&lt;div/i);
-	assert.doesNotMatch(rendered.cells[5], /text-align|&lt;div/i);
+	assert.match(rendered.cells[1], /394,684/);
+	assert.match(rendered.cells[1], /478,962/);
+	assert.match(rendered.cells[1], /390,534/);
+	assert.match(rendered.cells[1], /88,428/);
+	assert.match(rendered.cells[2], /3/);
+	assert.match(rendered.cells[3], /Open Run/);
+	assert.match(rendered.cells[3], /Recalculate/);
+	assert.match(rendered.cells[3], /data-run-action="open_gantt"/);
+	assert.match(rendered.cells[3], /data-run-action="open_release"/);
+	assert.match(rendered.cells[3], /data-run-action="open_admission"/);
+	assert.doesNotMatch(rendered.cells[3], /Confirm Run|disabled/);
+	assert.doesNotMatch(rendered.cells[1], /text-align|&lt;div/i);
+	assert.doesNotMatch(rendered.cells[2], /text-align|&lt;div/i);
 	assert.equal(rendered.options.export_columns.length, 17);
 	assert.ok(rendered.options.export_columns.some((column) => column.fieldname === "total_delivered_qty"));
 	assert.equal(
@@ -593,7 +608,7 @@ async function testGanttMachineViewCollapsesCampaignAndRendersFourPlanLayers() {
 async function main() {
 	const tests = [
 		testGanttRiskValuesTranslateEachEnum,
-		testRunConsoleRendersSevenStackedColumnsAndKeepsFullExport,
+		testRunConsoleRendersFourDecisionColumnsAndKeepsFullExport,
 		testSheetChangeReplacesOldMapping,
 		testHeaderChangePreservesHeaderAndReplacesOldMapping,
 		testSourceChangeDuringMappingApplyRejectsResponse,
