@@ -7931,6 +7931,15 @@ def _build_manual_quantity_totals(
 	}
 
 
+def _build_manual_timing_values(start_time, end_time) -> dict[str, Any]:
+	return {
+		"start_time": start_time,
+		"end_time": end_time,
+		"current_start_time": start_time,
+		"current_end_time": end_time,
+	}
+
+
 def _validate_manual_overproduction_confirmation(
 	preview: dict[str, Any],
 	allow_overproduction: int = 0,
@@ -9585,8 +9594,7 @@ def apply_manual_schedule_adjustment(
 		values = {
 			"workstation": preview["target_workstation"],
 			"plant_floor": preview.get("target_plant_floor"),
-			"start_time": preview["start_time"],
-			"end_time": preview["end_time"],
+			**_build_manual_timing_values(preview["start_time"], preview["end_time"]),
 			"planned_qty": planned_qty,
 			"mould_reference": preview["target_mould_reference"],
 			"lane_key": preview["lane_key"],

@@ -37,6 +37,24 @@ class TestManualQuantityAdjustment(TestCase):
 		self.assertEqual(planning._estimate_run_hours(250, {}, settings), 2.5)
 		self.assertEqual(planning._estimate_run_hours(10, {}, settings), 0.25)
 
+	def test_manual_timing_updates_current_layer_without_overwriting_comparison_layers(self):
+		start = datetime(2026, 8, 15, 8, 0, 0)
+		end = datetime(2026, 8, 16, 12, 0, 0)
+		values = planning._build_manual_timing_values(start, end)
+
+		self.assertEqual(
+			values,
+			{
+				"start_time": start,
+				"end_time": end,
+				"current_start_time": start,
+				"current_end_time": end,
+			},
+		)
+		for prefix in ("baseline", "solver", "forecast"):
+			self.assertNotIn(f"{prefix}_start_time", values)
+			self.assertNotIn(f"{prefix}_end_time", values)
+
 	def test_whole_number_uom_rejects_fractional_target(self):
 		def get_value(doctype, name, fieldname):
 			if doctype == "Item":
