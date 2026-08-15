@@ -4448,3 +4448,11 @@ Family Campaign output {0} has more than one Run-level Result; consolidate exact
 "A newer Solver Job exists. Refresh before Apply.","已有更新的求解任务；应用前请刷新。","Injection APS"
 APS Interface Failed to Load,APS 界面资源加载失败,Injection APS
 "Refresh the page and try again. If the problem continues, contact the system administrator.",请刷新页面后重试。如问题持续，请联系系统管理员。,Injection APS
+"APS Run Details","运算详情","Injection APS"
+"Key Results","关键结果","Injection APS"
+"Overview","运算概览","Injection APS"
+"Planning and Fulfillment","计划与履约","Injection APS"
+"Risk and Execution","风险与执行","Injection APS"
+"Other Actions","其他操作","Injection APS"
+"Demand Ownership","需求归属","Injection APS"
+"Workflow","流程","Injection APS"

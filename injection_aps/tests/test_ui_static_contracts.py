@@ -53,7 +53,7 @@ OFFICIAL_CONTEXTLESS_FALLBACKS = {
 
 
 class TestUIStaticContracts(unittest.TestCase):
-	def test_run_console_groups_decisions_into_four_columns_without_losing_export_fields(self):
+	def test_run_console_distills_primary_decisions_into_three_columns_and_drawer(self):
 		source = (
 			APP_ROOT
 			/ "injection_aps/page/aps_run_console/aps_run_console.js"
@@ -61,18 +61,18 @@ class TestUIStaticContracts(unittest.TestCase):
 		visible_columns = source[
 			source.index("\t\tconst columns = [") : source.index("\n\t\tconst exportColumns = [")
 		]
-		self.assertEqual(visible_columns.count("fieldname:"), 4)
+		self.assertEqual(visible_columns.count("fieldname:"), 3)
 		for marker in (
 			'fieldname: "run_overview"',
-			'fieldname: "planning_fulfillment"',
-			'fieldname: "risk_execution"',
-			'fieldname: "next_actions"',
+			'fieldname: "key_results"',
+			'fieldname: "next_action"',
 			'class="ia-run-overview"',
-			'class="ia-run-quantity-sections"',
-			'class="ia-run-risk-stack"',
-			'class="ia-run-action-stack"',
+			'class="ia-run-metric-grid ia-run-key-metrics"',
+			'class="ia-run-drawer"',
+			'data-run-details=',
+			'injection_aps.ui.open_drawer(',
 			'action_key: "open_run"',
-			'aps_run_console.css?v=20260815.1',
+			'aps_run_console.css?v=20260815.2',
 			"export_columns: exportColumns",
 			"return injection_aps.ui.format_number(value);",
 		):
@@ -83,6 +83,8 @@ class TestUIStaticContracts(unittest.TestCase):
 		rows = _read_translation_rows(APP_ROOT / "translations/zh.csv")
 		translations = {(row[0], row[2] if len(row) > 2 else ""): row[1] for row in rows}
 		self.assertEqual(translations.get(("Analyze and Apply Capacity", "")), "分析并应用产能方案")
+		self.assertEqual(translations.get(("APS Run Details", "Injection APS")), "运算详情")
+		self.assertEqual(translations.get(("Key Results", "Injection APS")), "关键结果")
 
 		for original_field in (
 			"total_net_requirement_qty",
@@ -100,9 +102,11 @@ class TestUIStaticContracts(unittest.TestCase):
 		css = (APP_ROOT / "public/css/aps_run_console.css").read_text(encoding="utf-8")
 		for marker in (
 			".ia-run-table .ia-table",
-			"min-width: 1160px",
-			".ia-run-metric-grid-3",
-			".ia-run-metric-grid-4",
+			"min-width: 900px",
+			".ia-run-key-metrics",
+			".ia-run-drawer-section",
+			".ia-run-drawer-metric-grid",
+			":has(.ia-run-drawer)",
 			".ia-run-nav-actions",
 			"@media (max-width: 960px)",
 			"@media (max-width: 640px)",

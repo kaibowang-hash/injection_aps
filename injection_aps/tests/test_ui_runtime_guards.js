@@ -141,9 +141,9 @@ async function testRunConsoleRendersFourDecisionColumnsAndKeepsFullExport() {
 		},
 	});
 	context.frappe.format = (value) => `<div style='text-align: right'>${value}</div>`;
-	controller.renderRuns([
-		{
+	const row = {
 			name: "APS-RUN-00008",
+			company: "Jichen (Thailand) Co., Ltd",
 			planning_date: "2026-08-12",
 			selected_plant_floor_summary: "TH - Injection 1 / TH - Injection 2",
 			existing_work_order_policy: "Exclude",
@@ -168,29 +168,47 @@ async function testRunConsoleRendersFourDecisionColumnsAndKeepsFullExport() {
 					{ action_key: "approve", enabled: 0, label: "Confirm Run" },
 				],
 			},
-		},
-	]);
+		};
+	controller.renderRuns([row]);
 
-	assert.equal(rendered.columns.length, 4);
+	assert.equal(rendered.columns.length, 3);
 	assert.deepEqual(
 		Array.from(rendered.columns, (column) => column.fieldname),
-		["run_overview", "planning_fulfillment", "risk_execution", "next_actions"]
+		["run_overview", "key_results", "next_action"]
 	);
 	assert.match(rendered.cells[0], /APS-RUN-00008/);
 	assert.match(rendered.cells[0], /2026-08-12/);
 	assert.match(rendered.cells[1], /394,684/);
 	assert.match(rendered.cells[1], /478,962/);
-	assert.match(rendered.cells[1], /390,534/);
 	assert.match(rendered.cells[1], /88,428/);
-	assert.match(rendered.cells[2], /3/);
-	assert.match(rendered.cells[3], /Open Run/);
-	assert.match(rendered.cells[3], /Recalculate/);
-	assert.match(rendered.cells[3], /data-run-action="open_gantt"/);
-	assert.match(rendered.cells[3], /data-run-action="open_release"/);
-	assert.match(rendered.cells[3], /data-run-action="open_admission"/);
-	assert.doesNotMatch(rendered.cells[3], /Confirm Run|disabled/);
+	assert.match(rendered.cells[1], />3</);
+	assert.match(rendered.cells[2], /Open Run/);
+	assert.match(rendered.cells[2], /View Details/);
+	assert.doesNotMatch(rendered.cells[2], /Recalculate|open_gantt|open_release|open_admission|Confirm Run|disabled/);
 	assert.doesNotMatch(rendered.cells[1], /text-align|&lt;div/i);
-	assert.doesNotMatch(rendered.cells[2], /text-align|&lt;div/i);
+
+	const drawerHtml = controller.renderRunDrawer(row);
+	assert.match(drawerHtml, /ia-run-drawer/);
+	assert.match(drawerHtml, /390,534/);
+	assert.match(drawerHtml, /127,628/);
+	assert.match(drawerHtml, /Apply the analyzed capacity plan/);
+	assert.match(drawerHtml, /Recalculate/);
+	assert.match(drawerHtml, /data-run-action="open_gantt"/);
+	assert.match(drawerHtml, /data-run-action="open_release"/);
+	assert.match(drawerHtml, /data-run-action="open_admission"/);
+	assert.match(drawerHtml, /Confirm Run/);
+	assert.match(drawerHtml, /disabled aria-disabled="true"/);
+	assert.match(drawerHtml, /Apply the analyzed capacity plan before confirming this run/);
+	let openedDrawer;
+	context.injection_aps.ui.open_drawer = (title, subtitle, html) => {
+		openedDrawer = { title, subtitle, html };
+	};
+	context.injection_aps.ui.ensure_drawer = () => ({});
+	controller.bindRunActionHandlers = () => {};
+	controller.openRunDetails(row);
+	assert.equal(openedDrawer.title, "APS Run Details");
+	assert.match(openedDrawer.subtitle, /APS-RUN-00008/);
+	assert.match(openedDrawer.html, /Planning and Fulfillment/);
 	assert.equal(rendered.options.export_columns.length, 17);
 	assert.ok(rendered.options.export_columns.some((column) => column.fieldname === "total_delivered_qty"));
 	assert.equal(
@@ -270,7 +288,7 @@ async function testRunConsoleStylesDoNotBlockPageInitialization() {
 	assert.equal(appended[0].rel, "stylesheet");
 	assert.equal(
 		appended[0].getAttribute("href"),
-		"/assets/injection_aps/css/aps_run_console.css?v=20260815.1"
+		"/assets/injection_aps/css/aps_run_console.css?v=20260815.2"
 	);
 }
 
