@@ -4440,3 +4440,5 @@ Family Campaign output {0} has more than one Run-level Result; consolidate exact
 "The applied Run and Solver Job evidence are inconsistent. Reconciliation is required before another Apply.","已应用的 Run 与 Solver Job 证据不一致；再次应用前必须先完成核对。","Injection APS"
 "The Planning Run scope changed while Apply was waiting for its lock.","等待应用锁期间 Planning Run 范围已变化。","Injection APS"
 "A newer Solver Job exists. Refresh before Apply.","已有更新的 Solver Job；应用前请刷新。","Injection APS"
+APS Interface Failed to Load,APS 界面资源加载失败,Injection APS
+"Refresh the page and try again. If the problem continues, contact the system administrator.",请刷新页面后重试。如问题持续，请联系系统管理员。,Injection APS

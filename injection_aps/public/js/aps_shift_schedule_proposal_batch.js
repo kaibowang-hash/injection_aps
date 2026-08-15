@@ -1,4 +1,5 @@
-const SHIFT_PROPOSAL_SHARED_READY = frappe.require("/assets/injection_aps/js/injection_aps_shared.js");
+const SHIFT_PROPOSAL_SHARED_READY = frappe.require("/assets/injection_aps/js/injection_aps_ui_loader.js")
+	.then(() => injection_aps.ui_loader.load("20260815.2"));
 
 frappe.ui.form.on("APS Shift Schedule Proposal Batch", {
 	async refresh(frm) {

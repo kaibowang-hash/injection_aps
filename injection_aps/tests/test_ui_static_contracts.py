@@ -240,6 +240,8 @@ class TestUIStaticContracts(unittest.TestCase):
 
 	def test_form_scripts_wait_for_shared_ui_before_using_it(self):
 		contracts = {
+			"aps_change_request.js": "CHANGE_REQUEST_SHARED_READY",
+			"aps_planning_run.js": "PLANNING_RUN_SHARED_READY",
 			"aps_shift_schedule_proposal_batch.js": "SHIFT_PROPOSAL_SHARED_READY",
 			"customer_delivery_schedule.js": "CUSTOMER_SCHEDULE_SHARED_READY",
 			"aps_schedule_import_batch.js": "SCHEDULE_IMPORT_BATCH_SHARED_READY",
@@ -250,14 +252,38 @@ class TestUIStaticContracts(unittest.TestCase):
 			source = (APP_ROOT / "public/js" / filename).read_text(encoding="utf-8")
 			with self.subTest(filename=filename):
 				self.assertIn(
-					f'const {ready_name} = frappe.require("/assets/injection_aps/js/injection_aps_shared.js")',
+					f'const {ready_name} = frappe.require("/assets/injection_aps/js/injection_aps_ui_loader.js")',
 					source,
 				)
+				self.assertIn('.then(() => injection_aps.ui_loader.load("20260815.2"))', source)
 				self.assertIn(f"await {ready_name};", source)
 				self.assertLess(
 					source.index(f"await {ready_name};"),
 					source.index("injection_aps.ui.ensure_styles()"),
 				)
+
+	def test_non_gantt_pages_use_hot_reload_safe_ui_assets(self):
+		page_root = APP_ROOT / "injection_aps/page"
+		page_sources = sorted(
+			path for path in page_root.glob("*/*.js")
+			if path.parent.name != "aps_schedule_gantt"
+		)
+		self.assertEqual(len(page_sources), 10)
+		for path in page_sources:
+			source = path.read_text(encoding="utf-8")
+			with self.subTest(page=path.parent.name):
+				self.assertIn(
+					'frappe.require("/assets/injection_aps/js/injection_aps_ui_loader.js"',
+					source,
+				)
+				self.assertIn('injection_aps.ui_loader.start("20260815.2"', source)
+
+		loader = (APP_ROOT / "public/js/injection_aps_ui_loader.js").read_text(encoding="utf-8")
+		shared = (APP_ROOT / "public/js/injection_aps_shared.js").read_text(encoding="utf-8")
+		self.assertIn('injection_aps_shared.js?v=${encodeURIComponent(version)}', loader)
+		self.assertIn('const UI_ASSET_VERSION = "20260815.2"', shared)
+		self.assertIn('existingStyle.setAttribute("href", styleHref)', shared)
+		self.assertIn('aps-icons.svg?v=${UI_ASSET_VERSION}', shared)
 
 	def test_customer_progress_ignores_stale_refresh_results(self):
 		source = (

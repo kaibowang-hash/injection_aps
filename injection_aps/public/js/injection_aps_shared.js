@@ -1,15 +1,17 @@
 frappe.provide("injection_aps.ui");
 
 (function () {
-	if (injection_aps.ui.__initialized) {
+	const UI_ASSET_VERSION = "20260815.2";
+	if (injection_aps.ui.__asset_version === UI_ASSET_VERSION) {
 		return;
 	}
 
 	injection_aps.ui.__initialized = true;
+	injection_aps.ui.__asset_version = UI_ASSET_VERSION;
 	injection_aps.ui.translation_context = "Injection APS";
-	injection_aps.ui.local_icon_sprite = "/assets/injection_aps/icons/aps-icons.svg?v=20260815-pagination";
-	injection_aps.ui.__busy_keys = new Set();
-	injection_aps.ui.__freeze_depth = 0;
+	injection_aps.ui.local_icon_sprite = `/assets/injection_aps/icons/aps-icons.svg?v=${UI_ASSET_VERSION}`;
+	injection_aps.ui.__busy_keys = injection_aps.ui.__busy_keys || new Set();
+	injection_aps.ui.__freeze_depth = injection_aps.ui.__freeze_depth || 0;
 	injection_aps.ui.__action_role_map = {
 		preview: ["System Manager", "GMC", "PMC", "Sales Manager", "Sales User", "Manufacturing Manager"],
 		preview_current_rows: ["System Manager", "GMC", "PMC", "Sales Manager", "Sales User", "Manufacturing Manager"],
@@ -66,14 +68,20 @@ frappe.provide("injection_aps.ui");
 	};
 
 	injection_aps.ui.ensure_styles = function () {
-		if (document.getElementById("injection-aps-page-style")) {
-			return;
+		const styleHref = `/assets/injection_aps/css/injection_aps.css?v=${UI_ASSET_VERSION}`;
+		const existingStyle = document.getElementById("injection-aps-page-style");
+		if (existingStyle) {
+			if (existingStyle.getAttribute("href") !== styleHref) {
+				existingStyle.setAttribute("href", styleHref);
+			}
+			return existingStyle;
 		}
 		const link = document.createElement("link");
 		link.id = "injection-aps-page-style";
 		link.rel = "stylesheet";
-		link.href = "/assets/injection_aps/css/injection_aps.css?v=20260815-progress-ui";
+		link.href = styleHref;
 		document.head.appendChild(link);
+		return link;
 	};
 
 	injection_aps.ui.escape = function (value) {

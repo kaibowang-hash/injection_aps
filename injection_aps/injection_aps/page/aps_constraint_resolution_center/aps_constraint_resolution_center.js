@@ -1,4 +1,10 @@
 frappe.pages["aps-constraint-resolution-center"].on_page_load = function (wrapper) {
+	frappe.require("/assets/injection_aps/js/injection_aps_ui_loader.js", () => injection_aps.ui_loader.start("20260815.2", () => initializeConstraintResolutionCenter(wrapper)));
+};
+
+function initializeConstraintResolutionCenter(wrapper) {
+	wrapper.classList.add("ia-app-page");
+	injection_aps.ui.ensure_styles();
 	const page = frappe.ui.make_app_page({ parent: wrapper, title: __("Constraint Resolution Center", null, "Injection APS"), single_column: true });
 	const state = { run: frappe.utils.get_url_arg("run_name") || "", data: null };
 	const runField = page.add_field({
@@ -55,8 +61,8 @@ frappe.pages["aps-constraint-resolution-center"].on_page_load = function (wrappe
 			<td>${frappe.utils.escape_html(row.affected_customer || "-")}</td><td>${frappe.utils.escape_html(row.affected_item || "-")}</td>
 			<td>${format_currency(row.affected_qty || 0, null, 2)}</td><td>${frappe.utils.escape_html(row.message || "-")}</td>
 			<td>${frappe.utils.escape_html(row.status || "-")}</td><td>
-			<button class="btn btn-xs btn-default" data-open="${row.name}">${__("Details", null, "Injection APS")}</button>
-			${["Open", "Requested"].includes(row.status) ? `<button class="btn btn-xs btn-warning" data-exclude="${row.name}">${__("Exclude", null, "Injection APS")}</button>` : ""}
+			<button type="button" class="btn btn-xs btn-default" data-open="${row.name}">${__("Details", null, "Injection APS")}</button>
+			${["Open", "Requested"].includes(row.status) ? `<button type="button" class="btn btn-xs btn-warning" data-exclude="${row.name}">${__("Exclude", null, "Injection APS")}</button>` : ""}
 			</td></tr>`).join("") : `<tr><td colspan="6" class="text-muted">${__("None", null, "Injection APS")}</td></tr>`;
 		return `<section class="mb-4"><h4>${label} (${rows.length})</h4><div class="table-responsive"><table class="table table-bordered table-sm">
 			<thead><tr><th>${__("Customer", null, "Injection APS")}</th><th>${__("Item", null, "Injection APS")}</th><th>${__("Qty", null, "Injection APS")}</th><th>${__("Reason", null, "Injection APS")}</th><th>${__("Status", null, "Injection APS")}</th><th>${__("Action", null, "Injection APS")}</th></tr></thead>
@@ -72,4 +78,4 @@ frappe.pages["aps-constraint-resolution-center"].on_page_load = function (wrappe
 	}
 
 	load();
-};
+}

@@ -1,10 +1,10 @@
 frappe.pages["aps-customer-schedule-progress"].on_page_load = function (wrapper) {
-	frappe.require("/assets/injection_aps/js/injection_aps_shared.js", () => {
+	frappe.require("/assets/injection_aps/js/injection_aps_ui_loader.js", () => injection_aps.ui_loader.start("20260815.2", () => {
 		if (!wrapper.injection_aps_controller) {
 			wrapper.injection_aps_controller = new InjectionAPSCustomerScheduleProgress(wrapper);
 		}
 		wrapper.injection_aps_controller.refresh();
-	});
+	}));
 };
 
 frappe.pages["aps-customer-schedule-progress"].on_page_show = function (wrapper) {

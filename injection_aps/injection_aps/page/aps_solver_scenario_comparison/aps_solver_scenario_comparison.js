@@ -1,8 +1,10 @@
 frappe.pages["aps-solver-scenario-comparison"].on_page_load = function (wrapper) {
-	frappe.require("/assets/injection_aps/js/injection_aps_shared.js", () => initializeSolverComparison(wrapper));
+	frappe.require("/assets/injection_aps/js/injection_aps_ui_loader.js", () => injection_aps.ui_loader.start("20260815.2", () => initializeSolverComparison(wrapper)));
 };
 
 function initializeSolverComparison(wrapper) {
+	wrapper.classList.add("ia-app-page");
+	injection_aps.ui.ensure_styles();
 	const page = frappe.ui.make_app_page({ parent: wrapper, title: __("APS Solver Scenario Comparison", null, "Injection APS"), single_column: true });
 	const state = { run: frappe.utils.get_url_arg("run_name") || "", data: null, trialComparison: null };
 	const runField = page.add_field({ label: __("Planning Run", null, "Injection APS"), fieldname: "planning_run", fieldtype: "Link", options: "APS Planning Run", default: state.run,
@@ -97,7 +99,7 @@ function initializeSolverComparison(wrapper) {
 				<td>${number(metrics.utilization_spread_minutes)}</td>
 				<td>${number((metrics.p1_p2_completed_units || 0) / scale)}</td>
 				<td>${row.gap_percent == null ? "-" : `${number(row.gap_percent)}%`}</td>
-				<td>${selected ? `<span class="indicator-pill green">${__("Selected", null, "Injection APS")}</span>` : `<button class="btn btn-xs btn-primary" data-select="${row.scenario_key}" ${selectable ? "" : "disabled"} title="${frappe.utils.escape_html(invalidReason)}">${__("Select", null, "Injection APS")}</button>`}</td>
+				<td>${selected ? `<span class="indicator-pill green">${__("Selected", null, "Injection APS")}</span>` : `<button type="button" class="btn btn-xs btn-primary" data-select="${row.scenario_key}" ${selectable ? "" : "disabled"} title="${frappe.utils.escape_html(invalidReason)}">${__("Select", null, "Injection APS")}</button>`}</td>
 			</tr>`;
 		}).join("");
 		const details = (state.data.scenarios || []).map(renderScenarioDetails).join("");

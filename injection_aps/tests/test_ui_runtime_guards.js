@@ -488,6 +488,61 @@ async function testProgressMatrixCellShowsOperationalSummaryAndExactDrilldownKey
 	assert.match(html, /data-progress-date="2026-08-20"/);
 }
 
+async function testUiLoaderReloadsSharedAssetsByVersionAndDeduplicatesRequests() {
+	const source = fs.readFileSync(path.join(APP_ROOT, "public/js/injection_aps_ui_loader.js"), "utf8");
+	const scripts = [];
+	const context = {
+		console,
+		document: {
+			createElement() {
+				const listeners = {};
+				return {
+					addEventListener(name, callback) {
+						listeners[name] = callback;
+					},
+					dataset: {},
+					listeners,
+				};
+			},
+			head: {
+				appendChild(script) {
+					scripts.push(script);
+				},
+			},
+		},
+		frappe: {
+			msgprint() {},
+			provide() {
+				context.injection_aps = context.injection_aps || {};
+				context.injection_aps.ui_loader = context.injection_aps.ui_loader || {};
+			},
+		},
+		injection_aps: {},
+		__: (value) => String(value),
+	};
+	vm.createContext(context);
+	vm.runInContext(source, context, { filename: "injection_aps_ui_loader.js" });
+
+	const first = context.injection_aps.ui_loader.load("20260815.2");
+	const duplicate = context.injection_aps.ui_loader.load("20260815.2");
+	assert.equal(first, duplicate);
+	assert.equal(scripts.length, 1);
+	assert.match(scripts[0].src, /injection_aps_shared\.js\?v=20260815\.2$/);
+
+	let stylesEnsured = 0;
+	context.injection_aps.ui = {
+		__asset_version: "20260815.2",
+		ensure_styles() {
+			stylesEnsured += 1;
+		},
+	};
+	scripts[0].listeners.load();
+	await first;
+	await context.injection_aps.ui_loader.load("20260815.2");
+	assert.equal(scripts.length, 1);
+	assert.equal(stylesEnsured, 2);
+}
+
 async function testGanttMachineViewCollapsesCampaignAndRendersFourPlanLayers() {
 	const { Controller, context } = loadPage(
 		"injection_aps/page/aps_schedule_gantt/aps_schedule_gantt.js",
@@ -540,6 +595,7 @@ async function main() {
 		testCustomerProgressV2DispatchesDetailAndMatrixWithoutChangingLegacyCall,
 		testProgressToolbarUsesSharedIconControls,
 		testProgressMatrixCellShowsOperationalSummaryAndExactDrilldownKey,
+		testUiLoaderReloadsSharedAssetsByVersionAndDeduplicatesRequests,
 		testGanttMachineViewCollapsesCampaignAndRendersFourPlanLayers,
 	];
 	for (const test of tests) {

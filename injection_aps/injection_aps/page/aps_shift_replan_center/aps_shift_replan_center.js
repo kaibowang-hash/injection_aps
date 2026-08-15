@@ -1,8 +1,10 @@
 frappe.pages["aps-shift-replan-center"].on_page_load = function (wrapper) {
-	frappe.require("/assets/injection_aps/js/injection_aps_shared.js", () => initializeShiftReplanCenter(wrapper));
+	frappe.require("/assets/injection_aps/js/injection_aps_ui_loader.js", () => injection_aps.ui_loader.start("20260815.2", () => initializeShiftReplanCenter(wrapper)));
 };
 
 function initializeShiftReplanCenter(wrapper) {
+	wrapper.classList.add("ia-app-page");
+	injection_aps.ui.ensure_styles();
 	const page = frappe.ui.make_app_page({ parent: wrapper, title: __("APS Shift Replan Center", null, "Injection APS"), single_column: true });
 	const state = { cycle: null };
 	const $body = $("<div class='ia-page ia-replan-center'></div>").appendTo(page.body);
@@ -85,7 +87,7 @@ function initializeShiftReplanCenter(wrapper) {
 			disabled = true;
 			reason = __("Your role cannot perform this action.", null, "Injection APS");
 		}
-		const $button = $(`<button class="btn ${primary ? "btn-primary" : "btn-default"} btn-sm" ${disabled ? "disabled" : ""} title="${frappe.utils.escape_html(reason || "")}">${label}</button>`);
+		const $button = $(`<button type="button" class="btn ${primary ? "btn-primary" : "btn-default"} btn-sm" ${disabled ? "disabled" : ""} title="${frappe.utils.escape_html(reason || "")}">${label}</button>`);
 		if (!disabled) $button.on("click", action);
 		return $button;
 	}
