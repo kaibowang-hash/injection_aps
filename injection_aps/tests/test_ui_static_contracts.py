@@ -501,6 +501,20 @@ class TestUIStaticContracts(unittest.TestCase):
 				placeholder_mismatches.append((row, source_placeholders, target_placeholders))
 		self.assertEqual(placeholder_mismatches, [])
 
+	def test_chinese_translations_do_not_expose_internal_english_workflow_terms(self):
+		rows = _read_translation_rows(APP_ROOT / "translations/zh.csv")
+		forbidden = re.compile(
+			r"(?<![A-Za-z])(?:Demand Identity|Planning Run|Solver Job|Current Plan|"
+			r"Forecast|Commitments?|Formal|Trial|Legacy|Apply|Runs?|Phase 1)(?![A-Za-z])",
+			re.IGNORECASE,
+		)
+		mixed = [
+			f"{source!r} => {translation!r}"
+			for source, translation, *_ in rows
+			if forbidden.search(translation)
+		]
+		self.assertEqual(mixed, [])
+
 	def test_allocation_helpers_are_not_searchable_or_mutable_by_roles(self):
 		for doctype in ("aps_delivery_allocation", "aps_production_allocation"):
 			path = APP_ROOT / "injection_aps/doctype" / doctype / f"{doctype}.json"

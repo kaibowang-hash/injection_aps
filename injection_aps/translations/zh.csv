@@ -3351,14 +3351,14 @@ Delivery lineage resolved.,交付血缘已处理。,Injection APS
 revision-mode recommendation,修订模式建议,Injection APS
 schedule revision preview,排期修订预览,Injection APS
 schedule revision,排期修订,Injection APS
-Demand Identity resolution,需求身份消歧,Injection APS
+Demand Identity resolution,需求标识消歧,Injection APS
 You do not have permission to access this schedule item.,您无权访问此排期明细。
-Demand Identity business keys are immutable: {0}.,需求身份的业务键不可修改：{0}。
+Demand Identity business keys are immutable: {0}.,需求标识的业务键不可修改：{0}。
 APS delivery-plan lineage suggestion failed,APS 出货计划血缘建议失败
 APS V2 is disabled.,APS V2 已停用。
 A resolution reason is required.,必须填写处理原因。
-The selected Demand Identity does not match this delivery row.,所选需求身份与此出货明细不匹配。
-The selected Demand Identity has no current schedule row.,所选需求身份没有当前排期明细。
+The selected Demand Identity does not match this delivery row.,所选需求标识与此出货明细不匹配。
+The selected Demand Identity has no current schedule row.,所选需求标识没有当前排期明细。
 No unambiguous open APS demand is available.,没有可明确归属的开放 APS 需求。
 The return has no unique original APS delivery lineage or exceeds its reversible quantity.,退货没有唯一的原始 APS 交付血缘，或数量超过可冲回数量。
 No active demand falls in the controlled date window.,受控日期窗口内没有有效需求。
@@ -3366,9 +3366,9 @@ More than one schedule scope is eligible; APS will not guess.,存在多个可用
 "Revision mode must be Full Replacement, Partial Revision, or Incremental Demand.",修订模式必须是全量替换、部分修订或增量需求。
 The configured source contract explicitly declares this revision mode.,已配置的来源契约明确指定了此修订模式。
 "No active demand exists in this customer/company/scope, so the first version is a full baseline.",此客户、公司和范围内没有有效需求，因此首个版本按全量基线处理。
-Every active demand identity is represented by the incoming rows; a full replacement is the most likely intent.,导入行覆盖了全部有效需求身份，因此最可能的意图是全量替换。
-The file overlaps only part of the active demand identities; omitted identities should normally remain active.,文件只覆盖部分有效需求身份；未出现的身份通常应继续有效。
-"No stable identity match was found. APS recommends independent incremental demand, but the source cannot prove this intent.",未找到稳定身份匹配。APS 建议作为独立增量需求，但来源数据本身无法证明该业务意图。
+Every active demand identity is represented by the incoming rows; a full replacement is the most likely intent.,导入行覆盖了全部有效需求标识，因此最可能的意图是全量替换。
+The file overlaps only part of the active demand identities; omitted identities should normally remain active.,文件只覆盖部分有效需求标识；未出现的标识通常应继续有效。
+"No stable identity match was found. APS recommends independent incremental demand, but the source cannot prove this intent.",未找到稳定标识匹配。APS 建议作为独立增量需求，但来源数据本身无法证明该业务意图。
 Version No is required.,必须填写版本号。
 Idempotent replay,幂等重放
 This confirmed revision has already been applied.,此已确认修订已经应用。
@@ -3377,39 +3377,39 @@ The revision input changed after preview. Refresh and confirm the latest rows.,�
 Revision checks failed:<br>{0},修订检查失败：<br>{0}
 Explain why the confirmed revision mode differs from the APS recommendation.,请说明已确认的修订模式为何不同于 APS 建议。
 Schedule item {0} does not exist.,排期明细 {0} 不存在。
-The selected Demand Identity does not match the schedule-item scope.,所选需求身份与排期明细范围不匹配。
-The selected Demand Identity already has another current schedule row.,所选需求身份已经指向另一条当前排期明细。
-Phase 1 migration found ambiguous active demand lineage and did not guess or merge it.,Phase 1 迁移发现有效需求血缘存在歧义，因此没有猜测或合并。
-Review the listed active schedule rows and resolve their Demand Identity explicitly.,请检查列出的有效排期明细，并明确处理其需求身份。
+The selected Demand Identity does not match the schedule-item scope.,所选需求标识与排期明细范围不匹配。
+The selected Demand Identity already has another current schedule row.,所选需求标识已经指向另一条当前排期明细。
+Phase 1 migration found ambiguous active demand lineage and did not guess or merge it.,第一阶段迁移发现有效需求血缘存在歧义，因此没有猜测或合并。
+Review the listed active schedule rows and resolve their Demand Identity explicitly.,请检查列出的有效排期明细，并明确处理其需求标识。
 Customer and Company are required.,必须填写客户和公司。
-APS V2 is disabled. The current Legacy import and delivery workflow remains active.,APS V2 已停用，当前 Legacy 导入和交付流程继续生效。
-Incremental demand must use a new stable identity and a distinct external line reference.,增量需求必须使用新的稳定身份及不同的外部行引用。
-The selected Demand Identity is not part of the current active revision scope.,所选需求身份不属于当前有效修订范围。
-A reason is required when a Demand Identity is selected manually.,手工选择需求身份时必须填写原因。
-More than one active demand identity matches this row; APS will not guess.,此明细匹配到多个有效需求身份；APS 不会猜测。
-The matched active row has not been assigned a Demand Identity.,匹配到的有效明细尚未分配需求身份。
-Two incoming rows resolve to the same Demand Identity.,两条导入明细解析到了同一个需求身份。
+APS V2 is disabled. The current Legacy import and delivery workflow remains active.,APS V2 已停用，当前旧版导入和交付流程继续生效。
+Incremental demand must use a new stable identity and a distinct external line reference.,增量需求必须使用新的稳定标识及不同的外部行引用。
+The selected Demand Identity is not part of the current active revision scope.,所选需求标识不属于当前有效修订范围。
+A reason is required when a Demand Identity is selected manually.,手工选择需求标识时必须填写原因。
+More than one active demand identity matches this row; APS will not guess.,此明细匹配到多个有效需求标识；APS 不会猜测。
+The matched active row has not been assigned a Demand Identity.,匹配到的有效明细尚未分配需求标识。
+Two incoming rows resolve to the same Demand Identity.,两条导入明细解析到了同一个需求标识。
 Source validation,来源校验
 One or more source rows are invalid.,一条或多条来源明细无效。
 "Customer, company, item, date, quantity, and Sales Order references are valid.",客户、公司、物料、日期、数量及销售订单引用均有效。
 Duplicate rows,重复明细
 Duplicate business/date rows are blocked until an explicit policy is selected.,在明确选择处理策略前，将阻止业务键和日期重复的明细。
 Duplicate rows will be summed because the user explicitly selected Sum.,用户已明确选择汇总，因此重复明细将合并求和。
-Demand Identity,需求身份
-One or more rows have ambiguous or invalid identity lineage; APS will not guess.,一条或多条明细的身份血缘有歧义或无效；APS 不会猜测。
-Every incoming row has a unique inherited identity or a controlled new-identity action.,每条导入明细均继承了唯一身份，或采用了受控的新建身份操作。
+Demand Identity,需求标识
+One or more rows have ambiguous or invalid identity lineage; APS will not guess.,一条或多条明细的标识血缘有歧义或无效；APS 不会猜测。
+Every incoming row has a unique inherited identity or a controlled new-identity action.,每条导入明细均继承了唯一标识，或采用了受控的新建标识操作。
 Mode recommendation,模式建议
 Recommended: {0},建议：{0}
 Selected: {0},已选：{0}
 Full replacement cancellations,全量替换取消项
-Omitted active identities will be recorded as zero-quantity cancellations; executed quantities become Excess.,未出现的有效身份将记录为零数量取消项；已执行数量转为超额。
+Omitted active identities will be recorded as zero-quantity cancellations; executed quantities become Excess.,未出现的有效标识将记录为零数量取消项；已执行数量转为超额。
 Incremental overlap,增量重合
 "Every row creates independent demand and adds to the active quantity, even when item and dates overlap.",每条明细都会创建独立需求并加入有效数量，即使物料和日期重合也是如此。
 Company {0} does not exist.,公司 {0} 不存在。
-Demand Identity {0} does not exist.,需求身份 {0} 不存在。
-"The selected Demand Identity belongs to another company, customer, or schedule scope.",所选需求身份属于其他公司、客户或排期范围。
-The selected Demand Identity belongs to another item.,所选需求身份属于其他物料。
-APS Demand Identity,APS 需求身份
+Demand Identity {0} does not exist.,需求标识 {0} 不存在。
+"The selected Demand Identity belongs to another company, customer, or schedule scope.",所选需求标识属于其他公司、客户或排期范围。
+The selected Demand Identity belongs to another item.,所选需求标识属于其他物料。
+APS Demand Identity,APS 需求标识
 Active,有效,APS Demand Identity
 Cancelled,已取消,APS Demand Identity
 Closed,已关闭,APS Demand Identity
@@ -3419,7 +3419,7 @@ Schedule Scope,排期范围,APS Demand Identity
 Item Code,物料编码,APS Demand Identity
 Customer Part No,客户料号,APS Demand Identity
 External Line Reference,外部行引用,APS Demand Identity
-External Identity Key,外部身份键,APS Demand Identity
+External Identity Key,外部标识键,APS Demand Identity
 Current Schedule,当前排期,APS Demand Identity
 Current Schedule Item,当前排期明细,APS Demand Identity
 Status,状态,APS Demand Identity
@@ -3451,7 +3451,7 @@ Reason,原因,APS Unallocated Delivery
 Match Method,匹配方式,APS Unallocated Delivery
 Candidates,候选项,APS Unallocated Delivery
 Source Fingerprint,来源指纹,APS Unallocated Delivery
-Resolved Demand Identity,已处理需求身份,APS Unallocated Delivery
+Resolved Demand Identity,已处理需求标识,APS Unallocated Delivery
 Resolved Schedule Item,已处理排期明细,APS Unallocated Delivery
 Resolution Reason,处理原因,APS Unallocated Delivery
 Resolved By,处理人,APS Unallocated Delivery
@@ -3471,19 +3471,19 @@ Mode Confirmation Reason,模式确认原因,Customer Delivery Schedule
 Source Contract,来源契约,Customer Delivery Schedule
 Revision Fingerprint,修订指纹,Customer Delivery Schedule
 External Line Reference,外部行引用,Customer Delivery Schedule Item
-Demand Identity,需求身份,Customer Delivery Schedule Item
+Demand Identity,需求标识,Customer Delivery Schedule Item
 Previous Schedule Item,上一排期明细,Customer Delivery Schedule Item
-Identity Match Method,身份匹配方式,Customer Delivery Schedule Item
+Identity Match Method,标识匹配方式,Customer Delivery Schedule Item
 External Line,外部行,Customer Delivery Schedule Item
 Explicit Previous Date,明确上一日期,Customer Delivery Schedule Item
 Unique Business Candidate,唯一业务候选,Customer Delivery Schedule Item
 Manual Resolution,人工消歧,Customer Delivery Schedule Item
-Legacy Backfill,Legacy 回填,Customer Delivery Schedule Item
-New Identity,新建身份,Customer Delivery Schedule Item
-Incremental Identity,增量身份,Customer Delivery Schedule Item
-Identity Resolution Reason,身份处理原因,Customer Delivery Schedule Item
-Identity Resolved By,身份处理人,Customer Delivery Schedule Item
-Identity Resolved On,身份处理时间,Customer Delivery Schedule Item
+Legacy Backfill,旧版数据回填,Customer Delivery Schedule Item
+New Identity,新建标识,Customer Delivery Schedule Item
+Incremental Identity,增量标识,Customer Delivery Schedule Item
+Identity Resolution Reason,标识处理原因,Customer Delivery Schedule Item
+Identity Resolved By,标识处理人,Customer Delivery Schedule Item
+Identity Resolved On,标识处理时间,Customer Delivery Schedule Item
 Original Schedule Date,原始排期日期,Customer Delivery Schedule Item
 Effective Schedule Date,有效排期日期,Customer Delivery Schedule Item
 Effective Qty,有效数量,Customer Delivery Schedule Item
@@ -3497,18 +3497,18 @@ Date Moved,日期已移动,Customer Delivery Schedule Item
 Incremental,增量,Customer Delivery Schedule Item
 Delivery Match Status,交付匹配状态,Customer Delivery Schedule Item
 Not Delivered,未交付,Customer Delivery Schedule Item
-Explicit Identity,明确身份,Customer Delivery Schedule Item
+Explicit Identity,明确标识,Customer Delivery Schedule Item
 Delivery Plan,出货计划,Customer Delivery Schedule Item
-Legacy Controlled Match,Legacy 受控匹配,Customer Delivery Schedule Item
+Legacy Controlled Match,旧版受控匹配,Customer Delivery Schedule Item
 Unallocated,未分配,Customer Delivery Schedule Item
 Excess,超额,Customer Delivery Schedule Item
-Demand Identity,需求身份,APS Delivery Allocation
+Demand Identity,需求标识,APS Delivery Allocation
 Delivery Plan Detail,出货计划明细,APS Delivery Allocation
 Match Status,匹配状态,APS Delivery Allocation
 Match Reason,匹配原因,APS Delivery Allocation
-Explicit Identity,明确身份,APS Delivery Allocation
+Explicit Identity,明确标识,APS Delivery Allocation
 Delivery Plan,出货计划,APS Delivery Allocation
-Legacy Controlled Match,Legacy 受控匹配,APS Delivery Allocation
+Legacy Controlled Match,旧版受控匹配,APS Delivery Allocation
 Replacement FIFO,替换先进先出,APS Delivery Allocation
 A decision reason is required when changing P1/P2 admission.,变更 P1/P2 准入时必须填写决策理由。
 APS Demand Admission,APS 需求准入
@@ -3526,7 +3526,7 @@ Baseline fingerprint,基线指纹
 Candidate Qty,候选数量
 Carried Supply,承接供应量
 Commitment quantity {0} cannot be negative.,承诺数量 {0} 不能为负数。
-Commitment scope does not match its Demand Identity.,承诺范围与其需求身份不一致。
+Commitment scope does not match its Demand Identity.,承诺范围与其需求标识不一致。
 Commitment transfer scope is invalid.,承诺转移范围无效。
 Confirm P1/P2 Admission,确认 P1/P2 准入
 Confirmed customer schedule demand is mandatory P0.,已确认的客户排期需求为必须准入的 P0。
@@ -3537,27 +3537,27 @@ Demand Admission Workbench,需求准入工作台
 Demand Admissions are maintained by the controlled APS admission service.,需求准入由受控的 APS 准入服务维护。
 Demand Baseline / Admission,需求基线 / 准入
 Demand Commitments are maintained by the controlled APS demand ledger.,需求承诺由受控的 APS 需求台账维护。
-Demand Identity {0} has multiple active Formal owners and requires manual resolution.,需求身份 {0} 存在多个生效的正式所有者，需要人工处理。
+Demand Identity {0} has multiple active Formal owners and requires manual resolution.,需求标识 {0} 同时归属于多个生效的正式运算，需要人工处理。
 Demand admission could not be loaded. Review the error and refresh.,无法加载需求准入，请检查错误后刷新。
 Demand admission loaded. Disabled actions show that a baseline or role is still required.,需求准入已加载；不可用的操作表示仍缺少基线或相应角色权限。
 Demand baseline failed quantity conservation: {0},需求基线未通过数量守恒校验：{0}
 Demand baseline prepared.,需求基线已准备完成。
 Enable APS V2 in a controlled rollout,请在受控灰度中启用 APS V2
 Explain why the optional demand is selected or left out.,请说明选择或不选择可选需求的原因。
-Formal V2 ownership writes are disabled.,V2 正式所有权写入尚未启用。
-Formal V2 ownership writes are not enabled in this phase. Use a Trial run.,本阶段尚未启用 V2 正式所有权写入，请使用试算 Run。
+Formal V2 ownership writes are disabled.,V2 正式归属写入尚未启用。
+Formal V2 ownership writes are not enabled in this phase. Use a Trial run.,本阶段尚未启用 V2 正式归属写入，请使用试算运算。
 Framework SO remainder after open customer schedules and active P1 commitments.,框架销售订单在扣除未完成客户排期和生效 P1 承诺后的剩余量。
-Frozen execution remains owned by its source Run and can only be referenced.,已冻结执行任务仍归来源 Run 所有，只能被引用。
+Frozen execution remains owned by its source Run and can only be referenced.,已冻结执行任务仍归来源运算所有，只能被引用。
 Info,信息
 Legacy Planning Active,当前为旧版排产
 Loading demand admission...,正在加载需求准入...
 New Plan Qty,新增计划数量
 Not prepared,尚未准备
 Only P0 Admission can be mandatory.,只有 P0 准入可以设为必选。
-Ownership transfer requires a reason.,所有权转移必须填写理由。
+Ownership transfer requires a reason.,变更归属必须填写理由。
 P0 Admission is mandatory and its full candidate quantity must remain selected.,P0 为必选准入，必须保持全部候选数量已选择。
-P0 Admission requires a Demand Identity.,P0 准入必须关联需求身份。
-P0 Commitment requires a Demand Identity.,P0 承诺必须关联需求身份。
+P0 Admission requires a Demand Identity.,P0 准入必须关联需求标识。
+P0 Commitment requires a Demand Identity.,P0 承诺必须关联需求标识。
 P0 Mandatory,P0 必排
 P0 customer commitments are mandatory. P1 framework demand and P2 safety-stock demand remain unselected until PMC explicitly saves a decision.,P0 客户承诺必须排产；P1 框架需求和 P2 安全库存需求在 PMC 明确保存决策前默认不选择。
 P0 demand is mandatory and cannot be deselected.,P0 需求为必排需求，不能取消选择。
@@ -3568,28 +3568,28 @@ P2 Candidate,P2 候选
 Planning Run {0} is not open for demand preparation.,计划运算 {0} 当前不允许准备需求。
 "Prepare Baseline, then confirm P1/P2",先准备基线，再确认 P1/P2,Injection APS
 Prepare Demand Baseline,准备需求基线
-Preparing demand ownership and stock coverage...,正在准备需求所有权和库存覆盖...
+Preparing demand ownership and stock coverage...,正在准备需求归属和库存覆盖...
 Recommendation,建议说明
 Admission,准入,Injection APS
 Carry Forward,承接数量,Injection APS
 Class,分类,Injection APS
 Recommended Qty,建议数量,Injection APS
 Recommended and selected admission quantities cannot exceed the candidate quantity.,建议数量和已选数量不能超过候选数量。
-Run Demand Ownership,Run 需求所有权
+Run Demand Ownership,运算需求归属
 Safety target gap after projected unallocated finished-goods stock.,扣除预计未分配成品库存后的安全库存目标缺口。
 Save P1/P2 Selection,保存 P1/P2 选择
 Save Selection,保存选择
 Saving admission decisions...,正在保存准入决策...
 Select a Planning Run first.,请先选择计划运算。
 Select a Planning Run to prepare and review its demand baseline.,请选择计划运算，以准备并复核其需求基线。
-Select a Run,选择 Run
+Select a Run,选择运算
 Selected Qty,已选数量
 Selected admission quantity cannot exceed its candidate quantity.,已选准入数量不能超过候选数量。
-Source Runs,来源 Run 数
+Source Runs,来源运算数
 Stock Coverage Allocations are maintained by the controlled APS demand ledger.,库存覆盖分配由受控的 APS 需求台账维护。
 Stock coverage quantities cannot be negative.,库存覆盖数量不能为负数。
-The run demand baseline changed. Refresh before preparing it again.,Run 需求基线已变化，请刷新后再重新准备。
-{0} active schedule rows have no Demand Identity. Resolve the Phase 1 migration exceptions first: {1},{0} 条生效排期明细缺少需求身份，请先处理 Phase 1 迁移异常：{1}
+The run demand baseline changed. Refresh before preparing it again.,运算需求基线已变化，请刷新后重新准备。
+{0} active schedule rows have no Demand Identity. Resolve the Phase 1 migration exceptions first: {1},{0} 条生效排期明细缺少需求标识，请先处理第一阶段迁移异常：{1}
 {0} is limited to {1} rows.,{0} 最多允许 {1} 行。
 {0} must be a valid JSON array.,{0} 必须是有效的 JSON 数组。
 {0} must be an array of objects.,{0} 必须是对象数组。
@@ -3604,7 +3604,7 @@ Decided By,决策人,APS Demand Admission
 Decided On,决策时间,APS Demand Admission
 Decision Fingerprint,决策指纹,APS Demand Admission
 Decision Reason,决策理由,APS Demand Admission
-Demand Identity,需求身份,APS Demand Admission
+Demand Identity,需求标识,APS Demand Admission
 Excluded,未选择,APS Demand Admission
 Idempotency Key,幂等键,APS Demand Admission
 Input Fingerprint,输入指纹,APS Demand Admission
@@ -3624,7 +3624,7 @@ Source Name,来源单据,APS Demand Admission
 Status,状态,APS Demand Admission
 Superseded,已取代,APS Demand Admission
 Utilization Benefit Percent,利用率收益百分比,APS Demand Admission
-Active Owner Key,生效所有者键,APS Demand Commitment
+Active Owner Key,生效归属键,APS Demand Commitment
 Admission Class,准入分类,APS Demand Commitment
 Approved,已批准,APS Demand Commitment
 Cancelled,已取消,APS Demand Commitment
@@ -3636,14 +3636,14 @@ Conflict,冲突,APS Demand Commitment
 Customer,客户,APS Demand Commitment
 Delivered Qty,已出货数量,APS Demand Commitment
 Demand Admission,需求准入,APS Demand Commitment
-Demand Identity,需求身份,APS Demand Commitment
+Demand Identity,需求标识,APS Demand Commitment
 Draft,草稿,APS Demand Commitment
 Effective Due Time,有效交期时间,APS Demand Commitment
 Excess,超额,APS Demand Commitment
 Excess Qty,超额数量,APS Demand Commitment
 Executed Floor Qty,已执行下限数量,APS Demand Commitment
 Execution State,执行状态,APS Demand Commitment
-Formal Owner,正式所有者,APS Demand Commitment
+Formal Owner,正式运算归属,APS Demand Commitment
 Frozen,已冻结,APS Demand Commitment
 Idempotency Key,幂等键,APS Demand Commitment
 In Progress,执行中,APS Demand Commitment
@@ -3654,8 +3654,8 @@ Newly Planned Qty,新增计划数量,APS Demand Commitment
 On Time Qty,准时数量,APS Demand Commitment
 Original Due Date,原始交期,APS Demand Commitment
 Owned,持有,APS Demand Commitment
-Owner State,所有权状态,APS Demand Commitment
-Ownership Fingerprint,所有权指纹,APS Demand Commitment
+Owner State,归属状态,APS Demand Commitment
+Ownership Fingerprint,归属指纹,APS Demand Commitment
 P0,P0,APS Demand Commitment
 P1,P1,APS Demand Commitment
 P2,P2,APS Demand Commitment
@@ -3669,7 +3669,7 @@ Requested Qty,需求数量,APS Demand Commitment
 Reschedulable,可重排,APS Demand Commitment
 Schedule Item,排期明细,APS Demand Commitment
 Service Priority,服务优先级,APS Demand Commitment
-Source Run,来源 Run,APS Demand Commitment
+Source Run,来源运算,APS Demand Commitment
 Source Snapshot JSON,来源快照 JSON,APS Demand Commitment
 Source Work Orders JSON,来源工单 JSON,APS Demand Commitment
 Status,状态,APS Demand Commitment
@@ -3682,10 +3682,10 @@ Unscheduled Qty,未排数量,APS Demand Commitment
 Admission Fingerprint,准入指纹,APS Planning Run
 Baseline Prepared By,基线准备人,APS Planning Run
 Baseline Prepared On,基线准备时间,APS Planning Run
-Baseline Run,基线 Run,APS Planning Run
+Baseline Run,基线运算,APS Planning Run
 Carried Commitment Count,承接承诺数,APS Planning Run
 Demand Baseline Fingerprint,需求基线指纹,APS Planning Run
-Source Run Count,来源 Run 数,APS Planning Run
+Source Run Count,来源运算数,APS Planning Run
 Total Carried Qty,承接总数量,APS Planning Run
 Total New Plan Qty,新增计划总数量,APS Planning Run
 Total P0 Qty,P0 总数量,APS Planning Run
@@ -3698,11 +3698,11 @@ Company,公司,APS Stock Coverage Allocation
 Consumed,已消耗,APS Stock Coverage Allocation
 Consumed Qty,已消耗数量,APS Stock Coverage Allocation
 Demand Commitment,需求承诺,APS Stock Coverage Allocation
-Demand Identity,需求身份,APS Stock Coverage Allocation
+Demand Identity,需求标识,APS Stock Coverage Allocation
 Fingerprint,指纹,APS Stock Coverage Allocation
 Idempotency Key,幂等键,APS Stock Coverage Allocation
 Item Code,物料编码,APS Stock Coverage Allocation
-Owner Run,所有者 Run,APS Stock Coverage Allocation
+Owner Run,归属运算,APS Stock Coverage Allocation
 Released,已释放,APS Stock Coverage Allocation
 Released Qty,已释放数量,APS Stock Coverage Allocation
 Remaining Qty,剩余数量,APS Stock Coverage Allocation
@@ -3870,7 +3870,7 @@ APS Campaign Output,APS 联产品活动输出
 APS Production Campaign,APS 联产品生产活动
 APS Replan Cycle,APS 班次重排周期
 APS Shift Replan Center,APS 班次重排中心
-APS Solver Job,APS 求解作业
+APS Solver Job,APS 求解任务
 APS Solver Scenario Comparison,APS 求解方案比较
 Calculating forecast and shift differences...,正在计算预测与班次差异...
 Create Replan Proposal,创建重排建议
@@ -3953,7 +3953,7 @@ Solver Completed On,求解完成时间,APS Planning Run
 Solver Engine Used,使用的求解引擎,APS Planning Run
 Solver Gap Percent,求解差距百分比,APS Planning Run
 Solver Input Fingerprint,求解输入指纹,APS Planning Run
-Solver Job,求解作业,APS Planning Run
+Solver Job,求解任务,APS Planning Run
 Solver Objective Value,求解目标值,APS Planning Run
 Solver Phase,求解阶段,APS Planning Run
 Solver Quality JSON,求解质量 JSON,APS Planning Run
@@ -4166,8 +4166,8 @@ Select,选择,Injection APS
 Select Scenario,选择方案,Injection APS
 Select a validated solver scenario.,请选择一个已验证的求解方案。,Injection APS
 Shift Type is required.,班次类型为必填项。,Injection APS
-Solver Job {0} was not found.,未找到求解作业 {0}。,Injection APS
-Solver Jobs are maintained by the controlled APS solver service.,求解作业由受控的 APS 求解服务维护。,Injection APS
+Solver Job {0} was not found.,未找到求解任务 {0}。,Injection APS
+Solver Jobs are maintained by the controlled APS solver service.,求解任务由受控的 APS 求解服务维护。,Injection APS
 Solver inputs changed. Analyze again before Apply.,求解输入已变化，请重新分析后再应用。,Injection APS
 The replan proposal changed. Refresh before continuing.,重排建议已变化，请刷新后继续。,Injection APS
 The selected solver fingerprint changed during Apply.,应用过程中所选求解方案指纹发生了变化。,Injection APS
@@ -4260,7 +4260,7 @@ Production Campaign,生产活动,APS Shift Schedule Proposal Item
 Co-product,联产品,APS Work Order Proposal Item
 Primary,主产出,APS Schedule Result
 Capacity Owner,产能所有者,APS Shift Schedule Proposal Item
-Family Campaign output {0} has more than one Run-level Result; consolidate exact demand ownership before materializing.,联产品生产活动产出 {0} 在本次运算中存在多个结果；请先合并准确的需求所有权再实体化。,Injection APS
+Family Campaign output {0} has more than one Run-level Result; consolidate exact demand ownership before materializing.,联产品生产活动产出 {0} 在本次运算中存在多个结果；请先合并准确的需求归属再生成单据。,Injection APS
 "BOM Decisions","BOM 决策","Injection APS"
 "BOM Tree","BOM 树","Injection APS"
 "BOM Selection Snapshot","BOM 选择快照","APS Planning Run"
@@ -4326,12 +4326,12 @@ Family Campaign output {0} has more than one Run-level Result; consolidate exact
 "Actual Delivery Note allocations cover the effective schedule quantity.","实际销售出库分配已覆盖有效排期数量。","Injection APS"
 "Campaign","生产活动","Injection APS"
 "Campaign Outputs","生产活动产出","Injection APS"
-"Clear APS Run to return to the effective cross-Run view.","清空 APS 运算以返回当前有效的跨 Run 视图。","Injection APS"
+"Clear APS Run to return to the effective cross-Run view.","清空“APS 运算”筛选，返回当前有效的跨运算视图。","Injection APS"
 "Conservation Issues","守恒异常","Injection APS"
 "Conservation Status","守恒状态","Injection APS"
 "Current","当前","Injection APS"
-"Current effective cross-Run projection","当前有效跨 Run 投影","Injection APS"
-"Current production is planned, but no Forecast completion is available.","当前已安排生产，但没有可用的 Forecast 完成时间。","Injection APS"
+"Current effective cross-Run projection","当前有效的跨运算投影","Injection APS"
+"Current production is planned, but no Forecast completion is available.","当前已有生产计划，但尚无预测完成时间。","Injection APS"
 "Customer Schedule Progress Matrix","客户排期进度矩阵","Injection APS"
 "Customer Schedule Progress V2","客户排期进度 V2","Injection APS"
 "DN","销售出库","Injection APS"
@@ -4345,33 +4345,33 @@ Family Campaign output {0} has more than one Run-level Result; consolidate exact
 "Delivery Plan / Delivered","出货计划 / 实际交货","Injection APS"
 "Delivery and Recovery","交货与恢复","Injection APS"
 "Demand / Solver Delta","需求 / 求解差异","Injection APS"
-"Demand ledger quantities do not conserve; inspect the linked Commitment and allocations.","需求台账数量不守恒；请检查关联的 Commitment 和分配。","Injection APS"
+"Demand ledger quantities do not conserve; inspect the linked Commitment and allocations.","需求台账数量不守恒；请检查关联的需求承诺和分配记录。","Injection APS"
 "Documents","单据","Injection APS"
-"Each Demand Identity is projected from its current Formal owner; no recent old Run is selected by status priority.","每个 Demand Identity 都从其当前 Formal 所有者进行投影；不按状态优先级挑选最近的旧 Run。","Injection APS"
+"Each Demand Identity is projected from its current Formal owner; no recent old Run is selected by status priority.","每个需求标识均按其当前归属的正式运算进行投影；不会按状态优先级选择最近的历史运算。","Injection APS"
 "Earlier Dates","更早日期","Injection APS"
 "Enable APS V2 before opening the Progress date-cell drilldown.","打开进度日期单元格下钻前请先启用 APS V2。","Injection APS"
 "Excess","超产","Injection APS"
 "Export the current filtered page and visible date window.","导出当前筛选页和可见日期窗口。","Injection APS"
-"Forecast completion is later than the effective customer due time.","Forecast 完成时间晚于有效客户交期。","Injection APS"
-"Forecast completion is within 24 hours of the effective due time.","Forecast 完成时间距有效交期不足 24 小时。","Injection APS"
+"Forecast completion is later than the effective customer due time.","预测完成时间晚于有效客户交期。","Injection APS"
+"Forecast completion is within 24 hours of the effective due time.","预测完成时间距有效交期不足 24 小时。","Injection APS"
 "Good","良品","Injection APS"
 "Green / Risk / Late","满足 / 风险 / 延期","Injection APS"
 "Later Dates","更晚日期","Injection APS"
 "Loading progress lineage...","正在加载进度血缘……","Injection APS"
-"More than one commitment is present for this projection scope; resolve demand ownership.","本投影范围存在多个 Commitment；请先解决需求所有权。","Injection APS"
+"More than one commitment is present for this projection scope; resolve demand ownership.","本投影范围存在多条需求承诺；请先处理需求归属。","Injection APS"
 "Next Rows","下一页数据","Injection APS"
 "Next date window","下一个日期窗口","Injection APS"
 "Next result page","下一页结果","Injection APS"
-"No Demand Identity","无 Demand Identity","Injection APS"
+"No Demand Identity","无需求标识","Injection APS"
 "No later dates are available in this filter range.","当前筛选范围内没有更晚的日期。","Injection APS"
 "No more result rows are available.","没有更多结果数据。","Injection APS"
 "No readable source document is available.","没有可读的来源单据。","Injection APS"
 "One machine/mold capacity bar owns all physical outputs; output Work Orders and actuals remain separate.","一条机台/模具产能条拥有全部实物产出；各产出的工单和实绩仍独立保留。","Injection APS"
-"Only commitments from the explicitly selected APS Run are shown.","仅显示明确选定的 APS Run 中的 Commitment。","Injection APS"
+"Only commitments from the explicitly selected APS Run are shown.","仅显示明确选定的 APS 运算中的需求承诺。","Injection APS"
 "Open source documents for this date cell.","打开本日期单元格的来源单据。","Injection APS"
 "Original","原计划","Injection APS"
-"Original / Current / Forecast","原计划 / 当前计划 / Forecast","Injection APS"
-"Original / Current / Forecast / Actual","原计划 / 当前计划 / Forecast / 实际","Injection APS"
+"Original / Current / Forecast","原计划 / 当前计划 / 预测","Injection APS"
+"Original / Current / Forecast / Actual","原计划 / 当前计划 / 预测 / 实际","Injection APS"
 "Original Plan","原计划","Injection APS"
 "Output Role","产出角色","Injection APS"
 "Per Cycle","每模次","Injection APS"
@@ -4386,37 +4386,37 @@ Family Campaign output {0} has more than one Run-level Result; consolidate exact
 "Progress matrix range cannot exceed {0} days.","进度矩阵范围不能超过 {0} 天。","Injection APS"
 "Recovery Completion","恢复完成时间","Injection APS"
 "Rows {0} - {1}","第 {0} - {1} 条","Injection APS"
-"Select a Demand Identity or schedule row before opening progress details.","打开进度明细前请选择 Demand Identity 或排期行。","Injection APS"
-"Select a Run only when an explicit single-Run audit is required.","仅在需要明确的单 Run 审计时选择 Run。","Injection APS"
+"Select a Demand Identity or schedule row before opening progress details.","打开进度明细前，请先选择需求标识或排期明细。","Injection APS"
+"Select a Run only when an explicit single-Run audit is required.","仅在需要审核某一次明确的 APS 运算时选择“APS 运算”。","Injection APS"
 "Shortage","欠量","Injection APS"
 "Shortage / Recovery","欠量 / 恢复","Injection APS"
-"Single Run view","单 Run 视图","Injection APS"
+"Single Run view","单次运算视图","Injection APS"
 "Source Documents","来源单据","Injection APS"
 "Status and Conservation","状态与守恒","Injection APS"
-"The current Forecast covers demand before the effective due time.","当前 Forecast 可在有效交期前覆盖需求。","Injection APS"
-"The current Formal projection still contains critical unplanned quantity.","当前 Formal 投影仍包含关键未计划数量。","Injection APS"
+"The current Forecast covers demand before the effective due time.","当前预测可在有效交期前覆盖需求。","Injection APS"
+"The current Formal projection still contains critical unplanned quantity.","当前正式运算的投影仍包含关键未计划数量。","Injection APS"
 "The customer due date has passed and actual delivery/coverage remains incomplete.","客户交期已过，实际交货/覆盖仍未完成。","Injection APS"
 "The plan has a shortage, but a recovery completion is projected.","计划存在欠量，但已预测恢复完成时间。","Injection APS"
 "The requested progress row was not found in the current projection.","当前投影中未找到请求的进度行。","Injection APS"
-"This active schedule row has no Demand Identity and cannot be projected safely.","此有效排期行没有 Demand Identity，无法安全投影。","Injection APS"
+"This active schedule row has no Demand Identity and cannot be projected safely.","此生效排期明细尚未关联需求标识，无法安全投影。","Injection APS"
 "This is the first date window.","当前已是第一个日期窗口。","Injection APS"
 "This is the first result page.","当前已是第一页结果。","Injection APS"
-"APS V2 is disabled. Customer Schedule Progress continues to use the Legacy read-only projection.","APS V2 已关闭。客户排期进度继续使用 Legacy 只读投影。","Injection APS"
-"Enable APS V2 to use the identity-backed date matrix.","启用 APS V2 后才能使用基于需求身份的日期矩阵。","Injection APS"
-"Legacy / V2 Trial Comparison","Legacy / V2 Trial 对比","Injection APS"
-"Trial comparison is not available for this run.","当前 Run 暂无 Trial 对比。","Injection APS"
-"Trial comparison is read-only; only a Formal run can be applied.","Trial 对比为只读；只有 Formal Run 才能正式应用。","Injection APS"
-"The Legacy fingerprint was captured before V2 projection and is retained in the Solver Job audit record.","Legacy 指纹在 V2 投影前捕获，并保存在 Solver Job 审计记录中。","Injection APS"
+"APS V2 is disabled. Customer Schedule Progress continues to use the Legacy read-only projection.","APS V2 已关闭。客户排期进度继续使用旧版只读投影。","Injection APS"
+"Enable APS V2 to use the identity-backed date matrix.","启用 APS V2 后才能使用基于需求标识的日期矩阵。","Injection APS"
+"Legacy / V2 Trial Comparison","旧版 / V2 试算对比","Injection APS"
+"Trial comparison is not available for this run.","当前运算暂无试算对比。","Injection APS"
+"Trial comparison is read-only; only a Formal run can be applied.","试算对比为只读；只有正式运算才能应用。","Injection APS"
+"The Legacy fingerprint was captured before V2 projection and is retained in the Solver Job audit record.","旧版方案指纹在 V2 投影前生成，并保存在求解任务的审计记录中。","Injection APS"
 "Scheduled Qty","已排数量","Injection APS"
 "Late Qty","延期数量","Injection APS"
 "Changeovers","换模次数","Injection APS"
 "Setup Minutes","准备分钟","Injection APS"
 "Metric","指标","Injection APS"
-"Delta (V2 - Legacy)","差异（V2 - Legacy）","Injection APS"
-"Trial runs are read-only. Create or approve a Formal run before applying the V2 schedule.","Trial Run 为只读；请先创建或批准 Formal Run，再应用 V2 排程。","Injection APS"
-"A Trial run is read-only. Create or approve a Formal run before applying the V2 schedule.","Trial Run 为只读；请先创建或批准 Formal Run，再应用 V2 排程。","Injection APS"
+"Delta (V2 - Legacy)","差异（V2－旧版）","Injection APS"
+"Trial runs are read-only. Create or approve a Formal run before applying the V2 schedule.","试算运算为只读；应用 V2 排程前，请先创建或批准正式运算。","Injection APS"
+"A Trial run is read-only. Create or approve a Formal run before applying the V2 schedule.","试算运算为只读；应用 V2 排程前，请先创建或批准正式运算。","Injection APS"
 "Proposed tasks before Apply","应用前的建议任务","Injection APS"
-"These rows are a preview only. No production segment is changed until a Formal run is applied by an authorized approver.","这些行仅用于预览；只有经授权审批人应用 Formal Run 后，生产排程段才会发生变更。","Injection APS"
+"These rows are a preview only. No production segment is changed until a Formal run is applied by an authorized approver.","这些行仅供预览；只有授权审批人应用正式运算后，生产排程段才会变更。","Injection APS"
 "Cycles","模次","Injection APS"
 "Occupied Start","占用开始时间","Injection APS"
 "Production Start","生产开始时间","Injection APS"
@@ -4428,17 +4428,17 @@ Family Campaign output {0} has more than one Run-level Result; consolidate exact
 "-","-","Injection APS"
 "Your role cannot perform this action.","您的角色不能执行此操作。","Injection APS"
 "These rows are read-only until Apply.","应用前这些行均为只读。","Injection APS"
-"Apply the analyzed capacity plan before confirming this run.","确认本次运行前，请先应用已分析的产能方案。","Injection APS"
+"Apply the analyzed capacity plan before confirming this run.","确认本次运算前，请先应用已分析的产能方案。","Injection APS"
 "Capacity balance failed plan consistency with {0} error(s): {1}","产能平衡未通过计划一致性检查，共有 {0} 个错误：{1}"
 "No error detail was returned.","未返回错误明细。"
 "V2 solver Apply created {0} workstation overlap(s) and {1} mold overlap(s).","V2 求解方案应用后产生 {0} 个机台重叠和 {1} 个模具重叠。"
 "V2 solver Apply failed plan consistency with {0} error(s): {1}","V2 求解方案应用未通过计划一致性检查，共有 {0} 个错误：{1}"
-"Capacity evidence can only be rebound after the planning run is approved.","只有计划运行获批后才能重新绑定产能证据。"
-"Apply the analyzed capacity balance before approving this planning run.","批准本次计划运行前，请先应用已分析的产能平衡方案。"
-"Scenario selection is locked after Apply. Create a new run or use the controlled change/reanalysis workflow to choose another scenario.","应用后方案选择已锁定。请创建新 Run，或通过受控变更/重新分析流程选择其他方案。"
-"An approved V2 planning run cannot be recalculated in place. Create a new run or use the controlled change workflow.","已批准的 V2 计划运行不能原地重算。请创建新 Run，或使用受控变更流程。"
-"The applied Run and Solver Job evidence are inconsistent. Reconciliation is required before another Apply.","已应用的 Run 与 Solver Job 证据不一致；再次应用前必须先完成核对。","Injection APS"
-"The Planning Run scope changed while Apply was waiting for its lock.","等待应用锁期间 Planning Run 范围已变化。","Injection APS"
-"A newer Solver Job exists. Refresh before Apply.","已有更新的 Solver Job；应用前请刷新。","Injection APS"
+"Capacity evidence can only be rebound after the planning run is approved.","只有计划运算获批后才能重新绑定产能依据。"
+"Apply the analyzed capacity balance before approving this planning run.","批准本次计划运算前，请先应用已分析的产能平衡方案。"
+"Scenario selection is locked after Apply. Create a new run or use the controlled change/reanalysis workflow to choose another scenario.","应用后方案选择已锁定。请新建一次运算，或通过受控变更/重新分析流程选择其他方案。"
+"An approved V2 planning run cannot be recalculated in place. Create a new run or use the controlled change workflow.","已批准的 V2 计划运算不能原地重算。请新建一次运算，或使用受控变更流程。"
+"The applied Run and Solver Job evidence are inconsistent. Reconciliation is required before another Apply.","已应用运算与求解任务的证据不一致；再次应用前必须先完成核对。","Injection APS"
+"The Planning Run scope changed while Apply was waiting for its lock.","等待应用锁期间，计划运算范围已发生变化。","Injection APS"
+"A newer Solver Job exists. Refresh before Apply.","已有更新的求解任务；应用前请刷新。","Injection APS"
 APS Interface Failed to Load,APS 界面资源加载失败,Injection APS
 "Refresh the page and try again. If the problem continues, contact the system administrator.",请刷新页面后重试。如问题持续，请联系系统管理员。,Injection APS
