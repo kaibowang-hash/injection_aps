@@ -486,7 +486,6 @@ class InjectionAPSScheduleConsole {
 		];
 		uploadFields.forEach((fieldname) => dialog.set_df_property(fieldname, "hidden", step === 1 ? 0 : 1));
 		if (this.v2Enabled) {
-			delete payload.import_strategy;
 			dialog.set_df_property("import_strategy", "hidden", 1);
 			dialog.set_df_property("import_strategy", "reqd", 0);
 		}
@@ -916,6 +915,10 @@ class InjectionAPSScheduleConsole {
 		};
 		let endpoint = "injection_aps.api.app.preview_customer_delivery_schedule";
 		if (this.v2Enabled) {
+			// V2 uses revision_mode instead of the Legacy import_strategy. Remove
+			// it from the canonical pending payload so neither Preview nor Apply
+			// sends an argument that the revision APIs do not accept.
+			delete payload.import_strategy;
 			injection_aps.ui.set_feedback(this.feedback, __("Analyzing schedule revision intent...", null, "Injection APS"));
 			const recommendation = await frappe.xcall(
 				"injection_aps.api.app.recommend_schedule_revision_mode",

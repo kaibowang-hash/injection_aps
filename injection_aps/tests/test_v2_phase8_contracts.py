@@ -101,6 +101,30 @@ class TestPhase8Contracts(unittest.TestCase):
 		read_roles = {row["role"] for row in definition["permissions"] if row.get("read")}
 		self.assertTrue({"PMC", "GMC"} <= read_roles)
 
+	def test_v2_schedule_preview_only_removes_legacy_strategy_after_payload_exists(self):
+		source = (
+			ROOT / "injection_aps/page/aps_schedule_console/aps_schedule_console.js"
+		).read_text()
+		layout = source.split("\tsyncImportDialogLayout(dialog) {", 1)[1].split(
+			"\trenderImportWizardProgress(dialog) {", 1
+		)[0]
+		preview = source.split("\tasync previewImport(values) {", 1)[1].split(
+			"\tconfirmRevisionMode(recommendation) {", 1
+		)[0]
+		self.assertNotIn("payload.import_strategy", layout)
+		self.assertIn("const payload = {", preview)
+		self.assertIn("delete payload.import_strategy;", preview)
+		self.assertLess(preview.index("const payload = {"), preview.index("delete payload.import_strategy;"))
+
+	def test_unallocated_delivery_is_readable_by_schedule_console_core_roles(self):
+		import json
+
+		definition = json.loads(
+			(ROOT / "injection_aps/doctype/aps_unallocated_delivery/aps_unallocated_delivery.json").read_text()
+		)
+		read_roles = {row["role"] for row in definition["permissions"] if row.get("read")}
+		self.assertTrue({"PMC", "GMC"} <= read_roles)
+
 	def test_confirm_run_ui_requires_applied_capacity_evidence(self):
 		planning = (ROOT / "services/planning.py").read_text()
 		form = (ROOT / "public/js/aps_planning_run.js").read_text()
