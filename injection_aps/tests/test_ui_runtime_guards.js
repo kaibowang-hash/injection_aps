@@ -393,16 +393,10 @@ async function testCustomerProgressV2DispatchesDetailAndMatrixWithoutChangingLeg
 	controller.columnOffset = 14;
 	controller.pageLength = 100;
 	controller.getFilters = () => ({ company: "COMPANY-1" });
-	let selectedView = "Detail";
-	let controlsVisible = null;
-	controller.viewField = {
-		get_value: () => selectedView,
-		$wrapper: { toggle: (visible) => { controlsVisible = visible; } },
-	};
+	controller.progressView = "Detail";
 	const rendered = [];
 	controller.renderProjectionStatus = () => rendered.push("projection");
 	controller.renderV2Summary = () => rendered.push("summary");
-	controller.renderProgressToolbar = (matrix) => rendered.push(matrix ? "matrix-toolbar" : "detail-toolbar");
 	controller.renderV2Table = () => rendered.push("detail");
 	controller.renderMatrix = () => rendered.push("matrix");
 	controller.renderRunStatus = () => rendered.push("legacy-status");
@@ -421,24 +415,44 @@ async function testCustomerProgressV2DispatchesDetailAndMatrixWithoutChangingLeg
 	};
 
 	await controller.refresh();
-	assert.equal(controlsVisible, true);
-	assert.deepEqual(rendered, ["projection", "summary", "detail-toolbar", "detail"]);
+	assert.deepEqual(rendered, ["projection", "summary", "detail"]);
 	assert.equal(calls[0].method, "injection_aps.api.app.get_customer_schedule_progress_data");
 	assert.equal(calls[0].args.progress_view, "Detail");
 	assert.equal(calls[0].args.offset, 100);
 	assert.equal(calls[0].args.page_length, 100);
 
-	selectedView = "Date Matrix";
+	controller.progressView = "Date Matrix";
 	rendered.length = 0;
 	await controller.refresh();
-	assert.deepEqual(rendered, ["projection", "summary", "matrix-toolbar", "matrix"]);
+	assert.deepEqual(rendered, ["projection", "summary", "matrix"]);
 	assert.equal(calls[1].method, "injection_aps.api.app.get_customer_schedule_progress_data");
 	assert.equal(calls[1].args.progress_view, "Date Matrix");
 	assert.equal(calls[1].args.column_offset, 14);
 	assert.equal(calls[1].args.column_limit, 14);
 }
 
-async function testProgressMatrixCellShowsEveryNonzeroLayerAndExactDrilldownKey() {
+async function testProgressToolbarUsesSharedIconControls() {
+	const { Controller, context } = loadPage(
+		"injection_aps/page/aps_customer_schedule_progress/aps_customer_schedule_progress.js",
+		"aps-customer-schedule-progress",
+		"InjectionAPSCustomerScheduleProgress"
+	);
+	const controller = Object.create(Controller.prototype);
+	controller.data = { pagination: { has_more: true }, matrix: {} };
+	controller.offset = 100;
+	controller.rows = [{}, {}];
+	context.injection_aps.ui.icon_button = (iconName, title, attrs) => `<button class="ia-icon-btn" data-icon="${iconName}" title="${title}" ${attrs.disabled ? "disabled" : ""}></button>`;
+	const html = controller.renderProgressToolbar(false);
+
+	assert.match(html, /data-icon="chevron-left"/);
+	assert.match(html, /data-icon="chevron-right"/);
+	assert.match(html, /ia-progress-view-switch/);
+	assert.doesNotMatch(html, />Previous Rows</);
+	assert.doesNotMatch(html, />Next Rows</);
+	assert.doesNotMatch(html, />Export Excel</);
+}
+
+async function testProgressMatrixCellShowsOperationalSummaryAndExactDrilldownKey() {
 	const { Controller, context } = loadPage(
 		"injection_aps/page/aps_customer_schedule_progress/aps_customer_schedule_progress.js",
 		"aps-customer-schedule-progress",
@@ -463,8 +477,11 @@ async function testProgressMatrixCellShowsEveryNonzeroLayerAndExactDrilldownKey(
 			recovery_qty: 10,
 		}
 	);
-	for (const value of [100, 90, 80, 70, 30, 2, 60, 20, 10]) {
+	for (const value of [80, 30, 20, 10]) {
 		assert.match(html, new RegExp(` ${value}</span>`));
+	}
+	for (const hiddenLabel of ["Original Plan", "Forecast", "Scrap", "Delivery Plan", "Stock Covered", "Recovery"]) {
+		assert.doesNotMatch(html, new RegExp(`>${hiddenLabel}<`));
 	}
 	assert.match(html, /data-progress-identity="IDENTITY-1"/);
 	assert.match(html, /data-progress-schedule-item="SCHEDULE-ROW-1"/);
@@ -521,7 +538,8 @@ async function main() {
 		testSourceChangeDuringMappingApplyRejectsResponse,
 		testCustomerProgressIgnoresOlderResponse,
 		testCustomerProgressV2DispatchesDetailAndMatrixWithoutChangingLegacyCall,
-		testProgressMatrixCellShowsEveryNonzeroLayerAndExactDrilldownKey,
+		testProgressToolbarUsesSharedIconControls,
+		testProgressMatrixCellShowsOperationalSummaryAndExactDrilldownKey,
 		testGanttMachineViewCollapsesCampaignAndRendersFourPlanLayers,
 	];
 	for (const test of tests) {

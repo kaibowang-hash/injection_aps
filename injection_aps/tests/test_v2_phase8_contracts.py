@@ -36,10 +36,12 @@ class TestPhase8Contracts(unittest.TestCase):
 		source = (ROOT / "injection_aps/page/aps_customer_schedule_progress/aps_customer_schedule_progress.js").read_text()
 		for token in (
 			"Date Matrix", "renderV2Table", "renderMatrix", "column_offset", "page_length",
-			"export_rows_to_excel", "get_progress_cell_drilldown", "Current effective cross-Run projection",
+			"export_rows_to_excel", "get_progress_cell_drilldown", "renderProgressToolbar",
 		):
 			self.assertIn(token, source)
-		self.assertIn("this.viewField.$wrapper.toggle(this.v2Enabled)", source)
+		self.assertIn('this.progressView = "Detail"', source)
+		self.assertNotIn("Previous Rows</button>", source)
+		self.assertNotIn("Next Rows</button>", source)
 		self.assertEqual(source.count("injection_aps.api.app.get_customer_schedule_progress_data"), 1)
 
 	def test_gantt_collapses_campaign_and_exposes_all_four_layers(self):

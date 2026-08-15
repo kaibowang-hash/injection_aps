@@ -7,7 +7,7 @@ frappe.provide("injection_aps.ui");
 
 	injection_aps.ui.__initialized = true;
 	injection_aps.ui.translation_context = "Injection APS";
-	injection_aps.ui.local_icon_sprite = "/assets/injection_aps/icons/aps-icons.svg?v=20260811-scissors";
+	injection_aps.ui.local_icon_sprite = "/assets/injection_aps/icons/aps-icons.svg?v=20260815-pagination";
 	injection_aps.ui.__busy_keys = new Set();
 	injection_aps.ui.__freeze_depth = 0;
 	injection_aps.ui.__action_role_map = {
@@ -72,7 +72,7 @@ frappe.provide("injection_aps.ui");
 		const link = document.createElement("link");
 		link.id = "injection-aps-page-style";
 		link.rel = "stylesheet";
-		link.href = "/assets/injection_aps/css/injection_aps.css";
+		link.href = "/assets/injection_aps/css/injection_aps.css?v=20260815-progress-ui";
 		document.head.appendChild(link);
 	};
 
@@ -81,6 +81,8 @@ frappe.provide("injection_aps.ui");
 	};
 
 	injection_aps.ui.__local_icons = new Set([
+		"chevron-left",
+		"chevron-right",
 		"download",
 		"edit",
 		"external-link",
@@ -755,10 +757,13 @@ frappe.provide("injection_aps.ui");
 
 	injection_aps.ui.render_table = function (target, columns, rows, formatter, options) {
 		const settings = Object.assign({}, options || {});
+		const countLabel = settings.count_label != null
+			? settings.count_label
+			: __("{0} rows").replace("{0}", injection_aps.ui.format_number((rows || []).length));
 		const toolbar = settings.exportable || settings.show_count !== false || settings.toolbar_html
 			? `
 				<div class="ia-table-toolbar">
-					<div class="ia-table-count">${__("{0} rows").replace("{0}", injection_aps.ui.format_number((rows || []).length))}</div>
+					<div class="ia-table-count">${injection_aps.ui.escape(countLabel)}</div>
 					<div class="ia-table-actions">
 						${settings.toolbar_html || ""}
 						${
