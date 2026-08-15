@@ -123,7 +123,19 @@ class TestPhase8Contracts(unittest.TestCase):
 			(ROOT / "injection_aps/doctype/aps_unallocated_delivery/aps_unallocated_delivery.json").read_text()
 		)
 		read_roles = {row["role"] for row in definition["permissions"] if row.get("read")}
-		self.assertTrue({"PMC", "GMC"} <= read_roles)
+		self.assertEqual(
+			{
+				"System Manager", "GMC", "PMC", "Sales Manager", "Sales User",
+				"Purchase Manager", "Purchase User", "Manufacturing Manager",
+				"Manufacturing User", "Stock Manager", "Stock User",
+			},
+			read_roles,
+		)
+		source = (
+			ROOT / "injection_aps/page/aps_schedule_console/aps_schedule_console.js"
+		).read_text()
+		self.assertIn("frappe.router.routes[frappe.router.slug(doctype)] = { doctype };", source)
+		self.assertIn('frappe.set_route("List", doctype, "List");', source)
 
 	def test_confirm_run_ui_requires_applied_capacity_evidence(self):
 		planning = (ROOT / "services/planning.py").read_text()

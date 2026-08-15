@@ -165,7 +165,12 @@ class InjectionAPSScheduleConsole {
 				return;
 			}
 			if (action.action_key === "open_unallocated_delivery") {
-				frappe.set_route("List", "APS Unallocated Delivery", "List");
+				const doctype = "APS Unallocated Delivery";
+				// A permission change only reaches frappe.boot.user.can_read after a
+				// fresh boot. Register the route explicitly so an already-open Desk
+				// session does not misclassify the DocType slug as a missing Page.
+				frappe.router.routes[frappe.router.slug(doctype)] = { doctype };
+				frappe.set_route("List", doctype, "List");
 				return;
 			}
 			await injection_aps.ui.run_action(action);
