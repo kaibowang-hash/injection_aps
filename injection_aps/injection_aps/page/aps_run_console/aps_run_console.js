@@ -1,13 +1,29 @@
 frappe.pages["aps-run-console"].on_page_load = function (wrapper) {
 	frappe.require("/assets/injection_aps/js/injection_aps_ui_loader.js", () => {
-		frappe.require("/assets/injection_aps/css/aps_run_console.css?v=20260815.1", () => injection_aps.ui_loader.start("20260815.2", () => {
+		ensureInjectionAPSRunConsoleStyles();
+		injection_aps.ui_loader.start("20260815.2", () => {
 			if (!wrapper.injection_aps_controller) {
 				wrapper.injection_aps_controller = new InjectionAPSRunConsole(wrapper);
 			}
 			wrapper.injection_aps_controller.refresh();
-		}));
+		});
 	});
 };
+
+function ensureInjectionAPSRunConsoleStyles() {
+	const styleId = "injection-aps-run-console-style";
+	const styleHref = "/assets/injection_aps/css/aps_run_console.css?v=20260815.1";
+	let style = document.getElementById(styleId);
+	if (!style) {
+		style = document.createElement("link");
+		style.id = styleId;
+		style.rel = "stylesheet";
+		document.head.appendChild(style);
+	}
+	if (style.getAttribute("href") !== styleHref) {
+		style.setAttribute("href", styleHref);
+	}
+}
 
 frappe.pages["aps-run-console"].on_page_show = function (wrapper) {
 	if (wrapper.injection_aps_controller) {

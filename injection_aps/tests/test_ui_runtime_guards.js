@@ -203,6 +203,77 @@ async function testRunConsoleRendersFourDecisionColumnsAndKeepsFullExport() {
 	);
 }
 
+async function testRunConsoleStylesDoNotBlockPageInitialization() {
+	const { context } = loadPage(
+		"injection_aps/page/aps_run_console/aps_run_console.js",
+		"aps-run-console",
+		"InjectionAPSRunConsole"
+	);
+	const styles = new Map();
+	const appended = [];
+	context.document = {
+		getElementById(id) {
+			return styles.get(id) || null;
+		},
+		createElement(tagName) {
+			const attributes = {};
+			return {
+				tagName,
+				getAttribute(name) {
+					return attributes[name] || null;
+				},
+				setAttribute(name, value) {
+					attributes[name] = value;
+				},
+			};
+		},
+		head: {
+			appendChild(style) {
+				appended.push(style);
+				styles.set(style.id, style);
+			},
+		},
+	};
+	const requiredAssets = [];
+	context.frappe.require = (asset, callback) => {
+		requiredAssets.push(asset);
+		callback();
+		return Promise.resolve();
+	};
+	let started = 0;
+	context.injection_aps.ui_loader = {
+		start(version, callback) {
+			assert.equal(version, "20260815.2");
+			started += 1;
+			callback();
+		},
+	};
+	let refreshed = 0;
+	const wrapper = {
+		injection_aps_controller: {
+			refresh() {
+				refreshed += 1;
+			},
+		},
+	};
+
+	context.frappe.pages["aps-run-console"].on_page_load(wrapper);
+	context.frappe.pages["aps-run-console"].on_page_load(wrapper);
+
+	assert.deepEqual(requiredAssets, [
+		"/assets/injection_aps/js/injection_aps_ui_loader.js",
+		"/assets/injection_aps/js/injection_aps_ui_loader.js",
+	]);
+	assert.equal(started, 2);
+	assert.equal(refreshed, 2);
+	assert.equal(appended.length, 1);
+	assert.equal(appended[0].rel, "stylesheet");
+	assert.equal(
+		appended[0].getAttribute("href"),
+		"/assets/injection_aps/css/aps_run_console.css?v=20260815.1"
+	);
+}
+
 function makeInspectionDialog(values) {
 	const wrapper = { html() {} };
 	return {
@@ -609,6 +680,7 @@ async function main() {
 	const tests = [
 		testGanttRiskValuesTranslateEachEnum,
 		testRunConsoleRendersFourDecisionColumnsAndKeepsFullExport,
+		testRunConsoleStylesDoNotBlockPageInitialization,
 		testSheetChangeReplacesOldMapping,
 		testHeaderChangePreservesHeaderAndReplacesOldMapping,
 		testSourceChangeDuringMappingApplyRejectsResponse,
