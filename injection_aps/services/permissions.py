@@ -96,6 +96,10 @@ APS_PAGE_NAMES = (
 	"aps-schedule-console",
 	"aps-customer-schedule-progress",
 	"aps-net-requirement-workbench",
+	"aps-demand-admission-workbench",
+	"aps-constraint-resolution-center",
+	"aps-solver-scenario-comparison",
+	"aps-shift-replan-center",
 	"aps-run-console",
 	"aps-schedule-gantt",
 	"aps-release-center",
@@ -119,6 +123,16 @@ APS_PAGE_ROLE_MAP = {
 APS_WORKSPACE_NAMES = ("Injection APS",)
 
 APS_DOCTYPE_PERMISSIONS = {
+	"APS Solver Job": {role: READ_FLAGS for role in APS_READ_ROLES},
+	"APS Replan Cycle": {role: READ_FLAGS for role in APS_READ_ROLES},
+	"APS Production Campaign": {role: READ_FLAGS for role in APS_READ_ROLES},
+	"APS BOM Pegging": {role: READ_FLAGS for role in APS_READ_ROLES},
+	"APS Constraint Resolution": {role: READ_FLAGS for role in APS_READ_ROLES},
+	"APS Demand Identity": {role: READ_FLAGS for role in APS_READ_ROLES},
+	"APS Unallocated Delivery": {role: READ_FLAGS for role in APS_READ_ROLES},
+	"APS Demand Commitment": {role: READ_FLAGS for role in APS_READ_ROLES},
+	"APS Demand Admission": {role: READ_FLAGS for role in APS_READ_ROLES},
+	"APS Stock Coverage Allocation": {role: READ_FLAGS for role in APS_READ_ROLES},
 	"Customer Delivery Schedule": {
 		ROLE_GMC: READ_FLAGS,
 		ROLE_PMC: READ_FLAGS,
@@ -366,9 +380,9 @@ LEGACY_DEPENDENCY_READ_DOCTYPES = (
 )
 
 
-def ensure_roles_and_permissions():
+def ensure_roles_and_permissions(*, preserve_existing: bool = True):
 	ensure_roles()
-	ensure_aps_doctype_permissions()
+	ensure_aps_doctype_permissions(preserve_existing=preserve_existing)
 	ensure_dependency_link_permissions()
 	ensure_page_and_workspace_roles()
 	frappe.clear_cache()
@@ -388,16 +402,25 @@ def ensure_roles():
 		role.insert(ignore_permissions=True)
 
 
-def ensure_aps_doctype_permissions():
+def ensure_aps_doctype_permissions(*, preserve_existing: bool = True):
 	for doctype, role_map in APS_DOCTYPE_PERMISSIONS.items():
 		if not frappe.db.exists("DocType", doctype):
 			continue
 		for role, flags in role_map.items():
-			ensure_custom_docperm(doctype=doctype, role=role, flags=flags)
+			ensure_custom_docperm(
+				doctype=doctype,
+				role=role,
+				flags=flags,
+				replace=not preserve_existing,
+			)
 
 
 def ensure_dependency_link_permissions():
-	_restore_legacy_dependency_link_permissions()
+	# Do not run the legacy grant cleanup from this recurring setup path.
+	# ``ensure_roles_and_permissions`` is called after every migrate, so doing the
+	# cleanup here can repeatedly delete or reset administrator-managed Custom
+	# DocPerm rows. Keep the cleanup helper available for an explicit, reviewed
+	# one-time remediation only.
 	for doctype, role_permissions in DEPENDENCY_DOCTYPE_ROLE_PERMISSIONS.items():
 		if not frappe.db.exists("DocType", doctype):
 			continue

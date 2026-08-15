@@ -231,6 +231,44 @@ class TestPermissionWorkflowGuards(unittest.TestCase):
 
 		service.assert_called_once_with(company="COMPANY-1")
 
+	def test_schedule_revision_and_optional_rebuild_execute_in_one_endpoint_call(self):
+		applied = {"schedule": "SCHEDULE-1", "import_batch": "BATCH-1"}
+		promotion = {"net_requirement_rows": 3}
+		with (
+			patch.object(app, "_require_demand_access"),
+			patch.object(app, "_require_plan_access") as require_plan,
+			patch.object(app, "_require_explicit_company", return_value="COMPANY-1"),
+			patch.object(app, "_require_document_access"),
+			patch.object(app, "_require_scope_access"),
+			patch.object(app, "_require_company_rebuild_scope") as require_rebuild_scope,
+			patch.object(app.schedule_revision, "apply_revision", return_value=applied.copy()) as apply_revision,
+			patch.object(
+				app.planning,
+				"promote_schedule_import_to_net_requirement",
+				return_value=promotion,
+			) as promote,
+		):
+			result = app.apply_schedule_revision(
+				customer="CUSTOMER-1",
+				company=" COMPANY-1 ",
+				version_no="V2",
+				confirmed_revision_mode="Partial Revision",
+				rows_json=[{"item_code": "ITEM-1", "qty": 25}],
+				rebuild=1,
+				existing_work_order_policy="Exclude",
+			)
+
+		require_plan.assert_called_once_with()
+		require_rebuild_scope.assert_called_once_with("COMPANY-1")
+		self.assertEqual(apply_revision.call_args.kwargs["company"], "COMPANY-1")
+		promote.assert_called_once_with(
+			import_batch="BATCH-1",
+			schedule="SCHEDULE-1",
+			company="COMPANY-1",
+			existing_work_order_policy="Exclude",
+		)
+		self.assertEqual(result["promotion"], promotion)
+
 	def test_planning_services_also_reject_empty_company_before_any_write(self):
 		cases = (
 			(lambda: planning.preview_customer_delivery_schedule("CUSTOMER-1", "", "V1")),
@@ -1235,6 +1273,89 @@ class TestPermissionWorkflowGuards(unittest.TestCase):
 		self.assertEqual(result["rows"][0]["production_source_documents"], [])
 		self.assertEqual(result["rows"][0]["delivery_source_documents"], [])
 
+	def test_customer_progress_v2_filters_rows_lineage_and_owner_documents(self):
+		response = {
+			"mode": "V2",
+			"projection": {"run_names": ["RUN-ALLOWED", "RUN-DENIED"]},
+			"pagination": {"total_rows": 2, "returned_rows": 2, "has_more": False},
+			"rows": [
+				{
+					"company": "COMPANY-1", "customer": "CUSTOMER-ALLOWED",
+					"schedule": "SCHEDULE-1", "schedule_item": "ITEM-ROW-1",
+					"item_code": "ITEM-1", "demand_identity": "IDENTITY-1",
+					"schedule_qty": 10, "status": "On Track", "conservation_status": "OK",
+					"commitment_names": ["COMMITMENT-ALLOWED", "COMMITMENT-DENIED"],
+					"result_names": ["RESULT-ALLOWED", "RESULT-DENIED"],
+					"run_names": ["RUN-ALLOWED", "RUN-DENIED"],
+					"source_documents": [
+						{"doctype": "APS Schedule Result", "name": "RESULT-ALLOWED"},
+						{"doctype": "APS Schedule Result", "name": "RESULT-DENIED"},
+					],
+					"events": [],
+				},
+				{
+					"company": "COMPANY-1", "customer": "CUSTOMER-DENIED",
+					"schedule": "SCHEDULE-2", "schedule_item": "ITEM-ROW-2",
+					"item_code": "ITEM-1", "demand_identity": "IDENTITY-2",
+					"schedule_qty": 20, "status": "Late", "conservation_status": "OK",
+					"source_documents": [], "events": [],
+				},
+			],
+		}
+		denied = {"CUSTOMER-DENIED", "RESULT-DENIED", "COMMITMENT-DENIED", "RUN-DENIED"}
+		with (
+			patch.object(app, "_require_read_access"),
+			patch.object(app, "_require_scope_access"),
+			patch.object(app.v2_flags, "is_v2_enabled", return_value=True),
+			patch.object(app.progress_v2, "get_progress_detail", return_value=response),
+			patch.object(
+				app, "_has_linked_document_access",
+				side_effect=lambda doctype, name, **kwargs: name not in denied,
+			),
+			patch.object(
+				app, "_has_scoped_document_access",
+				side_effect=lambda doctype, name, **kwargs: name not in denied,
+			),
+		):
+			result = app.get_customer_schedule_progress_data(company="COMPANY-1")
+
+		self.assertEqual([row["customer"] for row in result["rows"]], ["CUSTOMER-ALLOWED"])
+		self.assertEqual(result["rows"][0]["commitment_names"], ["COMMITMENT-ALLOWED"])
+		self.assertEqual(result["rows"][0]["result_names"], ["RESULT-ALLOWED"])
+		self.assertEqual(result["rows"][0]["run_names"], ["RUN-ALLOWED"])
+		self.assertEqual(result["rows"][0]["source_documents"], [{"doctype": "APS Schedule Result", "name": "RESULT-ALLOWED"}])
+		self.assertEqual(result["projection"]["run_names"], ["RUN-ALLOWED"])
+		self.assertEqual(result["pagination"]["permission_filtered"], 1)
+
+	def test_progress_cell_drilldown_checks_parent_scope_and_filters_sources(self):
+		response = {
+			"source_documents": [
+				{"doctype": "Delivery Note", "name": "DN-ALLOWED"},
+				{"doctype": "Delivery Note", "name": "DN-DENIED"},
+			],
+			"lineage": {"delivery": [{"doctype": "Delivery Note", "name": "DN-DENIED"}]},
+			"row": {"source_documents": [], "commitment_names": [], "result_names": []},
+		}
+		with (
+			patch.object(app, "_require_read_access"),
+			patch.object(app, "_require_scoped_document_access") as require_scoped,
+			patch.object(app.frappe.db, "get_value", return_value="SCHEDULE-1"),
+			patch.object(app.v2_flags, "is_v2_enabled", return_value=True),
+			patch.object(app.progress_v2, "get_progress_cell", return_value=response),
+			patch.object(
+				app, "_has_linked_document_access",
+				side_effect=lambda doctype, name, **kwargs: name != "DN-DENIED",
+			),
+		):
+			result = app.get_progress_cell_drilldown(
+				date_value="2026-08-20", demand_identity="IDENTITY-1", schedule_item="ITEM-ROW-1",
+			)
+
+		require_scoped.assert_any_call("APS Demand Identity", "IDENTITY-1", ptype="read")
+		require_scoped.assert_any_call("Customer Delivery Schedule", "SCHEDULE-1", ptype="read")
+		self.assertEqual(result["source_documents"], [{"doctype": "Delivery Note", "name": "DN-ALLOWED"}])
+		self.assertEqual(result["lineage"]["delivery"], [])
+
 	def test_ui_and_doctype_definitions_make_engine_managed_records_read_only(self):
 		for child_name in ("aps_work_order_proposal_item", "aps_shift_schedule_proposal_item"):
 			definition = json.loads(
@@ -1363,7 +1484,7 @@ class TestPermissionWorkflowGuards(unittest.TestCase):
 		):
 			permissions.ensure_dependency_link_permissions()
 
-		restore.assert_called_once_with()
+		restore.assert_not_called()
 		self.assertTrue(ensure.call_args_list)
 		self.assertEqual(
 			{entry.kwargs["doctype"] for entry in ensure.call_args_list},
@@ -1456,6 +1577,9 @@ class TestPermissionWorkflowGuards(unittest.TestCase):
 			"update_schedule_notes",
 			"sync_execution_feedback_to_aps",
 			"sync_delivery_allocations",
+			"apply_schedule_revision",
+			"resolve_schedule_identity_ambiguity",
+			"resolve_unallocated_delivery",
 			"analyze_capacity_balance",
 			"confirm_capacity_balance",
 			"apply_capacity_balance",

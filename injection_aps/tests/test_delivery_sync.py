@@ -51,7 +51,7 @@ class TestDeliveryAllocationSync(FrappeTestCase):
 
 		replay = self._sync(self.customer_a)
 		self.assertEqual(replay["ledger"]["created"], 0)
-		self.assertEqual(replay["ledger"]["updated"], 2)
+		self.assertEqual(replay["ledger"]["updated"], 0)
 		self.assertEqual(
 			frappe.db.count("APS Delivery Allocation", {"source_delivery_note": delivery_note}),
 			2,

@@ -1,0 +1,41 @@
+{
+ "actions": [],
+ "autoname": "APS-STK-.#####",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "company", "item_code", "warehouse", "demand_identity", "commitment", "owner_run", "allocated_qty", "consumed_qty", "released_qty", "remaining_qty",
+  "status", "source_snapshot_time", "source_snapshot_json", "fingerprint", "idempotency_key"
+ ],
+ "fields": [
+  {"fieldname":"company","fieldtype":"Link","in_list_view":1,"label":"Company","options":"Company","read_only":1,"reqd":1,"search_index":1},
+  {"fieldname":"item_code","fieldtype":"Link","in_list_view":1,"label":"Item Code","options":"Item","read_only":1,"reqd":1,"search_index":1},
+  {"fieldname":"warehouse","fieldtype":"Link","in_list_view":1,"label":"Warehouse","options":"Warehouse","read_only":1,"reqd":1,"search_index":1},
+  {"fieldname":"demand_identity","fieldtype":"Link","in_list_view":1,"label":"Demand Identity","options":"APS Demand Identity","read_only":1,"reqd":1,"search_index":1},
+  {"fieldname":"commitment","fieldtype":"Link","label":"Demand Commitment","options":"APS Demand Commitment","read_only":1,"reqd":1,"search_index":1},
+  {"fieldname":"owner_run","fieldtype":"Link","in_list_view":1,"label":"Owner Run","options":"APS Planning Run","read_only":1,"reqd":1,"search_index":1},
+  {"fieldname":"allocated_qty","fieldtype":"Float","label":"Allocated Qty","non_negative":1,"read_only":1,"reqd":1},
+  {"fieldname":"consumed_qty","fieldtype":"Float","label":"Consumed Qty","non_negative":1,"read_only":1},
+  {"fieldname":"released_qty","fieldtype":"Float","label":"Released Qty","non_negative":1,"read_only":1},
+  {"fieldname":"remaining_qty","fieldtype":"Float","label":"Remaining Qty","non_negative":1,"read_only":1},
+  {"default":"Active","fieldname":"status","fieldtype":"Select","in_list_view":1,"label":"Status","options":"Active\nConsumed\nReleased\nSuperseded","read_only":1,"reqd":1,"search_index":1},
+  {"fieldname":"source_snapshot_time","fieldtype":"Datetime","label":"Source Snapshot Time","read_only":1,"reqd":1},
+  {"fieldname":"source_snapshot_json","fieldtype":"Long Text","label":"Source Snapshot JSON","read_only":1},
+  {"fieldname":"fingerprint","fieldtype":"Data","label":"Fingerprint","read_only":1,"search_index":1},
+  {"fieldname":"idempotency_key","fieldtype":"Data","hidden":1,"label":"Idempotency Key","read_only":1,"unique":1}
+ ],
+ "links": [],
+ "module": "Injection APS",
+ "name": "APS Stock Coverage Allocation",
+ "permissions": [
+  {"export":1,"print":1,"read":1,"report":1,"role":"System Manager","share":1},
+  {"export":1,"print":1,"read":1,"report":1,"role":"GMC","share":1},
+  {"export":1,"print":1,"read":1,"report":1,"role":"PMC","share":1},
+  {"export":1,"print":1,"read":1,"report":1,"role":"Manufacturing Manager","share":1},
+  {"export":1,"print":1,"read":1,"report":1,"role":"Stock Manager","share":1}
+ ],
+ "read_only": 1,
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "track_changes": 1
+}

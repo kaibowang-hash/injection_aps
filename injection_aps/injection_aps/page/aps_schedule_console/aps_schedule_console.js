@@ -19,6 +19,8 @@ class InjectionAPSScheduleConsole {
 		this.wrapper.classList.add("ia-app-page");
 		this.pendingImport = null;
 		this.lastImported = null;
+		this.v2Enabled = false;
+		this.unallocatedDeliveryCount = 0;
 		this.page = frappe.ui.make_app_page({
 			parent: wrapper,
 			title: __("Schedule Import & Diff"),
@@ -70,11 +72,21 @@ class InjectionAPSScheduleConsole {
 
 		try {
 			const data = await frappe.xcall("injection_aps.api.app.get_schedule_console_data");
-			injection_aps.ui.render_cards(this.summary, [
+			this.v2Enabled = Boolean(data.v2 && data.v2.settings && Number(data.v2.settings.enable_aps_v2));
+			this.unallocatedDeliveryCount = Number((data.summary || {}).unallocated_delivery_count || 0);
+			const summaryCards = [
 				{ label: __("Active Versions"), value: data.summary.active_versions || 0, note: __("One active version per customer / company / scope") },
 				{ label: __("Recent Batches"), value: data.summary.recent_batches || 0, note: __("Latest imports") },
 				{ label: __("Active Qty"), value: injection_aps.ui.format_number(data.summary.active_qty || 0), note: __("Current live version volume") },
-			]);
+			];
+			if (this.v2Enabled) {
+				summaryCards.push({
+					label: __("Unallocated Deliveries", null, "Injection APS"),
+					value: this.unallocatedDeliveryCount,
+					note: __("Review unresolved delivery lineage without blocking shipment.", null, "Injection APS"),
+				});
+			}
+			injection_aps.ui.render_cards(this.summary, summaryCards);
 			this.renderScheduleTable(data.active_schedules || []);
 			this.renderBatchTable(data.import_batches || [], data.next_actions || {});
 			this.renderPreview();
@@ -90,7 +102,11 @@ class InjectionAPSScheduleConsole {
 	}
 
 	renderFlow() {
-		const previewReady = Boolean(this.pendingImport && this.pendingImport.preview && this.pendingImport.preview.can_import);
+		const previewReady = Boolean(
+			this.pendingImport &&
+				this.pendingImport.preview &&
+				(this.v2Enabled ? this.pendingImport.preview.can_apply : this.pendingImport.preview.can_import)
+		);
 		const previewBlocked = Boolean(this.pendingImport && !previewReady);
 		const blockingReason = previewBlocked
 			? this.pendingImport.preview.is_idempotent_replay
@@ -107,7 +123,11 @@ class InjectionAPSScheduleConsole {
 					{ label: __("Import", null, "Injection APS"), action_key: "import_only", enabled: previewReady ? 1 : 0 },
 					{ label: __("Refresh Preview", null, "Injection APS"), action_key: "refresh_preview", enabled: 1 },
 					{ label: __("Net Requirements"), action_key: "open_net_requirement", enabled: this.lastImported ? 1 : 0, route: "aps-net-requirement-workbench" },
-				],
+				].concat(
+					this.v2Enabled
+						? [{ label: __("Unallocated Deliveries", null, "Injection APS"), action_key: "open_unallocated_delivery", enabled: 1 }]
+						: []
+				),
 			}
 			: {
 				current_step: this.lastImported ? __("Imported") : __("1 Upload", null, "Injection APS"),
@@ -116,7 +136,11 @@ class InjectionAPSScheduleConsole {
 				actions: [
 					{ label: __("Preview Import"), action_key: "preview", enabled: 1 },
 					{ label: __("Net Requirements"), action_key: "open_net_requirement", enabled: 1, route: "aps-net-requirement-workbench" },
-				],
+				].concat(
+					this.v2Enabled
+						? [{ label: __("Unallocated Deliveries", null, "Injection APS"), action_key: "open_unallocated_delivery", enabled: 1 }]
+						: []
+				),
 			};
 		injection_aps.ui.render_status_line(this.statusHost, context);
 		injection_aps.ui.render_actions(this.actionHost, context.actions, async (action) => {
@@ -138,6 +162,10 @@ class InjectionAPSScheduleConsole {
 					__("Preview refreshed against the latest schedule state.")
 				);
 				this.renderFlow();
+				return;
+			}
+			if (action.action_key === "open_unallocated_delivery") {
+				frappe.set_route("List", "APS Unallocated Delivery", "List");
 				return;
 			}
 			await injection_aps.ui.run_action(action);
@@ -243,15 +271,26 @@ class InjectionAPSScheduleConsole {
 			value,
 		}));
 		const parseContext = preview.parse_context || {};
+		const selectedMode = preview.revision_mode || preview.import_strategy || "-";
+		const postImportQty = this.v2Enabled ? preview.post_revision_total_qty : preview.post_import_total_qty;
+		const totalDeltaQty = this.v2Enabled
+			? Number(preview.post_revision_total_qty || 0) - Number(preview.previous_total_qty || 0)
+			: preview.total_delta_qty;
 		injection_aps.ui.render_cards(this.previewSummary, [
 			{ label: __("Customer", null, "Injection APS"), value: preview.customer || "-" },
 			{ label: __("Schedule Scope"), value: preview.schedule_scope || "-" },
 			{ label: __("Version", null, "Injection APS"), value: preview.version_no || "-" },
-			{ label: __("Import Strategy"), value: injection_aps.ui.translate(preview.import_strategy || "-") },
+			{
+				label: this.v2Enabled ? __("Confirmed Revision Mode", null, "Injection APS") : __("Import Strategy"),
+				value: injection_aps.ui.translate(selectedMode),
+				note: this.v2Enabled
+					? `${__("APS Recommendation", null, "Injection APS")}: ${injection_aps.ui.translate(preview.recommended_revision_mode || "-")}`
+					: "",
+			},
 			{ label: __("Source Rows", null, "Injection APS"), value: preview.source_row_count || 0 },
 			{ label: __("Previous Total", null, "Injection APS"), value: frappe.format(preview.previous_total_qty || 0, { fieldtype: "Float" }) },
-			{ label: __("Post Import Total", null, "Injection APS"), value: frappe.format(preview.post_import_total_qty || 0, { fieldtype: "Float" }) },
-			{ label: __("Total Delta", null, "Injection APS"), value: frappe.format(preview.total_delta_qty || 0, { fieldtype: "Float" }) },
+			{ label: __("Post Import Total", null, "Injection APS"), value: frappe.format(postImportQty || 0, { fieldtype: "Float" }) },
+			{ label: __("Total Delta", null, "Injection APS"), value: frappe.format(totalDeltaQty || 0, { fieldtype: "Float" }) },
 			{
 				label: __("Changes", null, "Injection APS"),
 				value: summaryRows.length || 0,
@@ -446,6 +485,11 @@ class InjectionAPSScheduleConsole {
 			"date_end_column",
 		];
 		uploadFields.forEach((fieldname) => dialog.set_df_property(fieldname, "hidden", step === 1 ? 0 : 1));
+		if (this.v2Enabled) {
+			delete payload.import_strategy;
+			dialog.set_df_property("import_strategy", "hidden", 1);
+			dialog.set_df_property("import_strategy", "reqd", 0);
+		}
 		dialog.set_df_property("rows_json", "hidden", step === 1 && dialog.iaShowAdvancedSource ? 0 : 1);
 		dialog.set_df_property("recognition_hint", "hidden", step === 2 ? 0 : 1);
 		dialog.set_df_property("inspection_html", "hidden", step === 2 ? 0 : 1);
@@ -870,6 +914,31 @@ class InjectionAPSScheduleConsole {
 			rows_json: values.file_url ? undefined : values.rows_json || undefined,
 			mapping_json: this.getImportMapping(values) ? JSON.stringify(this.getImportMapping(values)) : undefined,
 		};
+		let endpoint = "injection_aps.api.app.preview_customer_delivery_schedule";
+		if (this.v2Enabled) {
+			injection_aps.ui.set_feedback(this.feedback, __("Analyzing schedule revision intent...", null, "Injection APS"));
+			const recommendation = await frappe.xcall(
+				"injection_aps.api.app.recommend_schedule_revision_mode",
+				{
+					customer: payload.customer,
+					company: payload.company,
+					schedule_scope: payload.schedule_scope,
+					file_url: payload.file_url,
+					rows_json: payload.rows_json,
+					mapping_json: payload.mapping_json,
+				}
+			);
+			const confirmation = await this.confirmRevisionMode(recommendation);
+			if (!confirmation) {
+				injection_aps.ui.set_feedback(this.feedback, __("Revision preview was cancelled before mode confirmation.", null, "Injection APS"), "warning");
+				return;
+			}
+			payload.revision_mode = confirmation.revision_mode;
+			payload.mode_confirmation_reason = confirmation.mode_confirmation_reason;
+			endpoint = "injection_aps.api.app.preview_schedule_revision";
+		}
+		const previewPayload = Object.assign({}, payload);
+		delete previewPayload.mode_confirmation_reason;
 		injection_aps.ui.set_feedback(this.feedback, __("Running import preview..."));
 		const preview = await injection_aps.ui.xcall(
 			{
@@ -878,8 +947,8 @@ class InjectionAPSScheduleConsole {
 				busy_key: `schedule-preview:${payload.customer || ""}:${payload.version_no || ""}`,
 				feedback_target: this.feedback,
 			},
-			"injection_aps.api.app.preview_customer_delivery_schedule",
-			payload
+			endpoint,
+			previewPayload
 		);
 		if (!preview) {
 			return;
@@ -896,12 +965,77 @@ class InjectionAPSScheduleConsole {
 		return preview;
 	}
 
+	confirmRevisionMode(recommendation) {
+		return new Promise((resolve) => {
+			let resolved = false;
+			const recommendedMode = recommendation.recommended_mode || "Full Replacement";
+			const dialog = new frappe.ui.Dialog({
+				title: __("Confirm Schedule Revision Mode", null, "Injection APS"),
+				fields: [
+					{
+						fieldname: "recommendation_html",
+						fieldtype: "HTML",
+						options: `
+							<div class="ia-import-check ia-import-check-notice">
+								<div class="ia-import-check-body">
+									<div class="ia-import-check-title">${__("APS Recommendation", null, "Injection APS")}: ${injection_aps.ui.escape(injection_aps.ui.translate(recommendedMode))}</div>
+									<div class="ia-import-check-summary">${injection_aps.ui.escape(recommendation.reason || "")}</div>
+									<div class="ia-muted">${__("Confidence", null, "Injection APS")}: ${injection_aps.ui.escape(injection_aps.ui.translate(recommendation.confidence || "-"))}</div>
+								</div>
+							</div>`,
+					},
+					{
+						fieldname: "revision_mode",
+						fieldtype: "Select",
+						label: __("Revision Mode", null, "Injection APS"),
+						options: ["Full Replacement", "Partial Revision", "Incremental Demand"].join("\n"),
+						default: recommendedMode,
+						reqd: 1,
+						change: () => {
+							const differs = dialog.get_value("revision_mode") !== recommendedMode;
+							dialog.set_df_property("mode_confirmation_reason", "reqd", differs ? 1 : 0);
+							dialog.set_df_property("mode_confirmation_reason", "description", differs
+								? __("Required because your selection differs from the APS recommendation.", null, "Injection APS")
+								: __("Optional note for the audit trail.", null, "Injection APS"));
+						},
+					},
+					{
+						fieldname: "mode_confirmation_reason",
+						fieldtype: "Small Text",
+						label: __("Confirmation Reason", null, "Injection APS"),
+						description: __("Optional note for the audit trail.", null, "Injection APS"),
+					},
+				],
+				primary_action_label: __("Confirm Mode and Preview", null, "Injection APS"),
+				primary_action: (values) => {
+					const mode = values.revision_mode;
+					const reason = String(values.mode_confirmation_reason || "").trim();
+					if (mode !== recommendedMode && !reason) {
+						frappe.msgprint(__("Explain why the selected revision mode differs from the APS recommendation.", null, "Injection APS"));
+						return;
+					}
+					resolved = true;
+					dialog.hide();
+					resolve({ revision_mode: mode, mode_confirmation_reason: reason });
+				},
+			});
+			dialog.$wrapper.on("hidden.bs.modal", () => {
+				if (!resolved) {
+					resolved = true;
+					resolve(null);
+				}
+			});
+			dialog.show();
+		});
+	}
+
 	async importPending(rebuildNextStep) {
 		if (!this.pendingImport) {
 			frappe.show_alert({ message: __("No pending preview to import."), indicator: "orange" });
 			return;
 		}
-		if (!this.pendingImport.preview.can_import) {
+		const canImport = this.v2Enabled ? this.pendingImport.preview.can_apply : this.pendingImport.preview.can_import;
+		if (!canImport) {
 			frappe.show_alert({ message: __("Resolve all import checks before importing."), indicator: "red" });
 			return;
 		}
@@ -913,7 +1047,9 @@ class InjectionAPSScheduleConsole {
 				__("Company: {0}").replace("{0}", this.pendingImport.payload.company || "-"),
 				__("Schedule Scope: {0}").replace("{0}", this.pendingImport.payload.schedule_scope || "-"),
 				__("Version: {0}").replace("{0}", this.pendingImport.payload.version_no || "-"),
-				__("Import Strategy: {0}").replace("{0}", injection_aps.ui.translate(this.pendingImport.payload.import_strategy || "-")),
+				this.v2Enabled
+					? __("Revision Mode: {0}", null, "Injection APS").replace("{0}", injection_aps.ui.translate(this.pendingImport.payload.revision_mode || "-"))
+					: __("Import Strategy: {0}").replace("{0}", injection_aps.ui.translate(this.pendingImport.payload.import_strategy || "-")),
 				rebuildNextStep ? __("This will formally import the schedule and rebuild demand / net requirements.") : __("This will formally import the current schedule version."),
 			],
 		};
@@ -949,8 +1085,6 @@ class InjectionAPSScheduleConsole {
 							this.pendingImport.editableRows || this.pendingImport.preview.source_rows || []
 						);
 						const importPayload = Object.assign({}, this.pendingImport.payload, {
-							rebuild: rebuildNextStep ? 1 : 0,
-							existing_work_order_policy: existingWorkOrderPolicy || undefined,
 							// Import the exact editable rows the user confirmed.  Keep file_url in
 							// the payload only as audit provenance so the customer lock is not held
 							// while the server re-opens and expands a large workbook.
@@ -958,10 +1092,25 @@ class InjectionAPSScheduleConsole {
 							active_state_token: this.pendingImport.preview.active_state_token || undefined,
 							expected_import_fingerprint: this.pendingImport.preview.import_fingerprint || undefined,
 						});
-					const imported = await frappe.xcall(
-						"injection_aps.api.app.import_customer_delivery_schedule",
-						importPayload
-					);
+					let imported;
+					if (this.v2Enabled) {
+						delete importPayload.active_state_token;
+						delete importPayload.expected_import_fingerprint;
+						importPayload.confirmed_revision_mode = importPayload.revision_mode;
+						importPayload.expected_active_state_token = this.pendingImport.preview.active_state_token || undefined;
+						importPayload.expected_revision_fingerprint = this.pendingImport.preview.revision_fingerprint || undefined;
+						importPayload.rebuild = rebuildNextStep ? 1 : 0;
+						importPayload.existing_work_order_policy = existingWorkOrderPolicy || undefined;
+						delete importPayload.revision_mode;
+						imported = await frappe.xcall("injection_aps.api.app.apply_schedule_revision", importPayload);
+					} else {
+						importPayload.rebuild = rebuildNextStep ? 1 : 0;
+						importPayload.existing_work_order_policy = existingWorkOrderPolicy || undefined;
+						imported = await frappe.xcall(
+							"injection_aps.api.app.import_customer_delivery_schedule",
+							importPayload
+						);
+					}
 					if (imported.promotion) {
 						const promotion = imported.promotion;
 						injection_aps.ui.show_warnings(promotion.demand_pool, __("Demand Pool Warnings"), "warning_count");
@@ -995,6 +1144,9 @@ class InjectionAPSScheduleConsole {
 			sales_order: row.sales_order || "",
 			item_code: row.item_code || "",
 			customer_part_no: row.customer_part_no || "",
+			external_line_reference: row.external_line_reference || "",
+			demand_identity: row.demand_identity || "",
+			identity_resolution_reason: row.identity_resolution_reason || "",
 			schedule_date: row.schedule_date || "",
 			previous_schedule_date: row.previous_schedule_date || "",
 			qty: Number(row.import_qty != null ? row.import_qty : row.qty || 0),
@@ -1022,6 +1174,11 @@ class InjectionAPSScheduleConsole {
 		}
 		const nextRows = this.buildEditablePreviewRows(rows);
 		this.pendingImport.payload.rows_json = JSON.stringify(nextRows);
+		const endpoint = this.v2Enabled
+			? "injection_aps.api.app.preview_schedule_revision"
+			: "injection_aps.api.app.preview_customer_delivery_schedule";
+		const previewPayload = Object.assign({}, this.pendingImport.payload);
+		delete previewPayload.mode_confirmation_reason;
 		const preview = await injection_aps.ui.xcall(
 			{
 				message: __("Refreshing import preview..."),
@@ -1029,8 +1186,8 @@ class InjectionAPSScheduleConsole {
 				busy_key: `schedule-preview-refresh:${this.pendingImport.payload.customer || ""}:${this.pendingImport.payload.version_no || ""}`,
 				feedback_target: this.feedback,
 			},
-			"injection_aps.api.app.preview_customer_delivery_schedule",
-			this.pendingImport.payload
+			endpoint,
+			previewPayload
 		);
 		if (!preview) {
 			return;
@@ -1038,7 +1195,11 @@ class InjectionAPSScheduleConsole {
 		this.pendingImport.preview = preview;
 		this.pendingImport.editableRows = this.buildEditablePreviewRows(preview.source_rows || []);
 		this.pendingImport.payload.schedule_scope = preview.schedule_scope || this.pendingImport.payload.schedule_scope;
-		this.pendingImport.payload.import_strategy = preview.import_strategy || this.pendingImport.payload.import_strategy;
+		if (this.v2Enabled) {
+			this.pendingImport.payload.revision_mode = preview.revision_mode || this.pendingImport.payload.revision_mode;
+		} else {
+			this.pendingImport.payload.import_strategy = preview.import_strategy || this.pendingImport.payload.import_strategy;
+		}
 		this.pendingImport.payload.rows_json = JSON.stringify(this.pendingImport.editableRows);
 		this.renderPreview();
 	}

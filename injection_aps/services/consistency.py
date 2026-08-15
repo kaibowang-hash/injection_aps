@@ -80,6 +80,24 @@ def is_effective_primary_segment(segment: dict[str, Any] | Any) -> bool:
 	)
 
 
+def is_effective_quantity_segment(segment: dict[str, Any] | Any) -> bool:
+	"""Return physical output rows that contribute quantity to their own Result.
+
+	A V2 co-product row carries quantity and execution lineage, but its shared
+	machine/mold interval is owned by the campaign Primary row. It therefore
+	participates in Result quantity math without becoming a capacity interval.
+	"""
+	if is_effective_primary_segment(segment):
+		return True
+	return (
+		(_value(segment, "segment_kind") or "") == "Family Co-Product"
+		and (_value(segment, "segment_status") or "Planned") not in INACTIVE_SEGMENT_STATUSES
+		and flt(_value(segment, "planned_qty")) > 0
+		and _segment_structure_errors(segment) == []
+		and _family_co_product_allocation_error(segment) is None
+	)
+
+
 def recalculate_plan_consistency(run_name: str, reason: str | None = None) -> dict[str, Any]:
 	"""Rebuild every canonical quantity and risk projection for one planning run."""
 	run_doc = frappe.get_doc("APS Planning Run", run_name)
@@ -250,6 +268,10 @@ def validate_plan_consistency(run_name: str, update_run: bool = True) -> dict[st
 				"segment_kind",
 				"segment_status",
 				"risk_status",
+				"parent",
+				"production_campaign",
+				"capacity_owner",
+				"co_product_item_code",
 			],
 		)
 		for segment in segments:
@@ -261,7 +283,7 @@ def validate_plan_consistency(run_name: str, update_run: bool = True) -> dict[st
 					errors.append(
 						_error("invalid_segment", row.name, structural_error, segment=segment.name)
 					)
-		effective_segments = [segment for segment in segments if is_effective_primary_segment(segment)]
+		effective_segments = [segment for segment in segments if is_effective_quantity_segment(segment)]
 		machine_scheduled_qty = sum(flt(segment.planned_qty) for segment in effective_segments)
 		expected = calculate_quantity_fields(row.planned_qty, machine_scheduled_qty)
 		for fieldname in (
@@ -428,7 +450,7 @@ def audit_run_quantity_consistency(run_name: str) -> dict[str, Any]:
 
 	for result in result_rows:
 		segments = segments_by_result.get(result.name) or []
-		effective_segments = [segment for segment in segments if is_effective_primary_segment(segment)]
+		effective_segments = [segment for segment in segments if is_effective_quantity_segment(segment)]
 		machine_scheduled_qty = sum(flt(segment.planned_qty) for segment in effective_segments)
 		authoritative_planned_qty = flt(authoritative_plan.get(result.name, result.planned_qty))
 		_compare_audit_qty(
@@ -742,7 +764,7 @@ def _recalculate_result(
 			flags.append("Frozen / Locked")
 
 		segment_delay = 0.0
-		if is_effective_primary_segment(segment):
+		if is_effective_quantity_segment(segment):
 			effective_segments.append(segment)
 			end_time = get_datetime(segment.end_time)
 			projected_completion_time = max(projected_completion_time or end_time, end_time)
@@ -1298,15 +1320,35 @@ def _segment_structure_errors(segment: dict[str, Any] | Any) -> list[str]:
 
 
 def _family_co_product_allocation_error(segment: dict[str, Any] | Any) -> str | None:
-	"""Fail closed for legacy family credits until an exact allocation ledger exists."""
+	"""Allow only an exact V2 Campaign output ledger; legacy family credit fails closed."""
 	if (
 		(_value(segment, "segment_kind") or "Primary") == "Family Co-Product"
 		and (_value(segment, "segment_status") or "Planned") not in INACTIVE_SEGMENT_STATUSES
 		and flt(_value(segment, "planned_qty")) > 0
 	):
+		campaign = _value(segment, "production_campaign")
+		owner = _value(segment, "capacity_owner")
+		result = _value(segment, "parent")
+		item_code = _value(segment, "co_product_item_code")
+		if campaign and owner and result and item_code:
+			campaign_owner = frappe.db.get_value("APS Production Campaign", campaign, "capacity_owner_segment")
+			output = frappe.db.get_value(
+				"APS Campaign Output",
+				{"parent": campaign, "parenttype": "APS Production Campaign", "schedule_result": result, "item_code": item_code},
+				["name", "planned_qty"],
+				as_dict=True,
+			)
+			owner_campaign = frappe.db.get_value("APS Schedule Segment", owner, "production_campaign")
+			if (
+				campaign_owner == owner
+				and owner_campaign == campaign
+				and output
+				and abs(flt(output.planned_qty) - flt(_value(segment, "planned_qty"))) <= QTY_TOLERANCE
+			):
+				return None
 		return _(
-			"Family co-product Segment {0} has no exact Sales Order Item and execution allocation ledger. "
-			"Recalculate the plan without automatic family credit before release.",
+			"Family co-product Segment {0} has no exact V2 Campaign output and capacity-owner lineage. "
+			"Recalculate the plan; legacy automatic family credit cannot be released.",
 			context="Injection APS",
 		).format(_value(segment, "name") or _("new segment", context="Injection APS"))
 	return None
@@ -1423,6 +1465,9 @@ def _get_audit_segments(result_names: list[str]) -> dict[str, list[Any]]:
 			"planned_qty",
 			"segment_kind",
 			"segment_status",
+			"production_campaign",
+			"capacity_owner",
+			"co_product_item_code",
 			"risk_status",
 			"schedule_delay_minutes",
 			"actual_completed_qty",
@@ -3370,17 +3415,21 @@ def _get_audit_validated_schedule_targets(
 				source_qty_by_target[target_name] += max(flt(source.get("qty")), 0)
 				sources_by_target[target_name].append(source)
 
-	required_fields = (
+	required_nonempty_fields = (
 		"customer_schedule_item",
 		"customer_schedule",
-		"sales_order",
-		"sales_order_item",
 		"item_code",
 		"schedule_date",
 		"source_open_qty",
 		"opening_required_qty",
 		"opening_delivered_qty",
 	)
+	# A customer schedule is a valid demand source even when it has not been
+	# allocated to a framework Sales Order.  Keep the lineage keys mandatory so
+	# absence is distinguishable from an explicit unallocated value, but allow
+	# their values to be blank.
+	required_identity_fields = ("sales_order", "sales_order_item")
+	required_fields = (*required_nonempty_fields, *required_identity_fields)
 	valid = []
 	seen = set()
 	for index, row in enumerate(rows, start=1):
@@ -3389,7 +3438,11 @@ def _get_audit_validated_schedule_targets(
 			continue
 		if cint(row.get("retired")):
 			continue
-		missing = [fieldname for fieldname in required_fields if row.get(fieldname) in (None, "")]
+		missing = [
+			fieldname
+			for fieldname in required_nonempty_fields
+			if row.get(fieldname) in (None, "")
+		] + [fieldname for fieldname in required_identity_fields if fieldname not in row]
 		if missing:
 			issue(
 				"fulfillment_baseline_json",

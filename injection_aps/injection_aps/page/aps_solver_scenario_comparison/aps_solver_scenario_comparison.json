@@ -1,0 +1,21 @@
+{
+ "content": null,
+ "doctype": "Page",
+ "icon": "octicon octicon-git-compare",
+ "modified": "1970-01-01 00:00:00.000000",
+ "module": "Injection APS",
+ "name": "aps-solver-scenario-comparison",
+ "page_name": "aps-solver-scenario-comparison",
+ "roles": [
+  {"role":"System Manager"},
+  {"role":"GMC"},
+  {"role":"PMC"},
+  {"role":"Manufacturing Manager"},
+  {"role":"Manufacturing User"}
+ ],
+ "script": null,
+ "standard": "Yes",
+ "style": null,
+ "system_page": 0,
+ "title": "APS Solver Scenario Comparison"
+}

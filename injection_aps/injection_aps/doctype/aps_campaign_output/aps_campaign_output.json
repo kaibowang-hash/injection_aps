@@ -1,0 +1,26 @@
+{
+ "doctype":"DocType",
+ "editable_grid":1,
+ "engine":"InnoDB",
+ "field_order":["item_code","output_role","output_per_cycle","planned_qty","demand_covered_qty","excess_qty","demand_commitment","work_order","schedule_result","actual_good_qty","actual_scrap_qty","output_note"],
+ "fields":[
+  {"fieldname":"item_code","fieldtype":"Link","label":"Item Code","options":"Item","read_only":1,"reqd":1,"in_list_view":1},
+  {"default":"Co-product","fieldname":"output_role","fieldtype":"Select","label":"Output Role","options":"Primary\nCo-product","read_only":1,"reqd":1,"in_list_view":1},
+  {"fieldname":"output_per_cycle","fieldtype":"Float","label":"Output Per Cycle","read_only":1,"reqd":1},
+  {"fieldname":"planned_qty","fieldtype":"Float","label":"Planned Qty","read_only":1,"reqd":1,"in_list_view":1},
+  {"fieldname":"demand_covered_qty","fieldtype":"Float","label":"Demand Covered Qty","read_only":1},
+  {"fieldname":"excess_qty","fieldtype":"Float","label":"Excess Qty","read_only":1},
+  {"fieldname":"demand_commitment","fieldtype":"Link","label":"Demand Commitment","options":"APS Demand Commitment","read_only":1},
+  {"fieldname":"work_order","fieldtype":"Link","label":"Work Order","options":"Work Order","read_only":1},
+  {"fieldname":"schedule_result","fieldtype":"Link","label":"Schedule Result","options":"APS Schedule Result","read_only":1},
+  {"fieldname":"actual_good_qty","fieldtype":"Float","label":"Actual Good Qty","read_only":1},
+  {"fieldname":"actual_scrap_qty","fieldtype":"Float","label":"Actual Scrap Qty","read_only":1},
+  {"fieldname":"output_note","fieldtype":"Small Text","label":"Output Note","read_only":1}
+ ],
+ "istable":1,
+ "links":[],
+ "modified":"1970-01-01 00:00:00.000000",
+ "module":"Injection APS",
+ "name":"APS Campaign Output",
+ "permissions":[]
+}

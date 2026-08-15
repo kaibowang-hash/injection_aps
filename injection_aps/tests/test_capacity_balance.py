@@ -2764,7 +2764,9 @@ class TestCapacityBalanceTransactions(FrappeTestCase):
 				"targets": [
 					{
 						"customer_schedule_item": schedule_item,
+						"schedule_date": str(due_date),
 						"opening_required_qty": 100.0,
+						"opening_delivered_qty": 0.0,
 					}
 				],
 			},

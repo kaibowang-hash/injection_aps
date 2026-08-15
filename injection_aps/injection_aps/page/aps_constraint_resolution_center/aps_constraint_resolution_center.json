@@ -1,0 +1,25 @@
+{
+ "content": null,
+ "creation": "2026-08-14 00:00:00.000000",
+ "docstatus": 0,
+ "doctype": "Page",
+ "idx": 0,
+ "modified": "1970-01-01 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Injection APS",
+ "name": "aps-constraint-resolution-center",
+ "owner": "Administrator",
+ "page_name": "aps-constraint-resolution-center",
+ "roles": [
+  {"role": "System Manager"},
+  {"role": "GMC"},
+  {"role": "PMC"},
+  {"role": "Manufacturing Manager"},
+  {"role": "Manufacturing User"}
+ ],
+ "script": null,
+ "standard": "Yes",
+ "style": null,
+ "system_page": 0,
+ "title": "Constraint Resolution Center"
+}

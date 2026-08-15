@@ -379,6 +379,139 @@ async function testCustomerProgressIgnoresOlderResponse() {
 	assert.equal(controller.rows[0].name, "new");
 }
 
+async function testCustomerProgressV2DispatchesDetailAndMatrixWithoutChangingLegacyCall() {
+	const { Controller, context } = loadPage(
+		"injection_aps/page/aps_customer_schedule_progress/aps_customer_schedule_progress.js",
+		"aps-customer-schedule-progress",
+		"InjectionAPSCustomerScheduleProgress"
+	);
+	const controller = Object.create(Controller.prototype);
+	controller.refreshGeneration = 0;
+	controller.feedback = {};
+	controller.rows = [];
+	controller.offset = 100;
+	controller.columnOffset = 14;
+	controller.pageLength = 100;
+	controller.getFilters = () => ({ company: "COMPANY-1" });
+	let selectedView = "Detail";
+	let controlsVisible = null;
+	controller.viewField = {
+		get_value: () => selectedView,
+		$wrapper: { toggle: (visible) => { controlsVisible = visible; } },
+	};
+	const rendered = [];
+	controller.renderProjectionStatus = () => rendered.push("projection");
+	controller.renderV2Summary = () => rendered.push("summary");
+	controller.renderProgressToolbar = (matrix) => rendered.push(matrix ? "matrix-toolbar" : "detail-toolbar");
+	controller.renderV2Table = () => rendered.push("detail");
+	controller.renderMatrix = () => rendered.push("matrix");
+	controller.renderRunStatus = () => rendered.push("legacy-status");
+	controller.renderSummary = () => rendered.push("legacy-summary");
+	controller.renderTable = () => rendered.push("legacy-table");
+	let calls = [];
+	context.frappe.xcall = async (method, args) => {
+		calls.push({ method, args });
+		return {
+			mode: "V2",
+			projection: { type: args.progress_view === "Date Matrix" ? "Effective Cross-Run" : "Single Run" },
+			rows: [{ demand_identity: "IDENTITY-1" }],
+			summary: {},
+			matrix: { dates: ["2026-08-20"] },
+		};
+	};
+
+	await controller.refresh();
+	assert.equal(controlsVisible, true);
+	assert.deepEqual(rendered, ["projection", "summary", "detail-toolbar", "detail"]);
+	assert.equal(calls[0].method, "injection_aps.api.app.get_customer_schedule_progress_data");
+	assert.equal(calls[0].args.progress_view, "Detail");
+	assert.equal(calls[0].args.offset, 100);
+	assert.equal(calls[0].args.page_length, 100);
+
+	selectedView = "Date Matrix";
+	rendered.length = 0;
+	await controller.refresh();
+	assert.deepEqual(rendered, ["projection", "summary", "matrix-toolbar", "matrix"]);
+	assert.equal(calls[1].method, "injection_aps.api.app.get_customer_schedule_progress_data");
+	assert.equal(calls[1].args.progress_view, "Date Matrix");
+	assert.equal(calls[1].args.column_offset, 14);
+	assert.equal(calls[1].args.column_limit, 14);
+}
+
+async function testProgressMatrixCellShowsEveryNonzeroLayerAndExactDrilldownKey() {
+	const { Controller, context } = loadPage(
+		"injection_aps/page/aps_customer_schedule_progress/aps_customer_schedule_progress.js",
+		"aps-customer-schedule-progress",
+		"InjectionAPSCustomerScheduleProgress"
+	);
+	const controller = Object.create(Controller.prototype);
+	context.injection_aps.ui.format_number = (value) => String(value);
+	const html = controller.renderMatrixCell(
+		{ demand_identity: "IDENTITY-1", schedule_item: "SCHEDULE-ROW-1" },
+		"2026-08-20",
+		{
+			schedule_qty: 100,
+			original_plan_qty: 90,
+			current_plan_qty: 80,
+			forecast_qty: 70,
+			actual_good_qty: 30,
+			actual_scrap_qty: 2,
+			delivery_plan_qty: 60,
+			delivered_qty: 20,
+			stock_covered_qty: 10,
+			shortage_qty: 10,
+			recovery_qty: 10,
+		}
+	);
+	for (const value of [100, 90, 80, 70, 30, 2, 60, 20, 10]) {
+		assert.match(html, new RegExp(` ${value}</span>`));
+	}
+	assert.match(html, /data-progress-identity="IDENTITY-1"/);
+	assert.match(html, /data-progress-schedule-item="SCHEDULE-ROW-1"/);
+	assert.match(html, /data-progress-date="2026-08-20"/);
+}
+
+async function testGanttMachineViewCollapsesCampaignAndRendersFourPlanLayers() {
+	const { Controller, context } = loadPage(
+		"injection_aps/page/aps_schedule_gantt/aps_schedule_gantt.js",
+		"aps-schedule-gantt",
+		"InjectionAPSScheduleGantt"
+	);
+	const controller = Object.create(Controller.prototype);
+	let mode = "Machine";
+	controller.viewField = { get_value: () => mode };
+	context.injection_aps.ui.get_value = (value, pathValue, fallback) => String(pathValue || "")
+		.split(".")
+		.reduce((current, key) => (current && current[key] !== undefined ? current[key] : fallback), value);
+	const tasks = [
+		{ id: "OWNER", details: { production_campaign: "CAM-1", is_campaign_owner: 1 } },
+		{ id: "OUTPUT", details: { production_campaign: "CAM-1", is_campaign_derived: 1 } },
+	];
+	assert.deepEqual(Array.from(controller.getFilteredTasks(tasks), (row) => row.id), ["OWNER"]);
+	mode = "Mold";
+	assert.deepEqual(Array.from(controller.getFilteredTasks(tasks), (row) => row.id), ["OWNER", "OUTPUT"]);
+
+	context.frappe.datetime = {
+		str_to_obj: (value) => vm.runInContext(`new Date(${JSON.stringify(value.replace(" ", "T") + "Z")})`, context),
+	};
+	context.injection_aps.ui.format_datetime = (value) => String(value || "");
+	const task = {
+		details: {
+			original_start_time: "2026-08-20 08:00:00", original_end_time: "2026-08-20 09:00:00",
+			current_start_time: "2026-08-20 09:00:00", current_end_time: "2026-08-20 10:00:00",
+			forecast_start_time: "2026-08-20 10:00:00", forecast_end_time: "2026-08-20 11:00:00",
+			actual_start_time: "2026-08-20 09:00:00", actual_end_time: "2026-08-20 09:30:00",
+		},
+	};
+	const start = new Date("2026-08-20T00:00:00Z").getTime();
+	const end = new Date("2026-08-21T00:00:00Z").getTime();
+	for (const layer of ["original", "forecast", "actual"]) {
+		const html = controller.renderTaskLayer(task, layer, 4, start, end, end - start);
+		assert.match(html, new RegExp(`ia-gantt-plan-layer ${layer}`));
+	}
+	assert.equal(task.details.current_start_time, "2026-08-20 09:00:00");
+}
+
 async function main() {
 	const tests = [
 		testGanttRiskValuesTranslateEachEnum,
@@ -387,6 +520,9 @@ async function main() {
 		testHeaderChangePreservesHeaderAndReplacesOldMapping,
 		testSourceChangeDuringMappingApplyRejectsResponse,
 		testCustomerProgressIgnoresOlderResponse,
+		testCustomerProgressV2DispatchesDetailAndMatrixWithoutChangingLegacyCall,
+		testProgressMatrixCellShowsEveryNonzeroLayerAndExactDrilldownKey,
+		testGanttMachineViewCollapsesCampaignAndRendersFourPlanLayers,
 	];
 	for (const test of tests) {
 		await test();

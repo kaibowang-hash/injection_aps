@@ -12,10 +12,11 @@ from frappe.utils import add_days, flt, get_datetime, getdate, now_datetime, tod
 
 from injection_aps.api import app
 from injection_aps.services import planning
+from injection_aps.tests.v2_phase0_gate import assert_isolated_environment
 
 
-TEST_SITE = "aps-opt-test.localhost"
-COMPANY = "APS Phase 0 Test Company"
+TEST_SITE = "aps-opt-fixture.localhost"
+COMPANY = ""
 PLANT_FLOOR = "APS-P0-FLOOR"
 WORKSTATION = "APS-P0-MACHINE-01"
 CUSTOMER_A = "APS-P0-CUSTOMER-A"
@@ -93,7 +94,7 @@ def run_phase0_gate(output_dir: str | None = None) -> dict:
 	repeatable = signature_one == signature_two
 	manifest = {
 		"site": frappe.local.site,
-		"source_revision": "3a1fd63126cbd5a6f79a00eb212bf501b40c29c9",
+		"source_revision": "APS-V2-PHASE0-LEGACY-FIXTURE-V1",
 		"source_module": str(Path(injection_aps.__file__).resolve()),
 		"captured_on": str(now_datetime()),
 		"repeatability": {
@@ -339,6 +340,11 @@ def seed_phase0_scenarios() -> dict:
 	demand_rebuild = planning.rebuild_demand_pool(company=COMPANY)
 	net_rebuild = planning.rebuild_net_requirements(company=COMPANY, existing_work_order_policy="Exclude")
 	run_name = _create_planning_evidence(base_date)
+	target_result = frappe.db.get_value(
+		"APS Schedule Result",
+		{"planning_run": run_name, "item_code": ITEMS["cancel"]},
+		"name",
+	)
 	change_request = frappe.get_doc(
 		{
 			"doctype": "APS Change Request",
@@ -346,6 +352,7 @@ def seed_phase0_scenarios() -> dict:
 			"company": COMPANY,
 			"plant_floor": PLANT_FLOOR,
 			"change_type": "Cancel",
+			"target_result": target_result,
 			"item_code": ITEMS["cancel"],
 			"customer": CUSTOMER_A,
 			"required_date": add_days(base_date, 1),
@@ -536,19 +543,93 @@ def capture_aps_configuration(output_path: str | None = None) -> dict:
 
 
 def _assert_test_site():
+	global COMPANY
+	assert_isolated_environment(require_fixture=True)
 	if frappe.local.site != TEST_SITE:
 		frappe.throw(
 			f"Phase 0 scenario mutation is restricted to {TEST_SITE}; current site is {frappe.local.site}."
 		)
+	configured_company = str(frappe.conf.get("aps_phase0_fixture_company") or "").strip()
+	if not configured_company or not frappe.db.exists("Company", configured_company):
+		frappe.throw("Fixture site must configure an existing aps_phase0_fixture_company.")
+	COMPANY = configured_company
 
 
 def _reset_phase0_transactions():
-	for doctype in APS_TRANSACTION_DOCTYPES_CHILD_FIRST:
-		if frappe.db.exists("DocType", doctype):
-			frappe.db.delete(doctype)
+	fixture_items = list(ITEMS.values())
+	schedule_names = frappe.get_all(
+		"Customer Delivery Schedule",
+		filters={"schedule_scope": ("like", "APS-P0-%")},
+		pluck="name",
+		limit_page_length=0,
+	)
+	import_batches = frappe.get_all(
+		"APS Schedule Import Batch",
+		filters={"schedule_scope": ("like", "APS-P0-%")},
+		pluck="name",
+		limit_page_length=0,
+	)
+	run_names = frappe.get_all(
+		"APS Planning Run",
+		filters={"notes": ("like", "APS Phase 0 baseline%")},
+		pluck="name",
+		limit_page_length=0,
+	)
+	result_names = (
+		frappe.get_all(
+			"APS Schedule Result",
+			filters={"planning_run": ("in", run_names)},
+			pluck="name",
+			limit_page_length=0,
+		)
+		if run_names
+		else []
+	)
+	work_order_batches = _names_for_runs("APS Work Order Proposal Batch", run_names)
+	shift_batches = _names_for_runs("APS Shift Schedule Proposal Batch", run_names)
+	release_batches = _names_for_runs("APS Release Batch", run_names)
+
+	_delete_if_names("APS Segment Adjustment", "planning_run", run_names)
+	_delete_if_names("APS Work Order Proposal Item", "parent", work_order_batches)
+	_delete_if_names("APS Shift Schedule Proposal Item", "parent", shift_batches)
+	_delete_if_names("APS Released WOS Item", "parent", release_batches)
+	_delete_if_names("APS Schedule Segment", "parent", result_names)
+	_delete_if_names("APS Planning Run Plant Floor", "parent", run_names)
+	_delete_if_names("APS Production Allocation", "planning_run", run_names)
+	_delete_if_names("APS Exception Log", "planning_run", run_names)
+	_delete_if_names("APS Work Order Proposal Batch", "name", work_order_batches)
+	_delete_if_names("APS Shift Schedule Proposal Batch", "name", shift_batches)
+	_delete_if_names("APS Release Batch", "name", release_batches)
+	_delete_if_names("APS Schedule Result", "name", result_names)
+	_delete_if_names("APS Planning Run", "name", run_names)
+
+	frappe.db.delete("APS Change Request", {"item_code": ("in", fixture_items)})
+	frappe.db.delete("APS Delivery Allocation", {"item_code": ("in", fixture_items)})
+	frappe.db.delete("APS Net Requirement", {"item_code": ("in", fixture_items)})
+	frappe.db.delete("APS Demand Pool", {"item_code": ("in", fixture_items)})
+	frappe.db.delete("APS Demand Delta", {"schedule_scope": ("like", "APS-P0-%")})
+	_delete_if_names("Customer Delivery Schedule Item", "parent", schedule_names)
+	_delete_if_names("Customer Delivery Schedule", "name", schedule_names)
+	_delete_if_names("APS Schedule Import Batch", "name", import_batches)
 	frappe.db.delete("Bin", {"item_code": ("in", list(ITEMS.values()))})
 	frappe.db.delete("Work Order", {"name": ("like", "APS-P0-WO-%")})
 	frappe.db.commit()
+
+
+def _names_for_runs(doctype: str, run_names: list[str]) -> list[str]:
+	if not run_names or not frappe.db.exists("DocType", doctype):
+		return []
+	return frappe.get_all(
+		doctype,
+		filters={"planning_run": ("in", run_names)},
+		pluck="name",
+		limit_page_length=0,
+	)
+
+
+def _delete_if_names(doctype: str, fieldname: str, names: list[str]) -> None:
+	if names and frappe.db.exists("DocType", doctype):
+		frappe.db.delete(doctype, {fieldname: ("in", names)})
 
 
 def _ensure_master_data() -> dict:
@@ -580,7 +661,7 @@ def _ensure_master_data() -> dict:
 				"is_stock_item": 1,
 				"include_item_in_manufacturing": 1,
 			}
-		).insert(ignore_permissions=True)
+		).insert(ignore_permissions=True, set_name=item_code)
 
 	customer_group = frappe.db.get_value("Customer Group", {"is_group": 0}, "name")
 	territory = frappe.db.get_value("Territory", {"is_group": 0}, "name")
@@ -597,7 +678,7 @@ def _ensure_master_data() -> dict:
 				"customer_group": customer_group,
 				"territory": territory,
 			}
-		).insert(ignore_permissions=True)
+		).insert(ignore_permissions=True, set_name=customer_name)
 
 	warehouse = frappe.db.get_value(
 		"Warehouse", {"company": COMPANY, "is_group": 0, "warehouse_name": "Stores"}, "name"

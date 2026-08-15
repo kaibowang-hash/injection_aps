@@ -75,6 +75,8 @@ SEGMENT_SNAPSHOT_FIELDS = (
 	"sequence_no",
 	"lane_key",
 	"campaign_key",
+	"production_campaign",
+	"capacity_owner",
 	"parallel_group",
 	"family_group",
 	"segment_kind",
@@ -510,6 +512,34 @@ def _get_application_scope_locked_change_request(change_request: str):
 		)
 		if isinstance(target, dict) and target.get("customer_schedule")
 	}
+	# Older fulfillment baselines may carry only customer_schedule_item.  Resolve
+	# its current parent with a locking read: the earlier routing hint may have
+	# opened an obsolete REPEATABLE READ snapshot.  The Customer lock above is the
+	# shared serialization lock for schedule import and Apply, so taking these item
+	# locks before hydrating their headers cannot race an official import.
+	baseline_target_names = sorted(
+		{
+			target.get("customer_schedule_item")
+			for result in result_rows
+			for target in (
+				_load_customer_schedule_baseline(result.get("fulfillment_baseline_json")).get("targets") or []
+			)
+			if isinstance(target, dict) and target.get("customer_schedule_item")
+		}
+	)
+	if baseline_target_names:
+		locked_target_routes = frappe.db.sql(
+			"""
+			select name, parent
+			from `tabCustomer Delivery Schedule Item`
+			where name in %(target_names)s
+			order by parent, idx, name
+			for update
+			""",
+			{"target_names": tuple(baseline_target_names)},
+			as_dict=True,
+		)
+		schedule_names.update(row.get("parent") for row in locked_target_routes if row.get("parent"))
 	if delta_row and delta_row.get("schedule_reference"):
 		schedule_names.add(delta_row.schedule_reference)
 	schedule_names = sorted(schedule_names)
@@ -3218,6 +3248,11 @@ def _apply_segment_actions(
 				frappe.ValidationError,
 			)
 		action_name = action.get("action")
+		if segment.get("production_campaign"):
+			if segment.get("capacity_owner") != segment.get("name"):
+				frappe.throw(_("Move the Campaign capacity owner instead of a derived output Segment.", context="Injection APS"), frappe.ValidationError)
+			if action_name != "Move":
+				frappe.throw(_("Campaign quantity changes and cancellation require a fresh solver Run; direct resize/cancel is blocked.", context="Injection APS"), frappe.ValidationError)
 		values = {
 			"is_manual": 1,
 			"manual_change_note": _("Applied by APS Change Request {0}.").format(doc.name),
@@ -3252,6 +3287,13 @@ def _apply_segment_actions(
 				_("Unsupported segment action: {0}.", context="Injection APS").format(action_name)
 			)
 		frappe.db.set_value("APS Schedule Segment", segment.get("name"), values)
+		if segment.get("production_campaign"):
+			from injection_aps.services import campaign_planning
+
+			campaign_planning.sync_campaign_derived_segments(
+				segment.get("production_campaign"),
+				frappe.get_doc("APS Schedule Segment", segment.get("name")),
+			)
 		_apply_family_segment_action(segment, action_name, values, action, locked_state=locked_state)
 		frappe.db.set_value(
 			"APS Schedule Result",
@@ -3980,6 +4022,9 @@ def _validate_changed_schedule(doc, proposal: dict[str, Any]):
 			_("Change application would create a schedule conflict:<br>{0}").format("<br>".join(messages[:12])),
 			frappe.ValidationError,
 		)
+	from injection_aps.services import bom_planning, v2_flags
+	if v2_flags.get_v2_settings().get("enable_multilevel_bom_planning"):
+		bom_planning.validate_run_precedence(doc.planning_run)
 
 
 def _capture_plan_snapshot(doc, scope: str, *, locked_state=None) -> dict[str, Any]:

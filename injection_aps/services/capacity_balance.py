@@ -258,6 +258,7 @@ def _balance_one_demand(
 			qty,
 			strategy,
 			_("No usable workstation capacity or production rate."),
+			key="missing_machine_capability" if not buckets else "missing_cycle_time",
 		)
 
 	prebuild_indices, jit_indices, late_indices = _classify_capacity_bucket_indices(
@@ -271,6 +272,7 @@ def _balance_one_demand(
 			qty,
 			strategy,
 			_("Delivery time is outside the available capacity horizon."),
+			key="invalid_horizon_input",
 		)
 	max_early_days = max(cint(demand.get("max_prebuild_days") or 0), 0)
 	shelf_life_days = max(cint(demand.get("shelf_life_days") or 0), 0)
@@ -483,7 +485,7 @@ def _balance_one_demand(
 		requires_confirmation_reasons.append(
 			_("FG warehouse capacity not configured", context="Injection APS")
 		)
-	if prebuild_qty > 0 and demand.get("material_ready_qty") is None:
+	if prebuild_qty > 0 and not cint(demand.get("material_advisory_only")) and demand.get("material_ready_qty") is None:
 		requires_confirmation_reasons.append(_("Material readiness not proven", context="Injection APS"))
 	requires_confirmation = bool(requires_confirmation_reasons)
 	if requires_confirmation:
@@ -1081,11 +1083,13 @@ def _estimate_qty_capacity(
 def _get_prebuild_cap(demand: dict[str, Any], qty: float) -> tuple[float, list[dict[str, str]]]:
 	cap = qty
 	checks = []
-	for key, check_key, label in (
+	limits = [
 		("inventory_room_qty", "item_inventory_limit", _("Item inventory limit", context="Injection APS")),
 		("warehouse_room_qty", "warehouse_capacity", _("Warehouse capacity", context="Injection APS")),
-		("material_ready_qty", "material_readiness", _("Material readiness", context="Injection APS")),
-	):
+	]
+	if not cint(demand.get("material_advisory_only")):
+		limits.append(("material_ready_qty", "material_readiness", _("Material readiness", context="Injection APS")))
+	for key, check_key, label in limits:
 		value = demand.get(key)
 		if value is None:
 			checks.append(
@@ -1604,7 +1608,9 @@ def _check(status: str, key: str, message: str) -> dict[str, str]:
 	return {"status": status, "key": key, "message": message}
 
 
-def _blocked_demand_result(demand: dict[str, Any], qty: float, strategy: str, message: str) -> dict[str, Any]:
+def _blocked_demand_result(
+	demand: dict[str, Any], qty: float, strategy: str, message: str, *, key: str = "capacity"
+) -> dict[str, Any]:
 	return {
 		"key": demand.get("key"),
 		"result": demand.get("result"),
@@ -1624,7 +1630,7 @@ def _blocked_demand_result(demand: dict[str, Any], qty: float, strategy: str, me
 		"requires_confirmation": 0,
 		"confirmation_reasons": [],
 		"status": "Blocked",
-		"checks": [_check("blocked", "capacity", message)],
+		"checks": [_check("blocked", key, message)],
 		"allocations": [],
 		"fixed_commitment": 0,
 	}
@@ -1864,6 +1870,9 @@ def analyze_capacity_balance(run_name: str, persist: bool = True) -> dict[str, A
 	from injection_aps.services import planning
 
 	run_doc = frappe.get_doc("APS Planning Run", run_name)
+	from injection_aps.services.v2_flags import is_v2_enabled
+
+	v2_enabled = is_v2_enabled()
 	result_rows, segment_rows = _get_run_balance_rows(run_name)
 	if not result_rows:
 		frappe.throw(_("APS run {0} has no schedule results to balance.").format(run_name))
@@ -1897,6 +1906,17 @@ def analyze_capacity_balance(run_name: str, persist: bool = True) -> dict[str, A
 		segment_rows,
 		downtime_windows=downtime_windows,
 	)
+	material_advisory = []
+	excluded_demands = []
+	if v2_enabled:
+		from injection_aps.services import constraint_resolution, horizon_status
+
+		material_advisory = horizon_status.build_material_advisory([*reserved_demands, *demands])
+		excluded_results = constraint_resolution.get_excluded_result_names(run_name)
+		excluded_demands = [row for row in demands if row.get("result") in excluded_results]
+		demands = [row for row in demands if row.get("result") not in excluded_results]
+		demands = horizon_status.remove_material_constraints(demands)
+		reserved_demands = horizon_status.remove_material_constraints(reserved_demands)
 	finished_goods_stock_by_item = _get_physical_finished_goods_stock_map(
 		run_doc.company,
 		[*result_rows.values(), *cross_result_rows.values()],
@@ -1925,6 +1945,22 @@ def analyze_capacity_balance(run_name: str, persist: bool = True) -> dict[str, A
 		result_rows,
 		cross_result_rows,
 	)
+	if v2_enabled:
+		analysis["excluded_demands"] = [
+			{
+				"result": row.get("result"), "segment": row.get("segment"),
+				"planned_qty": max(flt(row.get("qty")), 0), "status": "Excluded",
+			}
+			for row in excluded_demands
+		]
+		analysis["approved_overrides"] = constraint_resolution.apply_approved_overrides_to_analysis(
+			run_name, analysis
+		)
+		horizon_status.classify_v2_analysis(
+			analysis,
+			optional_admission_qty=flt(run_doc.get("total_selected_p1_qty")) + flt(run_doc.get("total_selected_p2_qty")),
+			excluded_qty=sum(max(flt(row.get("qty")), 0) for row in excluded_demands),
+		)
 	source_snapshot = _build_source_snapshot(
 		run_doc,
 		result_rows,
@@ -1943,8 +1979,14 @@ def analyze_capacity_balance(run_name: str, persist: bool = True) -> dict[str, A
 		{"run": run_name, "source": source_snapshot, "demands": analysis.get("demands"), "buckets": analysis.get("buckets")}
 	)
 	analysis["source_snapshot"] = source_snapshot
+	if v2_enabled:
+		# Advisory evidence is deliberately attached after both fingerprints are
+		# calculated. Raw-material changes therefore update only this display data.
+		analysis["material_advisory"] = material_advisory
 	if persist:
 		_persist_capacity_analysis(run_doc, analysis)
+		if v2_enabled:
+			constraint_resolution.sync_from_analysis(run_doc, analysis)
 	return analysis
 
 
@@ -2506,17 +2548,24 @@ def _apply_missing_net_requirement_evidence_blocks(
 
 
 def confirm_capacity_balance(run_name: str) -> dict[str, Any]:
+	from injection_aps.services.v2_flags import is_v2_enabled
+
+	v2_enabled = is_v2_enabled()
 	run_doc = frappe.get_doc("APS Planning Run", run_name)
 	run_doc = _lock_and_refresh_capacity_run(run_doc)
-	if run_doc.capacity_balance_status == "Applied":
+	if run_doc.capacity_balance_status in ("Applied", "Applied with Exceptions"):
 		return {
 			"run": run_name,
-			"status": "Applied",
+			"status": run_doc.capacity_balance_status,
 			"confirmed_by": run_doc.capacity_balance_confirmed_by,
 			"confirmed_on": run_doc.capacity_balance_confirmed_on,
 			"idempotent_replay": 1,
 		}
-	if run_doc.capacity_balance_status not in ("Suggestion Ready", "Confirmation Required"):
+	allowed_statuses = (
+		("Ready", "Acknowledgment Required")
+		if v2_enabled else ("Suggestion Ready", "Confirmation Required")
+	)
+	if run_doc.capacity_balance_status not in allowed_statuses:
 		frappe.throw(_("Analyze capacity balance before PMC confirmation."), frappe.ValidationError)
 	if not run_doc.capacity_balance_fingerprint or not run_doc.capacity_balance_analysis_json:
 		frappe.throw(_("Capacity analysis evidence is missing; analyze the run again."), frappe.ValidationError)
@@ -2565,27 +2614,40 @@ def confirm_capacity_balance(run_name: str) -> dict[str, Any]:
 
 def apply_capacity_balance(run_name: str, pmc_confirmed: bool = False) -> dict[str, Any]:
 	from injection_aps.services import availability, consistency, planning
+	from injection_aps.services.v2_flags import is_v2_enabled
+
+	v2_enabled = is_v2_enabled()
 
 	save_point = "aps_capacity_apply_{0}".format(frappe.generate_hash(length=10))
 	frappe.db.savepoint(save_point)
 	try:
 		run_doc = frappe.get_doc("APS Planning Run", run_name)
 		run_doc = _lock_and_refresh_capacity_run(run_doc)
-		if run_doc.capacity_balance_status == "Applied":
+		if run_doc.capacity_balance_status in ("Applied", "Applied with Exceptions"):
 			analysis = _load_capacity_analysis(run_doc)
 			_assert_applied_plan_snapshot_current(run_doc, analysis)
 			frappe.db.release_savepoint(save_point)
 			return {
 				"run": run_name,
-				"status": "Applied",
+				"status": run_doc.capacity_balance_status,
 				"analysis_fingerprint": run_doc.capacity_balance_fingerprint,
 				"summary": analysis.get("summary") or {},
 				"idempotent_replay": 1,
 			}
-		if run_doc.capacity_balance_status not in ("Suggestion Ready", "Confirmation Required"):
+		allowed_statuses = (
+			("Ready", "Acknowledgment Required")
+			if v2_enabled else ("Suggestion Ready", "Confirmation Required")
+		)
+		if run_doc.capacity_balance_status not in allowed_statuses:
 			frappe.throw(_("Analyze a non-blocked capacity proposal before Apply."), frappe.ValidationError)
 		analysis = _load_capacity_analysis(run_doc)
-		if analysis.get("summary", {}).get("blocked_demands") or analysis.get("summary", {}).get("unscheduled_qty"):
+		if v2_enabled:
+			from injection_aps.services import constraint_resolution
+
+			constraint_resolution.assert_analysis_overrides_current(run_name, analysis)
+		if analysis.get("summary", {}).get("blocked_demands") or (
+			not v2_enabled and analysis.get("summary", {}).get("unscheduled_qty")
+		):
 			frappe.throw(_("Blocked or unscheduled capacity proposals cannot be applied."), frappe.ValidationError)
 		requires_confirmation = bool(analysis.get("summary", {}).get("requires_confirmation"))
 		confirmation_matches = bool(
@@ -2631,6 +2693,7 @@ def apply_capacity_balance(run_name: str, pmc_confirmed: bool = False) -> dict[s
 			cross_segment_rows,
 			lock_existing_work_orders=True,
 			current_read_resources=True,
+			include_material_resources=not v2_enabled,
 		)
 		current_fixed_intervals, current_mold_fixed_intervals = _get_fixed_execution_intervals(
 			run_doc,
@@ -2646,7 +2709,16 @@ def apply_capacity_balance(run_name: str, pmc_confirmed: bool = False) -> dict[s
 			downtime_windows=current_downtime_windows,
 			lock_existing_work_orders=True,
 			current_read_resources=True,
+			include_material_resources=not v2_enabled,
 		)
+		if v2_enabled:
+			from injection_aps.services import constraint_resolution, horizon_status
+
+			excluded_results = constraint_resolution.get_excluded_result_names(run_name)
+			current_resource_demands = horizon_status.remove_material_constraints(
+				[row for row in current_resource_demands if row.get("result") not in excluded_results]
+			)
+			current_reserved_demands = horizon_status.remove_material_constraints(current_reserved_demands)
 		_lock_capacity_resource_bins(
 			run_doc.company,
 			[*result_rows.values(), *cross_result_rows.values()],
@@ -2660,6 +2732,7 @@ def apply_capacity_balance(run_name: str, pmc_confirmed: bool = False) -> dict[s
 			cross_segment_rows,
 			lock_existing_work_orders=True,
 			current_read_resources=True,
+			include_material_resources=not v2_enabled,
 		)
 		current_resource_demands = _build_segment_balance_demands(
 			run_doc,
@@ -2668,7 +2741,13 @@ def apply_capacity_balance(run_name: str, pmc_confirmed: bool = False) -> dict[s
 			downtime_windows=current_downtime_windows,
 			lock_existing_work_orders=True,
 			current_read_resources=True,
+			include_material_resources=not v2_enabled,
 		)
+		if v2_enabled:
+			current_resource_demands = horizon_status.remove_material_constraints(
+				[row for row in current_resource_demands if row.get("result") not in excluded_results]
+			)
+			current_reserved_demands = horizon_status.remove_material_constraints(current_reserved_demands)
 		current_finished_goods_stock_by_item = _get_physical_finished_goods_stock_map(
 			run_doc.company,
 			[*result_rows.values(), *cross_result_rows.values()],
@@ -2699,7 +2778,9 @@ def apply_capacity_balance(run_name: str, pmc_confirmed: bool = False) -> dict[s
 				),
 				frappe.ValidationError,
 			)
-		mutation = _apply_capacity_allocations(analysis)
+		mutation = _apply_capacity_allocations(analysis, allow_partial=v2_enabled)
+		if v2_enabled:
+			mutation["excluded_results"] = _apply_excluded_results(run_name, analysis)
 		overlap_summary = planning._validate_run_segment_overlaps(run_name, persist_exceptions=True)
 		mold_overlap_summary = planning._validate_run_mold_overlaps(run_name, persist_exceptions=True)
 		if overlap_summary.get("count") or mold_overlap_summary.get("count"):
@@ -2715,9 +2796,14 @@ def apply_capacity_balance(run_name: str, pmc_confirmed: bool = False) -> dict[s
 			reason="capacity balance applied",
 		)
 		if not consistency_summary.get("valid"):
+			details = "; ".join(
+				str(row.get("message") or row)
+				for row in (consistency_summary.get("errors") or [])[:5]
+			)
 			frappe.throw(
-				_("Capacity balance failed plan consistency with {0} error(s).").format(
-					len(consistency_summary.get("errors") or [])
+				_("Capacity balance failed plan consistency with {0} error(s): {1}").format(
+					len(consistency_summary.get("errors") or []),
+					details or _("No error detail was returned."),
 				),
 				frappe.ValidationError,
 			)
@@ -2743,11 +2829,15 @@ def apply_capacity_balance(run_name: str, pmc_confirmed: bool = False) -> dict[s
 			lock_external_rows=True,
 		)
 		applied_on = now_datetime()
+		applied_status = (
+			"Applied with Exceptions"
+			if v2_enabled and (analysis.get("excluded_demands") or []) else "Applied"
+		)
 		frappe.db.set_value(
 			"APS Planning Run",
 			run_name,
 			{
-				"capacity_balance_status": "Applied",
+				"capacity_balance_status": applied_status,
 				"capacity_balance_applied_on": applied_on,
 				"capacity_balance_analysis_json": json.dumps(
 					analysis, default=str, ensure_ascii=False, indent=2
@@ -2758,7 +2848,7 @@ def apply_capacity_balance(run_name: str, pmc_confirmed: bool = False) -> dict[s
 		frappe.db.release_savepoint(save_point)
 		return {
 			"run": run_name,
-			"status": "Applied",
+			"status": applied_status,
 			"analysis_fingerprint": analysis.get("analysis_fingerprint"),
 			"summary": analysis.get("summary") or {},
 			"mutation": mutation,
@@ -2772,6 +2862,108 @@ def apply_capacity_balance(run_name: str, pmc_confirmed: bool = False) -> dict[s
 	except Exception:
 		frappe.db.rollback(save_point=save_point)
 		raise
+
+
+def finalize_v2_solver_apply_evidence(
+	run_name: str,
+	*,
+	applied_status: str,
+) -> dict[str, Any]:
+	"""Bind an already-written V2 solver schedule to formal release evidence.
+
+	The solver owns the schedule mutation, while this service owns the shared
+	capacity release contract.  Keeping the evidence construction here guarantees
+	the V2 and Legacy Apply paths use the same consistency, overlap, fulfillment,
+	plan-fingerprint and live-resource guards.
+	"""
+	from injection_aps.services import availability, consistency, planning
+
+	run_doc = frappe.get_doc("APS Planning Run", run_name)
+	analysis = _load_capacity_analysis(run_doc)
+	result_rows, segment_rows = _get_run_balance_rows(
+		run_name,
+		lock_rows=True,
+		lock_linked_work_orders=True,
+	)
+	_assert_net_requirement_evidence_complete(result_rows, operation="V2 solver Apply")
+	overlap_summary = planning._validate_run_segment_overlaps(
+		run_name,
+		persist_exceptions=True,
+	)
+	mold_overlap_summary = planning._validate_run_mold_overlaps(
+		run_name,
+		persist_exceptions=True,
+	)
+	if overlap_summary.get("count") or mold_overlap_summary.get("count"):
+		frappe.throw(
+			_("V2 solver Apply created {0} workstation overlap(s) and {1} mold overlap(s).").format(
+				overlap_summary.get("count") or 0,
+				mold_overlap_summary.get("count") or 0,
+			),
+			frappe.ValidationError,
+		)
+	consistency_summary = consistency.recalculate_plan_consistency(
+		run_name,
+		reason="V2 solver schedule applied",
+	)
+	if not consistency_summary.get("valid"):
+		details = "; ".join(
+			str(row.get("message") or row)
+			for row in (consistency_summary.get("errors") or [])[:5]
+		)
+		frappe.throw(
+			_("V2 solver Apply failed plan consistency with {0} error(s): {1}").format(
+				len(consistency_summary.get("errors") or []),
+				details or _("No error detail was returned."),
+			),
+			frappe.ValidationError,
+		)
+	fulfillment = availability.recalculate_run_fulfillment(run_name)
+	post_result_rows, post_segment_rows = _get_run_balance_rows(
+		run_name,
+		lock_rows=True,
+		lock_linked_work_orders=True,
+	)
+	_assert_net_requirement_evidence_complete(
+		post_result_rows,
+		operation="V2 solver applied-plan validation",
+	)
+	analysis["applied_plan_fingerprint"] = _build_applied_plan_fingerprint(
+		run_doc,
+		post_result_rows,
+		post_segment_rows,
+		current_read_resources=True,
+	)
+	analysis["applied_resource_fingerprint"] = _build_live_capacity_resource_fingerprint(
+		run_doc,
+		post_result_rows,
+		post_segment_rows,
+		lock_external_rows=True,
+	)
+	applied_on = now_datetime()
+	frappe.db.set_value(
+		"APS Planning Run",
+		run_name,
+		{
+			"capacity_balance_status": applied_status,
+			"capacity_balance_applied_on": applied_on,
+			"capacity_balance_analysis_json": json.dumps(
+				analysis,
+				default=str,
+				ensure_ascii=False,
+				indent=2,
+			),
+		},
+		update_modified=False,
+	)
+	return {
+		"analysis": analysis,
+		"overlap_count": overlap_summary.get("count") or 0,
+		"mold_overlap_count": mold_overlap_summary.get("count") or 0,
+		"consistency": consistency_summary,
+		"fulfillment": fulfillment,
+		"applied_on": applied_on,
+	}
 
 
 def _load_capacity_analysis(run_doc) -> dict[str, Any]:
@@ -2801,6 +2993,7 @@ def invalidate_capacity_balance(run_name: str) -> None:
 			"capacity_balance_analysis_json": None,
 			"total_prebuild_qty": 0,
 			"total_jit_qty": 0,
+			"constraint_resolution_count": 0,
 		},
 		update_modified=False,
 	)
@@ -2829,12 +3022,18 @@ def assert_applied_capacity_current(run_name: str, *, lock_rows: bool = False) -
 		# Formal release gates deliberately enter here before taking the Run row,
 		# preserving the same Company -> Run order used by capacity Apply.
 		run_doc = _lock_and_refresh_capacity_run(run_doc)
-	if run_doc.capacity_balance_status != "Applied":
+	if run_doc.capacity_balance_status not in ("Applied", "Applied with Exceptions"):
 		frappe.throw(
 			_("Apply the analyzed capacity balance before confirming this planning run."),
 			frappe.ValidationError,
 		)
 	analysis = _load_capacity_analysis(run_doc)
+	from injection_aps.services.v2_flags import is_v2_enabled
+
+	if is_v2_enabled():
+		from injection_aps.services import constraint_resolution
+
+		constraint_resolution.assert_analysis_overrides_current(run_name, analysis)
 	_assert_applied_plan_snapshot_current(run_doc, analysis, lock_rows=lock_rows)
 	expected_resource_fingerprint = analysis.get("applied_resource_fingerprint")
 	if not expected_resource_fingerprint:
@@ -2871,6 +3070,70 @@ def assert_applied_capacity_current(run_name: str, *, lock_rows: bool = False) -
 	return analysis
 
 
+def rebind_applied_capacity_after_run_approval(run_name: str) -> dict[str, Any]:
+	"""Rebind Applied evidence after the trusted Pending -> Approved transition.
+
+	Approval deterministically locks the already-Applied APS segments. That changes
+	the plan fingerprint and makes those same segments enter the fixed-interval
+	resource snapshot, even though no quantity, machine, mold or time changed. The
+	approval gate has already locked and validated the Applied evidence and its live
+	resource rows in the current transaction, so it is safe to bind that one internal
+	state transition here. Release mutations continue to invalidate the evidence.
+	"""
+	run_doc = _lock_and_refresh_capacity_run(
+		frappe.get_doc("APS Planning Run", run_name),
+		lock_company=False,
+	)
+	if run_doc.approval_state != "Approved":
+		frappe.throw(
+			_("Capacity evidence can only be rebound after the planning run is approved."),
+			frappe.ValidationError,
+		)
+	if run_doc.capacity_balance_status not in ("Applied", "Applied with Exceptions"):
+		frappe.throw(
+			_("Apply the analyzed capacity balance before approving this planning run."),
+			frappe.ValidationError,
+		)
+	analysis = _load_capacity_analysis(run_doc)
+	result_rows, segment_rows = _get_run_balance_rows(
+		run_name,
+		lock_rows=True,
+		lock_linked_work_orders=True,
+	)
+	_assert_net_requirement_evidence_complete(
+		result_rows,
+		operation="planning run approval",
+	)
+	analysis["applied_plan_fingerprint"] = _build_applied_plan_fingerprint(
+		run_doc,
+		result_rows,
+		segment_rows,
+		current_read_resources=True,
+	)
+	analysis["applied_resource_fingerprint"] = _build_live_capacity_resource_fingerprint(
+		run_doc,
+		result_rows,
+		segment_rows,
+		lock_external_rows=True,
+	)
+	rebound_on = now_datetime()
+	analysis["run_approval_rebound_on"] = rebound_on
+	frappe.db.set_value(
+		"APS Planning Run",
+		run_name,
+		"capacity_balance_analysis_json",
+		json.dumps(analysis, default=str, ensure_ascii=False, indent=2),
+		update_modified=False,
+	)
+	return {
+		"run": run_name,
+		"status": run_doc.capacity_balance_status,
+		"rebound_on": rebound_on,
+		"applied_plan_fingerprint": analysis["applied_plan_fingerprint"],
+		"applied_resource_fingerprint": analysis["applied_resource_fingerprint"],
+	}
+
+
 def rebind_applied_capacity_resources_after_release(
 	run_name: str,
 	*,
@@ -2890,7 +3153,7 @@ def rebind_applied_capacity_resources_after_release(
 	# This function mutates approval state; keep the parameter for caller
 	# compatibility but never permit an unlocked invalidation path.
 	run_doc = _lock_and_refresh_capacity_run(run_doc, lock_company=False)
-	if run_doc.capacity_balance_status != "Applied":
+	if run_doc.capacity_balance_status not in ("Applied", "Applied with Exceptions"):
 		frappe.throw(
 			_(
 				"Apply the analyzed capacity balance before rebinding release resources.",
@@ -3048,6 +3311,9 @@ def _build_live_capacity_resource_fingerprint(
 ) -> str:
 	"""Bind approval to live finite resources without changing Apply replay semantics."""
 	from injection_aps.services import planning
+	from injection_aps.services.v2_flags import is_v2_enabled
+
+	v2_enabled = is_v2_enabled()
 
 	cross_result_rows, cross_segment_rows = _get_cross_run_applied_commitments(
 		run_doc, lock_rows=lock_external_rows
@@ -3066,6 +3332,7 @@ def _build_live_capacity_resource_fingerprint(
 		cross_segment_rows,
 		lock_existing_work_orders=lock_external_rows,
 		current_read_resources=lock_external_rows,
+		include_material_resources=not v2_enabled,
 	)
 	fixed_intervals, mold_fixed_intervals = _get_fixed_execution_intervals(
 		run_doc,
@@ -3090,7 +3357,16 @@ def _build_live_capacity_resource_fingerprint(
 		downtime_windows=downtime_windows,
 		lock_existing_work_orders=lock_external_rows,
 		current_read_resources=lock_external_rows,
+		include_material_resources=not v2_enabled,
 	)
+	if v2_enabled:
+		from injection_aps.services import constraint_resolution, horizon_status
+
+		excluded_results = constraint_resolution.get_excluded_result_names(run_doc.name)
+		reserved_demands = horizon_status.remove_material_constraints(reserved_demands)
+		current_demands = horizon_status.remove_material_constraints(
+			[row for row in current_demands if row.get("result") not in excluded_results]
+		)
 	if lock_external_rows:
 		# The Company row serializes APS decisions; the relevant Bin locks also
 		# serialize them against standard ERPNext stock postings, which do not lock
@@ -3106,6 +3382,7 @@ def _build_live_capacity_resource_fingerprint(
 			cross_segment_rows,
 			lock_existing_work_orders=True,
 			current_read_resources=True,
+			include_material_resources=not v2_enabled,
 		)
 		current_demands = _build_segment_balance_demands(
 			run_doc,
@@ -3114,7 +3391,13 @@ def _build_live_capacity_resource_fingerprint(
 			downtime_windows=downtime_windows,
 			lock_existing_work_orders=True,
 			current_read_resources=True,
+			include_material_resources=not v2_enabled,
 		)
+		if v2_enabled:
+			reserved_demands = horizon_status.remove_material_constraints(reserved_demands)
+			current_demands = horizon_status.remove_material_constraints(
+				[row for row in current_demands if row.get("result") not in excluded_results]
+			)
 	finished_goods_stock_by_item = _get_physical_finished_goods_stock_map(
 		run_doc.company,
 		[*result_rows.values(), *cross_result_rows.values()],
@@ -3140,7 +3423,7 @@ def _build_live_capacity_resource_fingerprint(
 	)
 
 
-def _apply_capacity_allocations(analysis: dict[str, Any]) -> dict[str, Any]:
+def _apply_capacity_allocations(analysis: dict[str, Any], *, allow_partial: bool = False) -> dict[str, Any]:
 	rows_by_result = defaultdict(list)
 	for row in analysis.get("demands") or []:
 		rows_by_result[row.get("result")].append(row)
@@ -3159,7 +3442,12 @@ def _apply_capacity_allocations(analysis: dict[str, Any]) -> dict[str, Any]:
 			if _is_fixed_segment(segment.as_dict()):
 				frappe.throw(_("Fixed or started segment {0} cannot be capacity-balanced.").format(segment.name))
 			allocations = demand.get("allocations") or []
-			if not allocations or abs(sum(flt(row.get("qty")) for row in allocations) - flt(segment.planned_qty)) > CAPACITY_TOLERANCE:
+			allocation_qty = sum(flt(row.get("qty")) for row in allocations)
+			expected_qty = (
+				max(flt(segment.planned_qty) - flt(demand.get("unscheduled_qty")), 0)
+				if allow_partial else flt(segment.planned_qty)
+			)
+			if abs(allocation_qty - expected_qty) > CAPACITY_TOLERANCE:
 				frappe.throw(_("Capacity allocation for segment {0} does not preserve its planned quantity.").format(segment.name))
 			family_rows = [
 				row
@@ -3174,6 +3462,10 @@ def _apply_capacity_allocations(analysis: dict[str, Any]) -> dict[str, Any]:
 			]
 			for row in family_rows:
 				result_doc.remove(row)
+			if not allocations:
+				result_doc.remove(segment)
+				updated_segments += 1
+				continue
 			base_payload = _child_payload(segment)
 			split_group = "BAL-{0}".format(fingerprint({"segment": segment.name, "analysis": analysis.get("analysis_fingerprint")})[:10])
 			for allocation_index, allocation in enumerate(allocations, start=1):
@@ -3229,6 +3521,22 @@ def _apply_capacity_allocations(analysis: dict[str, Any]) -> dict[str, Any]:
 		"updated_segments": updated_segments,
 		"created_segments": created_segments,
 	}
+
+
+def _apply_excluded_results(run_name: str, analysis: dict[str, Any]) -> int:
+	result_names = sorted({row.get("result") for row in analysis.get("excluded_demands") or [] if row.get("result")})
+	for result_name in result_names:
+		doc = frappe.get_doc("APS Schedule Result", result_name)
+		for segment in doc.get("segments") or []:
+			if not _is_fixed_segment(segment.as_dict()):
+				segment.segment_status = "Cancelled"
+		doc.status = "Blocked"
+		doc.risk_status = "Critical"
+		doc.flow_step = "Excluded From Release"
+		doc.next_step_hint = "Carry as P0 into the next Planning Run"
+		doc.blocking_reason = doc.exclusion_reason or _("Excluded from this release by an approved APS resolution.", context="Injection APS")
+		doc.save(ignore_permissions=True)
+	return len(result_names)
 
 
 def _child_payload(row) -> dict[str, Any]:
@@ -3601,7 +3909,7 @@ def _get_cross_run_applied_commitments(run_doc, *, lock_rows: bool = False):
 		left join `tabAPS Net Requirement` nr on nr.name = res.net_requirement
 		where run.company = %(company)s
 			and run.name != %(run)s
-			and run.capacity_balance_status = 'Applied'
+			and (run.capacity_balance_status = 'Applied' or run.capacity_balance_status = 'Applied with Exceptions')
 			and ifnull(run.status, '') != 'Closed'
 		order by run.name asc, res.name asc
 	"""
@@ -3681,7 +3989,7 @@ def _get_cross_run_applied_commitments(run_doc, *, lock_rows: bool = False):
 		left join `tabAPS Net Requirement` nr on nr.name = res.net_requirement
 		where run.company = %(company)s
 			and run.name != %(run)s
-			and run.capacity_balance_status = 'Applied'
+			and (run.capacity_balance_status = 'Applied' or run.capacity_balance_status = 'Applied with Exceptions')
 			and ifnull(run.status, '') != 'Closed'
 			and seg.parenttype = 'APS Schedule Result'
 			and seg.segment_kind in ('Primary', 'Manual')
@@ -3747,6 +4055,7 @@ def _build_segment_balance_demands(
 	downtime_windows: list[dict[str, Any]] | None = None,
 	lock_existing_work_orders: bool = False,
 	current_read_resources: bool = False,
+	include_material_resources: bool = True,
 ) -> list[dict[str, Any]]:
 	"""Build demands while consuming one existing-WO material credit exactly once.
 
@@ -3778,8 +4087,12 @@ def _build_segment_balance_demands(
 			segment,
 			downtime_windows=downtime_windows,
 			current_read_resources=current_read_resources,
+			include_material_resources=include_material_resources,
 		)
 		result_name = result.get("name") or segment.get("parent")
+		if not include_material_resources:
+			demands.append(demand)
+			continue
 		if result_name not in credit_by_result:
 			credit_by_result[result_name] = _get_proven_existing_work_order_material_credit(
 				result,
@@ -4083,6 +4396,7 @@ def _build_cross_run_reservation_demands(
 	*,
 	lock_existing_work_orders: bool = False,
 	current_read_resources: bool = False,
+	include_material_resources: bool = True,
 ) -> list[dict[str, Any]]:
 	base_demands = _build_segment_balance_demands(
 		run_doc,
@@ -4090,6 +4404,7 @@ def _build_cross_run_reservation_demands(
 		segment_rows,
 		lock_existing_work_orders=lock_existing_work_orders,
 		current_read_resources=current_read_resources,
+		include_material_resources=include_material_resources,
 	)
 	by_segment = {row.get("segment"): row for row in base_demands}
 	reserved = []
@@ -4186,6 +4501,10 @@ def _get_fixed_execution_intervals(
 			inner join `tabWork Order Scheduling` wos on wos.name = si.parent
 			left join `tabAPS Schedule Segment` seg on seg.name = si.custom_aps_segment_reference
 			where ifnull(wos.status, '') in ('Material Transfer', 'Job Card', 'Manufacture')
+				and (
+					si.custom_aps_campaign is null
+					or si.custom_aps_capacity_owner = si.custom_aps_segment_reference
+				)
 				and coalesce(si.from_time, si.planned_start_date) < %(horizon_end)s
 				and coalesce(si.to_time, si.planned_end_date) > %(horizon_start)s
 			order by si.name asc
@@ -4217,6 +4536,7 @@ def _build_segment_balance_demand(
 	*,
 	downtime_windows: list[dict[str, Any]] | None = None,
 	current_read_resources: bool = False,
+	include_material_resources: bool = True,
 ) -> dict[str, Any]:
 	from injection_aps.services import planning
 
@@ -4254,20 +4574,22 @@ def _build_segment_balance_demand(
 		settings,
 		current_read=current_read_resources,
 	)
-	source_warehouse = _get_valid_plant_floor_warehouse(
-		result.get("company"),
-		result.get("plant_floor"),
-		settings.get("plant_floor_source_warehouse_field"),
-		current_read=current_read_resources,
-	)
 	material_resource_details: dict[str, Any] = {}
-	material_ready_qty = _get_material_ready_qty(
-		result.get("company"),
-		result.get("item_code"),
-		warehouse=source_warehouse,
-		resource_details=material_resource_details,
-		current_read=current_read_resources,
-	)
+	material_ready_qty = None
+	if include_material_resources:
+		source_warehouse = _get_valid_plant_floor_warehouse(
+			result.get("company"),
+			result.get("plant_floor"),
+			settings.get("plant_floor_source_warehouse_field"),
+			current_read=current_read_resources,
+		)
+		material_ready_qty = _get_material_ready_qty(
+			result.get("company"),
+			result.get("item_code"),
+			warehouse=source_warehouse,
+			resource_details=material_resource_details,
+			current_read=current_read_resources,
+		)
 	due_time = get_datetime(f"{getdate(result.get('requested_date'))} 23:59:59")
 	is_fixed = _is_fixed_segment(segment)
 	planned_qty = max(flt(segment.get("planned_qty")), 0)
@@ -4311,7 +4633,7 @@ def _build_segment_balance_demand(
 		# A later batch builder applies only a reservation credit that is proven
 		# against the exact WO and current Bin aggregate.  A link alone is not proof:
 		# WOs with a blank source warehouse create no ERPNext Bin reservation.
-		"resource_material_consumption_qty": remaining_commitment_qty,
+		"resource_material_consumption_qty": remaining_commitment_qty if include_material_resources else None,
 		"due_time": due_time,
 		"due_granularity": "Date",
 		"strategy": result.get("production_strategy") or item_policy.get("production_strategy"),
@@ -4332,7 +4654,7 @@ def _build_segment_balance_demand(
 		"warehouse_room_qty": warehouse_room_qty,
 		"warehouse_resource_key": warehouse,
 		"material_ready_qty": material_ready_qty,
-		"material_requirements": material_resource_details.get("requirements") or [],
+		"material_requirements": material_resource_details.get("requirements") or [] if include_material_resources else [],
 		"overstock_risk": cint(inventory_room_qty is not None and inventory_room_qty <= CAPACITY_TOLERANCE),
 		"late_qty_before_balance": _segment_late_qty_before_balance(
 			segment.get("start_time"),
@@ -5170,6 +5492,9 @@ def _optional_snapshot_qty(value: Any) -> float | None:
 
 
 def _persist_capacity_analysis(run_doc, analysis: dict[str, Any]):
+	from injection_aps.services.v2_flags import is_v2_enabled
+
+	v2_enabled = is_v2_enabled()
 	for key in (
 		"confirmation_fingerprint",
 		"confirmed_by",
@@ -5188,9 +5513,14 @@ def _persist_capacity_analysis(run_doc, analysis: dict[str, Any]):
 		late_before = sum(flt(row.get("late_qty_before_balance")) for row in rows)
 		late_after = sum(flt(row.get("late_qty_after_balance")) for row in rows)
 		requires_confirmation = any(cint(row.get("requires_confirmation")) for row in rows)
-		status = "Blocked" if any(row.get("status") == "Blocked" for row in rows) else (
-			"Confirmation Required" if requires_confirmation else "Balanced"
-		)
+		if v2_enabled:
+			status = "Hard Blocked" if any(row.get("status") == "Hard Blocked" for row in rows) else (
+				"Acknowledgment Required" if requires_confirmation else "Ready"
+			)
+		else:
+			status = "Blocked" if any(row.get("status") == "Blocked" for row in rows) else (
+				"Confirmation Required" if requires_confirmation else "Balanced"
+			)
 		frappe.db.set_value(
 			"APS Schedule Result",
 			result_name,
@@ -5209,9 +5539,16 @@ def _persist_capacity_analysis(run_doc, analysis: dict[str, Any]):
 			},
 			update_modified=False,
 		)
-	status = "Blocked" if analysis["summary"].get("blocked_demands") else (
-		"Confirmation Required" if analysis["summary"].get("requires_confirmation") else "Suggestion Ready"
+	status = (
+		analysis.get("readiness_status")
+		if v2_enabled else (
+			"Blocked" if analysis["summary"].get("blocked_demands") else (
+				"Confirmation Required" if analysis["summary"].get("requires_confirmation") else "Suggestion Ready"
+			)
+		)
 	)
+	resolution_count = len(analysis.get("hard_blockers") or []) if v2_enabled else 0
+	excluded_count = len({row.get("result") for row in analysis.get("excluded_demands") or [] if row.get("result")}) if v2_enabled else 0
 	frappe.db.set_value(
 		"APS Planning Run",
 		run_doc.name,
@@ -5227,6 +5564,8 @@ def _persist_capacity_analysis(run_doc, analysis: dict[str, Any]):
 			"capacity_balance_confirmed_by": None,
 			"capacity_balance_confirmed_on": None,
 			"capacity_balance_applied_on": None,
+			"constraint_resolution_count": resolution_count,
+			"excluded_commitment_count": excluded_count,
 		},
 		update_modified=False,
 	)

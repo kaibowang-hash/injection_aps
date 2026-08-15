@@ -8,6 +8,10 @@ class APSSettings(Document):
 		self.planning_horizon_days = self.planning_horizon_days or 14
 		self.release_horizon_days = self.release_horizon_days or 1
 		self.freeze_days = self.freeze_days or 2
+		self.default_freeze_horizon_days = self.default_freeze_horizon_days or self.freeze_days or 2
+		self.default_restricted_horizon_days = self.default_restricted_horizon_days or 7
+		self.default_recovery_horizon_days = self.default_recovery_horizon_days or 7
+		self.due_time_policy = self.due_time_policy or "Delivery Date End Of Day"
 		self.default_production_strategy = self.default_production_strategy or "Auto Balance"
 		self.capacity_bucket_mode = self.capacity_bucket_mode or "Shift"
 		self.default_max_prebuild_days = self.default_max_prebuild_days or 7
@@ -15,8 +19,8 @@ class APSSettings(Document):
 		self.default_setup_minutes = self.default_setup_minutes or 30
 		self.default_first_article_minutes = self.default_first_article_minutes or 45
 		self.default_hourly_capacity_qty = self.default_hourly_capacity_qty or 120
-		if not self.item_food_grade_field or self.item_food_grade_field == "custom_food_grade":
-			self.item_food_grade_field = "custom_aps_food_grade"
+		if not self.item_food_grade_field or self.item_food_grade_field == "custom_aps_food_grade":
+			self.item_food_grade_field = "custom_food_grade"
 		self.item_first_article_field = self.item_first_article_field or "custom_is_first_article"
 		self.item_color_field = self.item_color_field or "color"
 		self.item_material_field = self.item_material_field or "material"
@@ -38,3 +42,5 @@ class APSSettings(Document):
 		self.plant_floor_scrap_warehouse_field = (
 			self.plant_floor_scrap_warehouse_field or "custom_default_scrap_warehouse"
 		)
+		self.aps_producible_item_groups = self.aps_producible_item_groups or "Plastic Part\nSub-assemblies"
+		self.aps_bom_policy = self.aps_bom_policy or "Default BOM Only"

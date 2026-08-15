@@ -5,7 +5,7 @@ from frappe import _
 from frappe.model.document import Document
 from frappe.utils import flt
 
-from injection_aps.services.consistency import calculate_quantity_fields, is_effective_primary_segment
+from injection_aps.services.consistency import calculate_quantity_fields, is_effective_quantity_segment
 
 
 class APSScheduleResult(Document):
@@ -14,7 +14,7 @@ class APSScheduleResult(Document):
 		machine_scheduled_qty = sum(
 			flt(row.planned_qty)
 			for row in (self.get("segments") or [])
-			if is_effective_primary_segment(row)
+			if is_effective_quantity_segment(row)
 		)
 		quantities = calculate_quantity_fields(self.planned_qty, machine_scheduled_qty)
 		self.machine_scheduled_qty = quantities["machine_scheduled_qty"]

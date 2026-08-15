@@ -16,7 +16,17 @@ class APSPlanningRun(Document):
 
 		if not self.horizon_start:
 			self.horizon_start = get_datetime(now_datetime())
-		if not self.horizon_end:
+		from injection_aps.services.v2_flags import is_v2_enabled
+
+		if is_v2_enabled():
+			from injection_aps.services import horizon_status, planning
+
+			for fieldname, value in horizon_status.planning_run_window_fields(
+				self, planning.get_settings_dict()
+			).items():
+				self.set(fieldname, value)
+			self.due_time_policy = self.due_time_policy or planning.get_settings_dict().get("due_time_policy")
+		elif not self.horizon_end:
 			self.horizon_end = get_datetime(add_days(self.horizon_start, self.horizon_days))
 		if get_datetime(self.horizon_end) < get_datetime(self.horizon_start):
 			frappe.throw(_("Horizon End cannot be earlier than Horizon Start."))

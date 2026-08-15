@@ -7,8 +7,19 @@ frappe.ui.form.on("APS Planning Run", {
 		}
 		await PLANNING_RUN_SHARED_READY;
 		injection_aps.ui.ensure_styles();
+		try {
+			const capabilities = await frappe.xcall("injection_aps.api.app.get_v2_capabilities");
+			frm.__aps_v2_enabled = Number(((capabilities || {}).settings || {}).enable_aps_v2 || 0) === 1;
+			frm.__aps_solver_engine = ((capabilities || {}).settings || {}).solver_engine || "Legacy";
+			frm.__aps_multilevel_bom = Number(((capabilities || {}).settings || {}).enable_multilevel_bom_planning || 0) === 1;
+		} catch (error) {
+			frm.__aps_v2_enabled = false;
+			frm.__aps_solver_engine = "Legacy";
+			frm.__aps_multilevel_bom = false;
+		}
 		await render_flow(frm);
 		render_quantity_indicators(frm);
+		render_v2_horizons(frm);
 		render_capacity_analysis(frm);
 		add_actions(frm);
 	},
@@ -22,6 +33,21 @@ function render_quantity_indicators(frm) {
 	if (Number(frm.doc.total_cancellation_inventory_risk_qty || 0) > 0) {
 		frm.dashboard.add_indicator(`${__("Cancel Stock Risk", null, "Injection APS")}: ${injection_aps.ui.format_number(frm.doc.total_cancellation_inventory_risk_qty || 0)}`, "red");
 	}
+}
+
+function render_v2_horizons(frm) {
+	frm.dashboard.parent.find(".ia-v2-horizon-section").remove();
+	if (!frm.__aps_v2_enabled) return;
+	const cells = [
+		[__("Overdue", null, "Injection APS"), `${frm.doc.demand_horizon_start_date || "-"} ${__("and earlier open P0", null, "Injection APS")}`],
+		[__("Demand", null, "Injection APS"), `${frm.doc.demand_horizon_start_date || "-"} → ${frm.doc.demand_horizon_end_date || "-"}`],
+		[__("Freeze", null, "Injection APS"), `${frm.doc.demand_horizon_start_date || "-"} → ${frm.doc.freeze_horizon_end_date || "-"}`],
+		[__("Restricted", null, "Injection APS"), `${frm.doc.freeze_horizon_end_date || "-"} → ${frm.doc.restricted_horizon_end_date || "-"}`],
+		[__("Recovery", null, "Injection APS"), `${frm.doc.recovery_horizon_start_date || "-"} → ${frm.doc.recovery_horizon_end_date || "-"}`],
+	];
+	const html = `<div class="row">${cells.map(([label, value]) => `<div class="col-sm-4 mb-2"><b>${label}</b><div class="text-muted">${injection_aps.ui.escape(value)}</div></div>`).join("")}</div>`;
+	frm.dashboard.add_section(html, __("APS V2 Horizons", null, "Injection APS"), "custom ia-v2-horizon-section");
+	frm.dashboard.show();
 }
 
 function get_capacity_analysis(frm) {
@@ -41,14 +67,30 @@ function get_capacity_evidence_rows(frm) {
 	if (!analysis) {
 		return [];
 	}
-	return (analysis.demands || []).map((row) => {
+	return (analysis.demands || []).flatMap((row) => {
 		const importantChecks = (row.checks || []).filter((check) => ["warning", "blocked", "failed"].includes(check.status));
 		const reasons = []
 			.concat(row.confirmation_reasons || [])
 			.concat(importantChecks.map((check) => check.message))
 			.filter(Boolean)
 			.map((reason) => injection_aps.ui.translate(reason));
-		return Object.assign({}, row, { display_reasons: [...new Set(reasons)] });
+		const base = Object.assign({}, row, { display_reasons: [...new Set(reasons)] });
+		if (!(row.allocations || []).length) {
+			return [base];
+		}
+		return row.allocations.map((allocation, index) => Object.assign({}, base, {
+			workstation: allocation.workstation,
+			mold: allocation.mold,
+			planned_qty: allocation.qty,
+			late_qty: allocation.delivery_status === "Late" ? allocation.qty : 0,
+			unscheduled_qty: index === 0 ? row.unscheduled_qty : 0,
+			proposed_start: allocation.production_start,
+			proposed_end: allocation.end,
+			setup_minutes: allocation.setup_minutes,
+			changeover_minutes: allocation.changeover_minutes,
+			horizon_zone: allocation.horizon_zone,
+			provisional: 1,
+		}));
 	});
 }
 
@@ -100,6 +142,7 @@ function render_capacity_analysis(frm) {
 		return;
 	}
 	const summary = analysis.summary || {};
+	const readiness = analysis.readiness_status || frm.doc.capacity_balance_status || "-";
 	const allRows = get_capacity_evidence_rows(frm);
 	const impactedRows = get_impacted_capacity_rows(frm);
 	const rows = (impactedRows.length ? impactedRows : allRows).slice(0, 50);
@@ -115,15 +158,22 @@ function render_capacity_analysis(frm) {
 							<td>${injection_aps.ui.escape(injection_aps.ui.format_number(row.jit_qty || 0))}</td>
 							<td>${injection_aps.ui.escape(injection_aps.ui.format_number(row.late_qty || 0))}</td>
 							<td>${injection_aps.ui.escape(injection_aps.ui.format_number(row.unscheduled_qty || 0))}</td>
+							<td>${injection_aps.ui.escape(injection_aps.ui.format_datetime(row.proposed_start || ""))}</td>
+							<td>${injection_aps.ui.escape(injection_aps.ui.format_datetime(row.proposed_end || ""))}</td>
 							<td>${injection_aps.ui.escape(injection_aps.ui.translate(row.status || "-"))}</td>
 							<td>${injection_aps.ui.escape((row.display_reasons || []).join("；") || "-")}</td>
 						</tr>
 					`
 				)
 				.join("")
-		: `<tr><td colspan="9" class="text-muted">${__("No affected capacity demand rows.")}</td></tr>`;
+		: `<tr><td colspan="11" class="text-muted">${__("No affected capacity demand rows.")}</td></tr>`;
 	const html = `
+		<div class="alert ${readiness === "Hard Blocked" ? "alert-danger" : readiness === "Acknowledgment Required" ? "alert-warning" : "alert-success"}">
+			<b>${__("Readiness", null, "Injection APS")}: ${injection_aps.ui.escape(injection_aps.ui.translate(readiness))}</b><br>
+			${injection_aps.ui.escape(injection_aps.ui.translate(analysis.next_action || ""))}
+		</div>
 		<div class="small text-muted mb-2">
+			${Number(analysis.solver_v2 || 0) === 1 ? `<b>${__("Proposed tasks before Apply", null, "Injection APS")}</b> · ${__("These rows are read-only until Apply.", null, "Injection APS")}<br>` : ""}
 			${__("Prebuild", null, "Injection APS")}: ${injection_aps.ui.escape(injection_aps.ui.format_number(summary.prebuild_qty || 0))} ·
 			${__("JIT", null, "Injection APS")}: ${injection_aps.ui.escape(injection_aps.ui.format_number(summary.jit_qty || 0))} ·
 			${__("Late", null, "Injection APS")}: ${injection_aps.ui.escape(injection_aps.ui.format_number(summary.late_qty || 0))} ·
@@ -140,6 +190,8 @@ function render_capacity_analysis(frm) {
 					<th>${__("JIT", null, "Injection APS")}</th>
 					<th>${__("Late", null, "Injection APS")}</th>
 					<th>${__("Unscheduled", null, "Injection APS")}</th>
+					<th>${__("Proposed Start", null, "Injection APS")}</th>
+					<th>${__("Proposed End", null, "Injection APS")}</th>
 					<th>${__("Status", null, "Injection APS")}</th>
 					<th>${__("Reason", null, "Injection APS")}</th>
 				</tr></thead>
@@ -171,9 +223,9 @@ function add_actions(frm) {
 
 	const addButton = (label, fn, group, type, actionKey) => {
 		if (actionKey && !injection_aps.ui.can_run_action(actionKey)) {
-			return;
+			return null;
 		}
-		frm.add_custom_button(__(label, null, "Injection APS"), fn, group ? __(group, null, "Injection APS") : undefined);
+		const button = frm.add_custom_button(__(label, null, "Injection APS"), fn, group ? __(group, null, "Injection APS") : undefined);
 		if (type) {
 			frm.change_custom_button_type(
 				__(label, null, "Injection APS"),
@@ -181,6 +233,7 @@ function add_actions(frm) {
 				type
 			);
 		}
+		return button;
 	};
 
 	const confirmAndCall = async (action, options, method, args) => {
@@ -230,7 +283,7 @@ function add_actions(frm) {
 		}, null, "primary", "run_trial");
 	}
 
-	if (["Draft", "Planned", "Risk"].includes(frm.doc.status || "Draft") && frm.doc.capacity_balance_status !== "Applied") {
+	if (["Draft", "Planned", "Risk"].includes(frm.doc.status || "Draft") && !["Applied", "Applied with Exceptions"].includes(frm.doc.capacity_balance_status)) {
 		addButton("Analyze Capacity", async () => {
 			const response = await injection_aps.ui.xcall(
 				{
@@ -238,8 +291,12 @@ function add_actions(frm) {
 					success_message: __("Capacity proposal refreshed."),
 					busy_key: `planning-capacity-analyze:${frm.doc.name}`,
 				},
-				"injection_aps.api.app.analyze_capacity_balance",
-				{ run_name: frm.doc.name }
+				frm.__aps_v2_enabled && frm.__aps_solver_engine === "CP-SAT"
+					? "injection_aps.api.app.analyze_v2_schedule"
+					: "injection_aps.api.app.analyze_capacity_balance",
+				frm.__aps_v2_enabled && frm.__aps_solver_engine === "CP-SAT"
+					? { run_name: frm.doc.name, run_in_background: 1 }
+					: { run_name: frm.doc.name }
 			);
 			if (response) {
 				await frm.reload_doc();
@@ -247,7 +304,20 @@ function add_actions(frm) {
 		}, "Capacity", null, "analyze_capacity_balance");
 	}
 
-	if (frm.doc.capacity_balance_status === "Confirmation Required" && !frm.doc.capacity_balance_confirmed_by) {
+	if (frm.__aps_v2_enabled && frm.__aps_solver_engine === "CP-SAT" && frm.doc.solver_job) {
+		addButton("Compare Solver Scenarios", () => {
+			frappe.set_route("aps-solver-scenario-comparison", { run_name: frm.doc.name });
+		}, "APS V2", null);
+	}
+
+	if (frm.__aps_v2_enabled && frm.__aps_multilevel_bom) {
+		addButton("BOM Tree", () => show_bom_tree(frm), "APS V2", null);
+		if (["Draft", "Planned"].includes(frm.doc.status || "Draft") && injection_aps.ui.can_run_action("analyze_capacity_balance")) {
+			addButton("BOM Decisions", () => show_bom_decisions(frm), "APS V2", null);
+		}
+	}
+
+	if (!frm.__aps_v2_enabled && frm.doc.capacity_balance_status === "Confirmation Required" && !frm.doc.capacity_balance_confirmed_by) {
 		addButton("PMC Confirm", async () => {
 			const response = await confirmAndCall(
 				{ action_key: "confirm_capacity_balance", confirm_required: 1 },
@@ -267,10 +337,57 @@ function add_actions(frm) {
 		}, "Capacity", null, "confirm_capacity_balance");
 	}
 
-	if (
+	if (frm.__aps_v2_enabled && frm.doc.capacity_balance_status === "Acknowledgment Required" && !frm.doc.capacity_balance_confirmed_by) {
+		addButton("Review and Acknowledge", async () => {
+			if (frm.__aps_solver_engine === "CP-SAT") {
+				const reason = await prompt_solver_reason(__("Acknowledge APS Schedule Risks", null, "Injection APS"));
+				if (!reason) return;
+				const response = await injection_aps.ui.xcall(
+					{ message: __("Recording risk acknowledgment...", null, "Injection APS"), success_message: __("Schedule risks acknowledged.", null, "Injection APS"), busy_key: `planning-solver-acknowledge:${frm.doc.name}` },
+					"injection_aps.api.app.acknowledge_schedule_risks",
+					{ planning_run: frm.doc.name, reason, expected_fingerprint: frm.doc.solver_input_fingerprint }
+				);
+				if (response) await frm.reload_doc();
+				return;
+			}
+			const response = await confirmAndCall(
+				{ action_key: "confirm_capacity_balance", confirm_required: 1 },
+				{
+					title: __("Acknowledge APS Schedule Risks", null, "Injection APS"),
+					summary_lines: build_capacity_confirmation_lines(frm),
+					message: __("Recording risk acknowledgment...", null, "Injection APS"),
+					success_message: __("Schedule risks acknowledged.", null, "Injection APS"),
+					busy_key: `planning-capacity-acknowledge:${frm.doc.name}`,
+				},
+				"injection_aps.api.app.confirm_capacity_balance",
+				{ run_name: frm.doc.name }
+			);
+			if (response) await frm.reload_doc();
+		}, "APS V2", null, frm.__aps_solver_engine === "CP-SAT" ? "acknowledge_schedule_risks" : "confirm_capacity_balance");
+	}
+
+	if (frm.__aps_v2_enabled && frm.doc.capacity_balance_status === "Hard Blocked") {
+		addButton("Open Resolution Center", () => {
+			frappe.set_route("aps-constraint-resolution-center", { run_name: frm.doc.name });
+		}, "APS V2", "primary");
+	}
+
+	const capacityReadyToApply = (
 		frm.doc.capacity_balance_status === "Suggestion Ready" ||
-		(frm.doc.capacity_balance_status === "Confirmation Required" && frm.doc.capacity_balance_confirmed_by)
-	) {
+		(frm.doc.capacity_balance_status === "Confirmation Required" && frm.doc.capacity_balance_confirmed_by) ||
+		(frm.__aps_v2_enabled && frm.doc.capacity_balance_status === "Ready") ||
+		(frm.__aps_v2_enabled && frm.doc.capacity_balance_status === "Acknowledgment Required" && frm.doc.capacity_balance_confirmed_by)
+	);
+	const v2TrialIsReadOnly = frm.__aps_v2_enabled && frm.__aps_solver_engine === "CP-SAT" && frm.doc.run_type !== "Formal";
+	if (capacityReadyToApply && v2TrialIsReadOnly) {
+		const reason = __("Trial runs are read-only. Create or approve a Formal run before applying the V2 schedule.", null, "Injection APS");
+		const button = addButton("Apply Balance", () => {}, "Capacity", "primary", "apply_v2_schedule");
+		if (button) {
+			button.prop("disabled", true).attr("title", reason).attr("aria-label", reason);
+		}
+	}
+
+	if (capacityReadyToApply && !v2TrialIsReadOnly) {
 		addButton("Apply Balance", async () => {
 			const response = await confirmAndCall(
 				{ action_key: "apply_capacity_balance", confirm_required: 1 },
@@ -284,17 +401,25 @@ function add_actions(frm) {
 					success_message: __("Capacity balance applied."),
 					busy_key: `planning-capacity-apply:${frm.doc.name}`,
 				},
-				"injection_aps.api.app.apply_capacity_balance",
-				{ run_name: frm.doc.name }
+				frm.__aps_v2_enabled && frm.__aps_solver_engine === "CP-SAT"
+					? "injection_aps.api.app.apply_v2_schedule"
+					: "injection_aps.api.app.apply_capacity_balance",
+				frm.__aps_v2_enabled && frm.__aps_solver_engine === "CP-SAT"
+					? { planning_run: frm.doc.name, expected_fingerprint: frm.doc.solver_input_fingerprint }
+					: { run_name: frm.doc.name }
 			);
 			if (response) {
 				await frm.reload_doc();
 			}
-		}, "Capacity", "primary", "apply_capacity_balance");
+		}, "Capacity", "primary", frm.__aps_v2_enabled && frm.__aps_solver_engine === "CP-SAT" ? "apply_v2_schedule" : "apply_capacity_balance");
 	}
 
 	if (frm.doc.approval_state !== "Approved") {
-		addButton("Confirm Run", async () => {
+		const analysis = get_capacity_analysis(frm) || {};
+		const capacityReadyForConfirmation = ["Applied", "Applied with Exceptions"].includes(frm.doc.capacity_balance_status)
+			&& Boolean(analysis.applied_plan_fingerprint)
+			&& Boolean(analysis.applied_resource_fingerprint);
+		const confirmRunButton = addButton("Confirm Run", async () => {
 			const response = await confirmAndCall(
 				{ action_key: "approve", confirm_required: 1 },
 				{
@@ -322,6 +447,10 @@ function add_actions(frm) {
 			}
 			await frm.reload_doc();
 		}, null, "primary", "approve");
+		if (confirmRunButton && !capacityReadyForConfirmation) {
+			const reason = __("Apply the analyzed capacity plan before confirming this run.", null, "Injection APS");
+			confirmRunButton.prop("disabled", true).attr("title", reason).attr("aria-label", reason);
+		}
 	}
 
 	if (frm.doc.approval_state === "Approved" && frm.doc.status === "Approved") {
@@ -429,4 +558,84 @@ function add_actions(frm) {
 			return;
 		}
 	}, "Tools", null, "rebuild_exceptions");
+}
+
+function prompt_solver_reason(title) {
+	return new Promise((resolve) => {
+		const dialog = new frappe.ui.Dialog({
+			title,
+			fields: [{ fieldname: "reason", fieldtype: "Small Text", label: __("Reason", null, "Injection APS"), reqd: 1 }],
+			primary_action_label: __("Confirm", null, "Injection APS"),
+			primary_action: (values) => { dialog.hide(); resolve(values.reason); },
+		});
+		dialog.show();
+	});
+}
+
+async function show_bom_decisions(frm) {
+	const data = await frappe.xcall("injection_aps.api.app.get_run_bom_selections", { planning_run: frm.doc.name });
+	if (!data) return;
+	const byItem = {};
+	(data.options || []).forEach((row) => {
+		if (!byItem[row.item]) byItem[row.item] = [];
+		byItem[row.item].push(row);
+	});
+	const selected = {};
+	(data.selections || []).forEach((row) => { selected[row.item_code] = row.bom; });
+	const rows = Object.keys(byItem).sort().map((item) => {
+		const options = byItem[item];
+		const defaultBom = (options.find((row) => Number(row.is_default || 0) === 1) || options[0] || {}).name || "";
+		return `
+			<tr>
+				<td>${injection_aps.ui.escape(item)}</td>
+				<td>${injection_aps.ui.escape(defaultBom || "-")}</td>
+				<td><select class="form-control input-sm ia-bom-choice" data-item="${injection_aps.ui.escape(item)}" ${data.policy === "Explicit Approved Alternative" ? "" : "disabled"}>
+					<option value="">${injection_aps.ui.escape(__("Use Default BOM", null, "Injection APS"))}</option>
+					${options.map((row) => `<option value="${injection_aps.ui.escape(row.name)}" ${selected[item] === row.name ? "selected" : ""}>${injection_aps.ui.escape(row.name)}${Number(row.is_default || 0) ? ` (${injection_aps.ui.escape(__("Default", null, "Injection APS"))})` : ""}</option>`).join("")}
+				</select></td>
+			</tr>`;
+	}).join("");
+	const dialog = new frappe.ui.Dialog({
+		title: __("BOM Decisions", null, "Injection APS"),
+		fields: [
+			{ fieldname: "policy_info", fieldtype: "HTML", options: `<div class="alert alert-info"><b>${injection_aps.ui.escape(__("Policy", null, "Injection APS"))}:</b> ${injection_aps.ui.escape(data.policy)}<br>${injection_aps.ui.escape(__("Only explicitly approved alternatives replace the submitted default BOM. Any BOM master change requires approval again.", null, "Injection APS"))}</div><div class="table-responsive"><table class="table table-bordered table-sm"><thead><tr><th>${__("Item", null, "Injection APS")}</th><th>${__("Default BOM", null, "Injection APS")}</th><th>${__("Approved Selection", null, "Injection APS")}</th></tr></thead><tbody>${rows || `<tr><td colspan="3" class="text-muted">${__("No eligible manufactured items were found.", null, "Injection APS")}</td></tr>`}</tbody></table></div>` },
+			{ fieldname: "reason", fieldtype: "Small Text", label: __("Approval Reason", null, "Injection APS"), depends_on: `eval:${JSON.stringify(data.policy)}==\"Explicit Approved Alternative\"` },
+		],
+		primary_action_label: __("Save BOM Decisions", null, "Injection APS"),
+		primary_action: async (values) => {
+			const selections = [];
+			dialog.$wrapper.find(".ia-bom-choice").each(function () {
+				if (this.value) selections.push({ item_code: this.dataset.item, bom: this.value });
+			});
+			const response = await injection_aps.ui.xcall(
+				{ message: __("Saving BOM decisions...", null, "Injection APS"), success_message: __("BOM decisions saved; analyze the schedule again.", null, "Injection APS"), busy_key: `bom-decisions:${frm.doc.name}` },
+				"injection_aps.api.app.set_run_bom_selections",
+				{ planning_run: frm.doc.name, selections, reason: values.reason || "", expected_run_modified: data.run_modified }
+			);
+			if (response) { dialog.hide(); await frm.reload_doc(); }
+		},
+	});
+	if (data.policy !== "Explicit Approved Alternative") dialog.get_primary_btn().hide();
+	dialog.show();
+}
+
+async function show_bom_tree(frm) {
+	const data = await frappe.xcall("injection_aps.api.app.get_bom_pegging_tree", { planning_run: frm.doc.name });
+	if (!data) return;
+	const summary = data.summary || {};
+	const rows = (data.links || []).map((row) => `<tr>
+		<td>${injection_aps.ui.escape(row.root_demand_key || "-")}</td>
+		<td>${injection_aps.ui.escape(((data.nodes || []).find((node) => node.key === row.from) || {}).item_code || "-")}</td>
+		<td>→</td>
+		<td>${injection_aps.ui.escape(((data.nodes || []).find((node) => node.key === row.to) || {}).item_code || "-")}</td>
+		<td>${injection_aps.ui.escape(injection_aps.ui.format_number(row.required_qty || 0))}</td>
+		<td>${injection_aps.ui.escape(injection_aps.ui.format_number(row.stock_covered_qty || 0))}</td>
+		<td>${injection_aps.ui.escape(injection_aps.ui.format_number(row.wip_covered_qty || 0))}</td>
+		<td>${injection_aps.ui.escape(injection_aps.ui.format_number(row.production_qty || 0))}</td>
+		<td>${injection_aps.ui.escape(injection_aps.ui.translate(row.status || "-"))}</td>
+	</tr>`).join("");
+	frappe.msgprint({
+		title: __("BOM Tree", null, "Injection APS"), wide: true,
+		message: `<div class="mb-2"><b>${__("Roots", null, "Injection APS")}:</b> ${summary.root_count || 0} · <b>${__("Late Dependencies", null, "Injection APS")}:</b> ${summary.late_count || 0} · <b>${__("Raw Material Advisory", null, "Injection APS")}:</b> ${summary.raw_material_advisory_count || 0}</div><div class="table-responsive"><table class="table table-bordered table-sm"><thead><tr><th>${__("Root Demand", null, "Injection APS")}</th><th>${__("Child", null, "Injection APS")}</th><th></th><th>${__("Parent", null, "Injection APS")}</th><th>${__("Required", null, "Injection APS")}</th><th>${__("Stock", null, "Injection APS")}</th><th>${__("WIP", null, "Injection APS")}</th><th>${__("Produce", null, "Injection APS")}</th><th>${__("Status", null, "Injection APS")}</th></tr></thead><tbody>${rows || `<tr><td colspan="9" class="text-muted">${__("Apply a validated V2 schedule to materialize BOM pegging.", null, "Injection APS")}</td></tr>`}</tbody></table></div>`,
+	});
 }

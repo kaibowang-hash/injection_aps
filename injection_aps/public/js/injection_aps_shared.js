@@ -21,6 +21,8 @@ frappe.provide("injection_aps.ui");
 		rebuild_net_requirements: ["System Manager", "GMC", "PMC", "Manufacturing Manager"],
 		trial: ["System Manager", "GMC", "PMC", "Manufacturing Manager"],
 		run_trial: ["System Manager", "GMC", "PMC", "Manufacturing Manager"],
+		prepare_demand_baseline: ["System Manager", "GMC", "PMC", "Manufacturing Manager"],
+		save_demand_admission: ["System Manager", "GMC", "PMC", "Manufacturing Manager"],
 		approve: ["System Manager", "GMC", "Manufacturing Manager"],
 		generate_work_order_proposals: ["System Manager", "GMC", "Manufacturing Manager"],
 		preview_shift_schedule_release: ["System Manager", "GMC", "Manufacturing Manager"],
@@ -52,6 +54,15 @@ frappe.provide("injection_aps.ui");
 		analyze_capacity_balance: ["System Manager", "GMC", "PMC", "Manufacturing Manager"],
 		confirm_capacity_balance: ["System Manager", "GMC", "PMC", "Manufacturing Manager"],
 		apply_capacity_balance: ["System Manager", "GMC", "PMC", "Manufacturing Manager"],
+		select_solver_scenario: ["System Manager", "GMC", "PMC", "Manufacturing Manager"],
+		acknowledge_schedule_risks: ["System Manager", "GMC", "Manufacturing Manager"],
+		apply_v2_schedule: ["System Manager", "GMC", "Manufacturing Manager"],
+		create_replan_cycle: ["System Manager", "GMC", "PMC", "Manufacturing Manager"],
+		refresh_shift_actuals: ["System Manager", "GMC", "PMC", "Manufacturing Manager", "Manufacturing User"],
+		generate_replan_proposals: ["System Manager", "GMC", "PMC", "Manufacturing Manager"],
+		acknowledge_replan_fallback: ["System Manager", "GMC", "Manufacturing Manager"],
+		approve_replan_cycle: ["System Manager", "GMC", "Manufacturing Manager"],
+		apply_replan_cycle: ["System Manager", "GMC", "Manufacturing Manager"],
 	};
 
 	injection_aps.ui.ensure_styles = function () {

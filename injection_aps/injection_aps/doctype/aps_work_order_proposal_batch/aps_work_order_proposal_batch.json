@@ -17,6 +17,7 @@
   "proposal_count",
   "applied_count",
   "notes",
+  "campaign_summary",
   "items"
  ],
  "fields": [
@@ -108,6 +109,11 @@
    "fieldtype": "Small Text",
    "label": "Notes",
    "read_only": 1
+  },
+  {
+   "fieldname": "campaign_summary",
+   "fieldtype": "HTML",
+   "label": "Campaign Summary"
   },
   {
    "fieldname": "items",

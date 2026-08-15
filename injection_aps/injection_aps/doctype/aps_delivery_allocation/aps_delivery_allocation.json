@@ -13,6 +13,10 @@
   "schedule_date",
   "customer_schedule",
   "customer_schedule_item",
+  "demand_identity",
+  "delivery_plan_detail",
+  "match_status",
+  "match_reason",
   "source_delivery_note",
   "source_delivery_note_item",
   "source_docstatus",
@@ -105,6 +109,33 @@
    "search_index": 1
   },
   {
+   "fieldname": "demand_identity",
+   "fieldtype": "Link",
+   "label": "Demand Identity",
+   "options": "APS Demand Identity",
+   "read_only": 1,
+   "search_index": 1
+  },
+  {
+   "fieldname": "delivery_plan_detail",
+   "fieldtype": "Data",
+   "label": "Delivery Plan Detail",
+   "read_only": 1
+  },
+  {
+   "fieldname": "match_status",
+   "fieldtype": "Select",
+   "label": "Match Status",
+   "options": "Explicit Identity\nDelivery Plan\nLegacy Controlled Match\nReturn Trace",
+   "read_only": 1
+  },
+  {
+   "fieldname": "match_reason",
+   "fieldtype": "Small Text",
+   "label": "Match Reason",
+   "read_only": 1
+  },
+  {
    "fieldname": "source_delivery_note",
    "fieldtype": "Link",
    "label": "Source Delivery Note",
@@ -156,7 +187,7 @@
    "fieldname": "allocation_method",
    "fieldtype": "Select",
    "label": "Allocation Method",
-   "options": "Direct\nControlled FIFO\nReturn Trace",
+   "options": "Direct\nExplicit Identity\nDemand Identity\nDelivery Plan\nControlled FIFO\nLegacy Controlled Match\nReplacement FIFO\nReturn Trace",
    "read_only": 1,
    "reqd": 1
   },

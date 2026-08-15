@@ -4,13 +4,22 @@
  "engine": "InnoDB",
  "field_order": [
   "result_reference",
+  "production_campaign",
+  "campaign_output_row",
+  "output_role",
+  "demand_commitment",
+  "capacity_owner",
   "item_code",
+  "selected_bom",
   "customer",
   "sales_order",
   "sales_order_item",
+  "sales_order_requirement",
   "required_delivery_date",
   "action",
   "proposed_qty",
+  "excess_qty",
+  "source_reason",
   "result_state_token",
   "existing_work_order",
   "existing_qty",
@@ -32,6 +41,42 @@
    "read_only": 1
   },
   {
+   "fieldname": "production_campaign",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Production Campaign",
+   "options": "APS Production Campaign",
+   "read_only": 1
+  },
+  {
+   "fieldname": "campaign_output_row",
+   "fieldtype": "Data",
+   "hidden": 1,
+   "label": "Campaign Output Row",
+   "read_only": 1
+  },
+  {
+   "fieldname": "output_role",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Output Role",
+   "options": "\nPrimary\nCo-product",
+   "read_only": 1
+  },
+  {
+   "fieldname": "demand_commitment",
+   "fieldtype": "Link",
+   "label": "Demand Commitment",
+   "options": "APS Demand Commitment",
+   "read_only": 1
+  },
+  {
+   "fieldname": "capacity_owner",
+   "fieldtype": "Data",
+   "label": "Capacity Owner",
+   "read_only": 1
+  },
+  {
    "fieldname": "item_code",
    "fieldtype": "Link",
    "in_list_view": 1,
@@ -39,6 +84,14 @@
    "options": "Item",
    "read_only": 1,
    "reqd": 1
+  },
+  {
+   "fieldname": "selected_bom",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Selected BOM",
+   "options": "BOM",
+   "read_only": 1
   },
   {
    "fieldname": "customer",
@@ -63,6 +116,13 @@
    "read_only": 1
   },
   {
+   "default": "Not Required",
+   "fieldname": "sales_order_requirement",
+   "fieldtype": "Data",
+   "label": "Sales Order Requirement",
+   "read_only": 1
+  },
+  {
    "fieldname": "required_delivery_date",
    "fieldtype": "Date",
    "label": "Required Delivery Date",
@@ -84,6 +144,19 @@
    "label": "Proposed Qty",
    "read_only": 1,
    "reqd": 1
+  },
+  {
+   "fieldname": "excess_qty",
+   "fieldtype": "Float",
+   "in_list_view": 1,
+   "label": "Excess Qty",
+   "read_only": 1
+  },
+  {
+   "fieldname": "source_reason",
+   "fieldtype": "Small Text",
+   "label": "Source Reason",
+   "read_only": 1
   },
   {
    "fieldname": "result_state_token",

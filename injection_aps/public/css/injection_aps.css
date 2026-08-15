@@ -875,6 +875,29 @@
 	pointer-events: none;
 }
 
+.ia-bom-dependency-overlay {
+	position: absolute;
+	inset: 0;
+	overflow: visible;
+	pointer-events: none;
+}
+
+.ia-bom-dependency-path {
+	fill: none;
+	stroke: #2563eb;
+	stroke-width: 1.6;
+	stroke-dasharray: 5 3;
+	opacity: 0.72;
+}
+
+.ia-bom-dependency-path.late {
+	stroke: #dc2626;
+}
+
+.ia-bom-dependency-overlay marker path {
+	fill: #2563eb;
+}
+
 .ia-gantt-tools {
 	display: flex;
 	justify-content: space-between;
@@ -1023,6 +1046,167 @@
 	cursor: move;
 	user-select: none;
 	touch-action: none;
+}
+
+.ia-gantt-plan-layer {
+	position: absolute;
+	height: 40px;
+	border-radius: 8px;
+	pointer-events: none;
+	box-sizing: border-box;
+}
+
+.ia-gantt-plan-layer.original {
+	z-index: 5;
+	border: 2px dashed rgba(71, 85, 105, 0.82);
+	background: transparent;
+}
+
+.ia-gantt-plan-layer.forecast {
+	z-index: 3;
+	border: 2px solid rgba(217, 119, 6, 0.82);
+	background: repeating-linear-gradient(
+		135deg,
+		rgba(251, 191, 36, 0.08) 0,
+		rgba(251, 191, 36, 0.08) 5px,
+		rgba(251, 191, 36, 0.28) 5px,
+		rgba(251, 191, 36, 0.28) 9px
+	);
+}
+
+.ia-gantt-plan-layer.actual {
+	z-index: 6;
+	height: 5px;
+	margin-top: 33px;
+	background: #16a34a;
+	box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.75);
+}
+
+.ia-gantt-actual-progress {
+	position: absolute;
+	inset: 0 auto 0 0;
+	background: rgba(22, 163, 74, 0.16);
+	pointer-events: none;
+}
+
+.ia-progress-projection {
+	display: grid;
+	gap: 3px;
+	margin-bottom: 10px;
+	padding: 10px 12px;
+	border: 1px solid #bbf7d0;
+	border-radius: 10px;
+	background: #f0fdf4;
+}
+
+.ia-progress-projection.warning {
+	border-color: #fde68a;
+	background: #fffbeb;
+}
+
+.ia-progress-toolbar {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 8px;
+	flex-wrap: wrap;
+	margin: 8px 0;
+}
+
+.ia-progress-toolbar-group {
+	display: flex;
+	align-items: center;
+	gap: 7px;
+}
+
+.ia-progress-matrix-shell {
+	max-height: 68vh;
+	overflow: auto;
+	border: 1px solid #e2e8f0;
+	border-radius: 10px;
+}
+
+.ia-progress-matrix {
+	border-collapse: separate;
+	border-spacing: 0;
+	min-width: max-content;
+	font-size: 10px;
+}
+
+.ia-progress-matrix th,
+.ia-progress-matrix td {
+	border-right: 1px solid #e2e8f0;
+	border-bottom: 1px solid #e2e8f0;
+	background: #fff;
+}
+
+.ia-progress-corner,
+.ia-progress-date-header {
+	position: sticky;
+	top: 0;
+	z-index: 5;
+	min-width: 132px;
+	padding: 8px;
+	background: #f8fafc !important;
+}
+
+.ia-progress-corner {
+	left: 0;
+	z-index: 7;
+	min-width: 190px;
+}
+
+.ia-progress-row-header {
+	position: sticky;
+	left: 0;
+	z-index: 4;
+	min-width: 190px;
+	max-width: 190px;
+	padding: 7px 9px;
+	text-align: left;
+	background: #fff !important;
+}
+
+.ia-progress-cell {
+	min-width: 132px;
+	max-width: 160px;
+	vertical-align: top;
+}
+
+.ia-progress-cell button {
+	all: unset;
+	box-sizing: border-box;
+	display: grid;
+	gap: 2px;
+	width: 100%;
+	min-height: 56px;
+	padding: 6px;
+	cursor: pointer;
+}
+
+.ia-progress-cell button span {
+	display: flex;
+	justify-content: space-between;
+	gap: 5px;
+}
+
+.ia-progress-cell.green { background: #f0fdf4; }
+.ia-progress-cell.yellow { background: #fffbeb; }
+.ia-progress-cell.red { background: #fef2f2; }
+.ia-progress-cell.blue { background: #eff6ff; }
+.ia-progress-cell.gray,
+.ia-progress-cell.empty { background: #f8fafc; }
+
+.ia-progress-cell button:focus-visible {
+	outline: 3px solid rgba(37, 99, 235, 0.25);
+	outline-offset: -3px;
+}
+
+.ia-gantt-title,
+.ia-gantt-meta-line,
+.ia-gantt-resize-handle {
+	position: relative;
+	z-index: 2;
 }
 
 .ia-gantt-split-handle {

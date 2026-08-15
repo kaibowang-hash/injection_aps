@@ -20,6 +20,9 @@ class InjectionAPSCustomerScheduleProgress {
 		this.suppressFilterRefresh = false;
 		this.refreshGeneration = 0;
 		this.rows = [];
+		this.offset = 0;
+		this.columnOffset = 0;
+		this.pageLength = 100;
 		this.page = frappe.ui.make_app_page({
 			parent: wrapper,
 			title: __("Customer Schedule Progress"),
@@ -81,6 +84,20 @@ class InjectionAPSCustomerScheduleProgress {
 			default: injection_aps.ui.get_query_param("run_name") || undefined,
 			change: () => this.refreshFromFilter(),
 		});
+		this.viewField = this.page.add_field({
+			fieldtype: "Select",
+			fieldname: "progress_view",
+			label: __("Progress View", null, "Injection APS"),
+			options: ["Detail", "Date Matrix"].join("\n"),
+			context: "Injection APS",
+			default: "Detail",
+			change: () => {
+				this.offset = 0;
+				this.columnOffset = 0;
+				this.refresh();
+			},
+		});
+		this.viewField.$wrapper.hide();
 		this.page.set_primary_action(__("Refresh", null, "Injection APS"), () => this.refresh());
 		this.page.main.html(`
 			<div class="ia-page">
@@ -88,17 +105,21 @@ class InjectionAPSCustomerScheduleProgress {
 					<h3>${__("Customer Schedule Progress")}</h3>
 					<p>${__("Customer delivery rows are matched against available stock, actual execution, and the selected APS run projection.")}</p>
 				</div>
+				<div class="ia-projection-banner"></div>
 				<div class="ia-status-host"></div>
 				<div class="ia-card-grid ia-summary"></div>
 				<div class="ia-feedback"></div>
+				<div class="ia-progress-toolbar" style="display:none;"></div>
 				<div class="ia-panel">
 					<div class="ia-table-target"></div>
 				</div>
 			</div>
 		`);
 		this.statusHost = this.page.main.find(".ia-status-host")[0];
+		this.projectionBanner = this.page.main.find(".ia-projection-banner")[0];
 		this.summary = this.page.main.find(".ia-summary")[0];
 		this.feedback = this.page.main.find(".ia-feedback")[0];
+		this.progressToolbar = this.page.main.find(".ia-progress-toolbar")[0];
 		this.table = this.page.main.find(".ia-table-target")[0];
 	}
 
@@ -108,15 +129,39 @@ class InjectionAPSCustomerScheduleProgress {
 		injection_aps.ui.ensure_styles();
 		injection_aps.ui.set_feedback(this.feedback, __("Loading customer schedule progress..."));
 		try {
-			const data = await frappe.xcall("injection_aps.api.app.get_customer_schedule_progress_data", filters);
+			const requestedView = this.viewField && this.viewField.get_value ? this.viewField.get_value() : "Detail";
+			const data = await frappe.xcall("injection_aps.api.app.get_customer_schedule_progress_data", Object.assign({}, filters, {
+				limit: 1000,
+				progress_view: requestedView,
+				offset: this.offset || 0,
+				page_length: this.pageLength || 100,
+				column_offset: requestedView === "Date Matrix" ? (this.columnOffset || 0) : undefined,
+				column_limit: requestedView === "Date Matrix" ? 14 : undefined,
+			}));
 			if (refreshGeneration !== this.refreshGeneration) {
 				return;
 			}
 			this.data = data || {};
+			this.v2Enabled = this.data.mode === "V2";
+			if (this.viewField && this.viewField.$wrapper) this.viewField.$wrapper.toggle(this.v2Enabled);
+			const matrixMode = this.v2Enabled && requestedView === "Date Matrix";
 			this.rows = (this.data.rows || []).map((row, index) => Object.assign({ _row_no: index + 1 }, row));
-			this.renderRunStatus(this.data.selected_run || null, this.data.truncated);
-			this.renderSummary(this.data.summary || {});
-			this.renderTable(this.rows);
+			if (this.v2Enabled) {
+				this.renderProjectionStatus(this.data.projection || {});
+				this.renderV2Summary(this.data.summary || {});
+				this.renderProgressToolbar(matrixMode);
+				if (matrixMode) {
+					this.renderMatrix(this.rows, this.data.matrix || {});
+				} else {
+					this.renderV2Table(this.rows);
+				}
+				} else {
+					if (this.projectionBanner) this.projectionBanner.innerHTML = "";
+					if (this.progressToolbar) this.progressToolbar.style.display = "none";
+				this.renderRunStatus(this.data.selected_run || null, this.data.truncated);
+				this.renderSummary(this.data.summary || {});
+				this.renderTable(this.rows);
+			}
 			injection_aps.ui.set_feedback(this.feedback, __("Customer schedule progress refreshed."));
 		} catch (error) {
 			if (refreshGeneration !== this.refreshGeneration) {
@@ -129,6 +174,8 @@ class InjectionAPSCustomerScheduleProgress {
 
 	refreshFromFilter() {
 		if (!this.suppressFilterRefresh) {
+			this.offset = 0;
+			this.columnOffset = 0;
 			this.refresh();
 		}
 	}
@@ -143,7 +190,6 @@ class InjectionAPSCustomerScheduleProgress {
 			date_to: this.toField.get_value() || undefined,
 			status: this.statusField.get_value() || undefined,
 			run_name: this.runField.get_value() || undefined,
-			limit: 1000,
 		};
 	}
 
@@ -171,6 +217,216 @@ class InjectionAPSCustomerScheduleProgress {
 			{ label: __("Uncovered"), value: injection_aps.ui.format_number(summary.uncovered_qty || 0) },
 			{ label: __("Risk / Late"), value: `${summary.risk_rows || 0} / ${summary.late_rows || 0}` },
 		]);
+	}
+
+	renderProjectionStatus(projection) {
+		const singleRun = Number(projection.single_run_view || 0) === 1;
+		const toneClass = singleRun ? "warning" : "success";
+		this.projectionBanner.innerHTML = `
+			<div class="ia-progress-projection ${toneClass}">
+				<div><strong>${injection_aps.ui.escape(injection_aps.ui.translate(projection.label || ""))}</strong></div>
+				<div>${injection_aps.ui.escape(injection_aps.ui.translate(projection.reason || ""))}</div>
+				${(projection.run_names || []).length ? `<div class="ia-muted">${__("APS Runs", null, "Injection APS")}: ${injection_aps.ui.escape((projection.run_names || []).join(", "))}</div>` : ""}
+			</div>
+		`;
+		injection_aps.ui.render_status_line(this.statusHost, {
+			current_step: projection.label || __("Current effective cross-Run projection", null, "Injection APS"),
+			next_step: singleRun ? __("Clear APS Run to return to the effective cross-Run view.", null, "Injection APS") : __("Select a Run only when an explicit single-Run audit is required.", null, "Injection APS"),
+			blocking_reason: "",
+		});
+	}
+
+	renderV2Summary(summary) {
+		const statusCounts = summary.status_counts || {};
+		injection_aps.ui.render_cards(this.summary, [
+			{ label: __("Rows"), value: summary.rows || 0 },
+			{ label: __("Schedule Qty"), value: injection_aps.ui.format_number(summary.schedule_qty || 0) },
+			{ label: __("Original / Current / Forecast", null, "Injection APS"), value: `${injection_aps.ui.format_number(summary.original_plan_qty || 0)} / ${injection_aps.ui.format_number(summary.current_plan_qty || 0)} / ${injection_aps.ui.format_number(summary.forecast_qty || 0)}` },
+			{ label: __("Actual Good / Scrap", null, "Injection APS"), value: `${injection_aps.ui.format_number(summary.actual_good_qty || 0)} / ${injection_aps.ui.format_number(summary.actual_scrap_qty || 0)}` },
+			{ label: __("Delivery Plan / Delivered", null, "Injection APS"), value: `${injection_aps.ui.format_number(summary.delivery_plan_qty || 0)} / ${injection_aps.ui.format_number(summary.delivered_qty || 0)}` },
+			{ label: __("Stock Covered"), value: injection_aps.ui.format_number(summary.stock_covered_qty || 0) },
+			{ label: __("Shortage / Recovery", null, "Injection APS"), value: `${injection_aps.ui.format_number(summary.shortage_qty || 0)} / ${injection_aps.ui.format_number(summary.recovery_qty || 0)}` },
+			{ label: __("Green / Risk / Late", null, "Injection APS"), value: `${Number(statusCounts.Delivered || 0) + Number(statusCounts["Stock Covered"] || 0) + Number(statusCounts["On Track"] || 0)} / ${Number(statusCounts["At Risk"] || 0)} / ${Number(statusCounts.Late || 0) + Number(statusCounts.Uncovered || 0)}` },
+			{ label: __("Conservation Issues", null, "Injection APS"), value: summary.conservation_issue_rows || 0 },
+		]);
+	}
+
+	renderProgressToolbar(matrixMode) {
+		const pagination = this.data.pagination || {};
+		const matrix = this.data.matrix || {};
+		const previousRowsDisabled = this.offset <= 0;
+		const nextRowsDisabled = !pagination.has_more;
+		const previousColumnsDisabled = !matrixMode || !matrix.has_previous_columns;
+		const nextColumnsDisabled = !matrixMode || !matrix.has_more_columns;
+		this.progressToolbar.style.display = "flex";
+		this.progressToolbar.innerHTML = `
+			<div class="ia-progress-toolbar-group">
+				<button type="button" class="btn btn-sm btn-default" data-progress-page="previous" ${previousRowsDisabled ? "disabled" : ""} title="${injection_aps.ui.escape(previousRowsDisabled ? __("This is the first result page.", null, "Injection APS") : __("Previous result page", null, "Injection APS"))}">${__("Previous Rows", null, "Injection APS")}</button>
+				<span class="ia-muted">${__("Rows {0} - {1}", null, "Injection APS").replace("{0}", this.offset + (this.rows.length ? 1 : 0)).replace("{1}", this.offset + this.rows.length)}</span>
+				<button type="button" class="btn btn-sm btn-default" data-progress-page="next" ${nextRowsDisabled ? "disabled" : ""} title="${injection_aps.ui.escape(nextRowsDisabled ? __("No more result rows are available.", null, "Injection APS") : __("Next result page", null, "Injection APS"))}">${__("Next Rows", null, "Injection APS")}</button>
+			</div>
+			${matrixMode ? `<div class="ia-progress-toolbar-group">
+				<button type="button" class="btn btn-sm btn-default" data-progress-column="previous" ${previousColumnsDisabled ? "disabled" : ""} title="${injection_aps.ui.escape(previousColumnsDisabled ? __("This is the first date window.", null, "Injection APS") : __("Previous date window", null, "Injection APS"))}">${__("Earlier Dates", null, "Injection APS")}</button>
+				<span class="ia-muted">${injection_aps.ui.escape((matrix.dates || [])[0] || "")} - ${injection_aps.ui.escape((matrix.dates || []).slice(-1)[0] || "")}</span>
+				<button type="button" class="btn btn-sm btn-default" data-progress-column="next" ${nextColumnsDisabled ? "disabled" : ""} title="${injection_aps.ui.escape(nextColumnsDisabled ? __("No later dates are available in this filter range.", null, "Injection APS") : __("Next date window", null, "Injection APS"))}">${__("Later Dates", null, "Injection APS")}</button>
+			</div>` : ""}
+			<button type="button" class="btn btn-sm btn-default" data-progress-export="1" title="${injection_aps.ui.escape(__("Export the current filtered page and visible date window.", null, "Injection APS"))}">${__("Export Excel", null, "Injection APS")}</button>
+		`;
+		this.progressToolbar.querySelectorAll("[data-progress-page]").forEach((button) => button.addEventListener("click", () => {
+			this.offset = Math.max(this.offset + (button.dataset.progressPage === "next" ? this.pageLength : -this.pageLength), 0);
+			this.refresh();
+		}));
+		this.progressToolbar.querySelectorAll("[data-progress-column]").forEach((button) => button.addEventListener("click", () => {
+			this.columnOffset = Math.max(this.columnOffset + (button.dataset.progressColumn === "next" ? 14 : -14), 0);
+			this.refresh();
+		}));
+		const exportButton = this.progressToolbar.querySelector("[data-progress-export]");
+		if (exportButton) exportButton.addEventListener("click", () => this.exportV2CurrentView(matrixMode));
+	}
+
+	renderV2Table(rows) {
+		const columns = [
+			{ label: __("Customer / Item", null, "Injection APS"), fieldname: "identity_summary" },
+			{ label: __("Delivery Date", null, "Injection APS"), fieldname: "schedule_date" },
+			{ label: __("Schedule Qty"), fieldname: "schedule_qty", fieldtype: "Float" },
+			{ label: __("Original / Current / Forecast", null, "Injection APS"), fieldname: "plan_layers" },
+			{ label: __("Actual Good / Scrap", null, "Injection APS"), fieldname: "actual_layers" },
+			{ label: __("Delivery Plan / Delivered", null, "Injection APS"), fieldname: "delivery_layers" },
+			{ label: __("Stock Covered"), fieldname: "stock_covered_qty", fieldtype: "Float" },
+			{ label: __("Shortage / Recovery", null, "Injection APS"), fieldname: "shortage_layers" },
+			{ label: __("Status", null, "Injection APS"), fieldname: "v2_status" },
+			{ label: __("Actions", null, "Injection APS"), fieldname: "v2_actions", exportable: false },
+		];
+		injection_aps.ui.render_table(this.table, columns, rows, (column, value, row) => this.formatV2Cell(column, value, row), {
+			exportable: true,
+			export_title: __("Customer Schedule Progress V2", null, "Injection APS"),
+			export_sheet_name: __("Progress Detail", null, "Injection APS"),
+			export_file_name: "aps_customer_schedule_progress_v2",
+			export_subtitle: (this.data.projection || {}).label || "",
+			export_columns: this.getV2ExportColumns(),
+			after_render: () => this.bindV2Actions(),
+		});
+	}
+
+	formatV2Cell(column, value, row) {
+		const number = (candidate) => injection_aps.ui.escape(injection_aps.ui.format_number(candidate || 0));
+		if (column.fieldname === "identity_summary") {
+			return `<div><div>${this.safeDocLink("Customer", row.customer)}</div><div>${this.safeDocLink("Item", row.item_code)}${row.customer_part_no ? ` <span class="ia-muted">${injection_aps.ui.escape(row.customer_part_no)}</span>` : ""}</div><div class="ia-muted">${row.demand_identity ? this.safeDocLink("APS Demand Identity", row.demand_identity) : __("No Demand Identity", null, "Injection APS")}</div></div>`;
+		}
+		if (column.fieldname === "schedule_date") return injection_aps.ui.escape(injection_aps.ui.format_date(value));
+		if (["schedule_qty", "stock_covered_qty"].includes(column.fieldname)) return number(value);
+		if (column.fieldname === "plan_layers") return `${number(row.original_plan_qty)} / ${number(row.current_plan_qty)} / ${number(row.forecast_qty)}`;
+		if (column.fieldname === "actual_layers") return `${number(row.actual_good_qty)} / ${number(row.actual_scrap_qty)}`;
+		if (column.fieldname === "delivery_layers") return `${number(row.delivery_plan_qty)} / ${number(row.delivered_qty)}`;
+		if (column.fieldname === "shortage_layers") return `${number(row.shortage_qty)} / ${number(row.recovery_qty)}${row.recovery_completion_time ? `<div class="ia-muted">${injection_aps.ui.escape(injection_aps.ui.format_datetime(row.recovery_completion_time))}</div>` : ""}`;
+		if (column.fieldname === "v2_status") return `${injection_aps.ui.pill(injection_aps.ui.translate(row.status || ""), row.status_tone || "gray")}<div class="ia-muted" title="${injection_aps.ui.escape(injection_aps.ui.translate(row.reason || ""))}">${injection_aps.ui.escape(injection_aps.ui.shorten(injection_aps.ui.translate(row.reason || ""), 64))}</div>`;
+		if (column.fieldname === "v2_actions") return `<button type="button" class="btn btn-xs btn-default" data-v2-progress-details="${Number(row._row_no || 0)}">${__("View Details", null, "Injection APS")}</button>`;
+		return injection_aps.ui.escape(value == null ? "" : value);
+	}
+
+	getV2ExportColumns() {
+		return [
+			{ label: __("Demand Identity", null, "Injection APS"), fieldname: "demand_identity" },
+			{ label: __("Company", null, "Injection APS"), fieldname: "company" },
+			{ label: __("Customer", null, "Injection APS"), fieldname: "customer" },
+			{ label: __("Item", null, "Injection APS"), fieldname: "item_code" },
+			{ label: __("Delivery Date", null, "Injection APS"), fieldname: "schedule_date" },
+			{ label: __("Schedule Qty"), fieldname: "schedule_qty", fieldtype: "Float" },
+			{ label: __("Original Plan", null, "Injection APS"), fieldname: "original_plan_qty", fieldtype: "Float" },
+			{ label: __("Current Plan", null, "Injection APS"), fieldname: "current_plan_qty", fieldtype: "Float" },
+			{ label: __("Forecast", null, "Injection APS"), fieldname: "forecast_qty", fieldtype: "Float" },
+			{ label: __("Actual Good", null, "Injection APS"), fieldname: "actual_good_qty", fieldtype: "Float" },
+			{ label: __("Scrap", null, "Injection APS"), fieldname: "actual_scrap_qty", fieldtype: "Float" },
+			{ label: __("Delivery Plan", null, "Injection APS"), fieldname: "delivery_plan_qty", fieldtype: "Float" },
+			{ label: __("Delivered", null, "Injection APS"), fieldname: "delivered_qty", fieldtype: "Float" },
+			{ label: __("Stock Covered"), fieldname: "stock_covered_qty", fieldtype: "Float" },
+			{ label: __("Shortage", null, "Injection APS"), fieldname: "shortage_qty", fieldtype: "Float" },
+			{ label: __("Recovery", null, "Injection APS"), fieldname: "recovery_qty", fieldtype: "Float" },
+			{ label: __("Status", null, "Injection APS"), fieldname: "status" },
+			{ label: __("Reason", null, "Injection APS"), fieldname: "reason" },
+			{ label: __("Conservation Status", null, "Injection APS"), fieldname: "conservation_status" },
+		];
+	}
+
+	bindV2Actions() {
+		this.table.querySelectorAll("[data-v2-progress-details]").forEach((button) => button.addEventListener("click", () => {
+			const row = this.rows.find((candidate) => Number(candidate._row_no || 0) === Number(button.dataset.v2ProgressDetails || 0));
+			if (row) this.openV2Details(row);
+		}));
+	}
+
+	renderMatrix(rows, matrix) {
+		const dates = matrix.dates || [];
+		const headers = dates.map((dateValue) => `<th class="ia-progress-date-header">${injection_aps.ui.escape(injection_aps.ui.format_date(dateValue))}</th>`).join("");
+		const body = rows.map((row) => {
+			const cells = dates.map((dateValue) => this.renderMatrixCell(row, dateValue, (row.cells || {})[dateValue])).join("");
+			return `<tr><th class="ia-progress-row-header"><div>${injection_aps.ui.escape(row.customer || "")}</div><div>${injection_aps.ui.escape(row.item_code || "")}</div><div class="ia-muted">${injection_aps.ui.escape(injection_aps.ui.format_number(row.schedule_qty || 0))} / ${injection_aps.ui.escape(injection_aps.ui.translate(row.status || ""))}</div></th>${cells}</tr>`;
+		}).join("");
+		this.table.innerHTML = `<div class="ia-progress-matrix-shell"><table class="ia-progress-matrix"><thead><tr><th class="ia-progress-corner">${__("Customer / Item", null, "Injection APS")}</th>${headers}</tr></thead><tbody>${body}</tbody></table></div>`;
+		this.table.querySelectorAll("[data-progress-cell]").forEach((button) => button.addEventListener("click", () => this.openProgressCell(button.dataset.progressIdentity || "", button.dataset.progressScheduleItem || "", button.dataset.progressDate)));
+	}
+
+	renderMatrixCell(row, dateValue, cell) {
+		if (!cell) return `<td class="ia-progress-cell empty"></td>`;
+		const layers = [
+			["schedule_qty", __("Schedule", null, "Injection APS")], ["original_plan_qty", __("Original", null, "Injection APS")],
+			["current_plan_qty", __("Current", null, "Injection APS")], ["forecast_qty", __("Forecast", null, "Injection APS")],
+			["actual_good_qty", __("Good", null, "Injection APS")], ["actual_scrap_qty", __("Scrap", null, "Injection APS")],
+			["delivery_plan_qty", __("DP", null, "Injection APS")], ["delivered_qty", __("DN", null, "Injection APS")],
+			["stock_covered_qty", __("Stock", null, "Injection APS")], ["shortage_qty", __("Shortage", null, "Injection APS")],
+			["recovery_qty", __("Recovery", null, "Injection APS")],
+		];
+		const lines = layers.filter(([fieldname]) => Math.abs(Number(cell[fieldname] || 0)) > 1e-9).map(([fieldname, label]) => `<span><b>${injection_aps.ui.escape(label)}</b> ${injection_aps.ui.escape(injection_aps.ui.format_number(cell[fieldname] || 0))}</span>`).join("");
+		return `<td class="ia-progress-cell ${injection_aps.ui.escape(row.status_tone || "gray")}"><button type="button" data-progress-cell="1" data-progress-identity="${injection_aps.ui.escape(row.demand_identity || "")}" data-progress-schedule-item="${injection_aps.ui.escape(row.schedule_item || "")}" data-progress-date="${injection_aps.ui.escape(dateValue)}" title="${injection_aps.ui.escape(__("Open source documents for this date cell.", null, "Injection APS"))}">${lines}</button></td>`;
+	}
+
+	async openProgressCell(demandIdentity, scheduleItem, dateValue) {
+		const detail = await injection_aps.ui.xcall({ message: __("Loading progress lineage...", null, "Injection APS"), feedback_target: this.feedback }, "injection_aps.api.app.get_progress_cell_drilldown", {
+			date_value: dateValue,
+			demand_identity: demandIdentity || undefined,
+			schedule_item: scheduleItem || undefined,
+			run_name: this.runField.get_value() || undefined,
+		});
+		if (!detail) return;
+		const cell = detail.cell || {};
+		const quantities = Object.entries(cell).filter(([key, value]) => key.endsWith("_qty") && Math.abs(Number(value || 0)) > 1e-9).map(([key, value]) => [injection_aps.ui.translate(key.replaceAll("_", " ")), injection_aps.ui.escape(injection_aps.ui.format_number(value))]);
+		const html = `<div style="display:grid;gap:10px;">${this.detailSection(__("Date Cell", null, "Injection APS"), [[__("Date", null, "Injection APS"), injection_aps.ui.escape(injection_aps.ui.format_date(dateValue))], ...quantities])}${this.detailSection(__("Source Documents", null, "Injection APS"), [[__("Documents", null, "Injection APS"), this.sourceDocumentsHtml(detail.source_documents || [])]])}</div>`;
+		injection_aps.ui.open_drawer(__("Progress Cell Drilldown", null, "Injection APS"), [demandIdentity, dateValue].filter(Boolean).join(" · "), html);
+	}
+
+	sourceDocumentsHtml(sources) {
+		if (!(sources || []).length) return `<span class="ia-muted">${__("No readable source document is available.", null, "Injection APS")}</span>`;
+		const childDoctypes = new Set(["Customer Delivery Schedule Item", "APS Schedule Segment", "Scheduling Item", "Delivery Plan Item Qty"]);
+		return sources.map((source) => childDoctypes.has(source.doctype) ? `<div>${injection_aps.ui.escape(source.doctype)}: ${injection_aps.ui.escape(source.name)}</div>` : `<div>${this.safeDocLink(source.doctype, source.name, `${source.doctype}: ${source.name}`)}</div>`).join("");
+	}
+
+	openV2Details(row) {
+		const number = (value) => injection_aps.ui.escape(injection_aps.ui.format_number(value || 0));
+		const html = `<div style="display:grid;gap:10px;">
+			${this.detailSection(__("Demand Identity", null, "Injection APS"), [[__("Demand Identity", null, "Injection APS"), this.safeDocLink("APS Demand Identity", row.demand_identity)], [__("Customer", null, "Injection APS"), this.safeDocLink("Customer", row.customer)], [__("Item", null, "Injection APS"), this.safeDocLink("Item", row.item_code)], [__("Delivery Date", null, "Injection APS"), injection_aps.ui.escape(injection_aps.ui.format_date(row.schedule_date))], [__("Schedule Qty"), number(row.schedule_qty)]])}
+			${this.detailSection(__("Original / Current / Forecast / Actual", null, "Injection APS"), [[__("Original Plan", null, "Injection APS"), `${number(row.original_plan_qty)} / ${injection_aps.ui.escape(injection_aps.ui.format_datetime(row.original_completion_time))}`], [__("Current Plan", null, "Injection APS"), `${number(row.current_plan_qty)} / ${injection_aps.ui.escape(injection_aps.ui.format_datetime(row.current_completion_time))}`], [__("Forecast", null, "Injection APS"), `${number(row.forecast_qty)} / ${injection_aps.ui.escape(injection_aps.ui.format_datetime(row.forecast_completion_time))}`], [__("Actual Good / Scrap", null, "Injection APS"), `${number(row.actual_good_qty)} / ${number(row.actual_scrap_qty)}`]])}
+			${this.detailSection(__("Delivery and Recovery", null, "Injection APS"), [[__("Delivery Plan / Delivered", null, "Injection APS"), `${number(row.delivery_plan_qty)} / ${number(row.delivered_qty)}`], [__("Stock Covered"), number(row.stock_covered_qty)], [__("Shortage / Recovery", null, "Injection APS"), `${number(row.shortage_qty)} / ${number(row.recovery_qty)}`], [__("Recovery Completion", null, "Injection APS"), injection_aps.ui.escape(injection_aps.ui.format_datetime(row.recovery_completion_time))]])}
+			${this.detailSection(__("Status and Conservation", null, "Injection APS"), [[__("Status", null, "Injection APS"), injection_aps.ui.pill(injection_aps.ui.translate(row.status || ""), row.status_tone || "gray")], [__("Reason", null, "Injection APS"), injection_aps.ui.escape(injection_aps.ui.translate(row.reason || ""))], [__("Conservation Status", null, "Injection APS"), injection_aps.ui.escape(row.conservation_status || "")], [__("Demand / Solver Delta", null, "Injection APS"), `${number(row.demand_conservation_delta)} / ${number(row.solver_partition_delta)}`]])}
+			${this.detailSection(__("Source Documents", null, "Injection APS"), [[__("Documents", null, "Injection APS"), this.sourceDocumentsHtml(row.source_documents || [])]])}
+		</div>`;
+		injection_aps.ui.open_drawer(__("Customer Schedule Progress V2", null, "Injection APS"), [row.customer, row.item_code, row.schedule_date].filter(Boolean).join(" · "), html);
+	}
+
+	exportV2CurrentView(matrixMode) {
+		if (!matrixMode) {
+			return injection_aps.ui.export_rows_to_excel({ title: __("Customer Schedule Progress V2", null, "Injection APS"), sheet_name: __("Progress Detail", null, "Injection APS"), file_name: "aps_customer_schedule_progress_v2", subtitle: (this.data.projection || {}).label || "", columns: this.getV2ExportColumns(), rows: this.rows });
+		}
+		const dates = injection_aps.ui.get_value(this.data, "matrix.dates", []) || [];
+		const columns = [{ label: __("Customer", null, "Injection APS"), fieldname: "customer" }, { label: __("Item", null, "Injection APS"), fieldname: "item_code" }, ...dates.map((dateValue) => ({ label: dateValue, fieldname: dateValue }))];
+		const rows = this.rows.map((row) => {
+			const output = { customer: row.customer, item_code: row.item_code };
+			dates.forEach((dateValue) => {
+				const cell = (row.cells || {})[dateValue] || {};
+				output[dateValue] = Object.entries(cell).filter(([key, value]) => key.endsWith("_qty") && Math.abs(Number(value || 0)) > 1e-9).map(([key, value]) => `${key}=${value}`).join("; ");
+			});
+			return output;
+		});
+		injection_aps.ui.export_rows_to_excel({ title: __("Customer Schedule Progress Matrix", null, "Injection APS"), sheet_name: __("Date Matrix", null, "Injection APS"), file_name: "aps_customer_schedule_progress_matrix", subtitle: (this.data.projection || {}).label || "", columns, rows });
 	}
 
 	renderTable(rows) {

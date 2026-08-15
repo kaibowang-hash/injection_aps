@@ -8,7 +8,7 @@ def get_version() -> str:
 	for line in init_py.read_text().splitlines():
 		if line.startswith("__version__"):
 			return line.split("=")[1].strip().strip('"')
-	return "0.0.1"
+	return "0.0.2"
 
 
 setup(
@@ -20,5 +20,5 @@ setup(
 	packages=find_packages(),
 	zip_safe=False,
 	include_package_data=True,
-	install_requires=[],
+	install_requires=["ortools==9.4.1874"],
 )

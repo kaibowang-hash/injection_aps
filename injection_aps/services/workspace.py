@@ -145,6 +145,11 @@ loadDashboard();
 
 
 def ensure_workspace_resources():
+	"""Create the default dashboard resources without replacing site customizations.
+
+	This function is intended for a fresh install.  Existing records are user data,
+	even when their names match the defaults shipped by Injection APS.
+	"""
 	_ensure_dashboard_custom_block()
 	_ensure_workspace_dashboard_layout()
 
@@ -153,6 +158,8 @@ def remove_workspace_resources():
 	if frappe.db.exists("Workspace", WORKSPACE_NAME):
 		workspace = frappe.get_doc("Workspace", WORKSPACE_NAME)
 		content = _load_workspace_content(workspace)
+		if content is None:
+			return
 		content = [
 			block
 			for block in content
@@ -175,18 +182,16 @@ def remove_workspace_resources():
 def _ensure_dashboard_custom_block():
 	exists = frappe.db.exists("Custom HTML Block", DASHBOARD_BLOCK_NAME)
 	if exists:
-		doc = frappe.get_doc("Custom HTML Block", DASHBOARD_BLOCK_NAME)
-	else:
-		doc = frappe.new_doc("Custom HTML Block")
-		doc.name = DASHBOARD_BLOCK_NAME
-		doc.private = 0
+		return False
+
+	doc = frappe.new_doc("Custom HTML Block")
+	doc.name = DASHBOARD_BLOCK_NAME
+	doc.private = 0
 	doc.html = DASHBOARD_HTML
 	doc.style = DASHBOARD_STYLE
 	doc.script = DASHBOARD_SCRIPT
-	if exists:
-		doc.save(ignore_permissions=True)
-	else:
-		doc.insert(ignore_permissions=True)
+	doc.insert(ignore_permissions=True)
+	return True
 
 
 def _ensure_workspace_dashboard_layout():
@@ -196,17 +201,9 @@ def _ensure_workspace_dashboard_layout():
 	workspace = frappe.get_doc("Workspace", WORKSPACE_NAME)
 	changed = False
 
-	if not workspace.type:
-		workspace.type = "Workspace"
-		changed = True
-
-	if not workspace.app:
-		workspace.app = "injection_aps"
-		changed = True
-
-	if not workspace.icon:
-		workspace.icon = "change-log"
-		changed = True
+	content = _load_workspace_content(workspace)
+	if content is None:
+		return False
 
 	if not any(row.custom_block_name == DASHBOARD_BLOCK_NAME for row in workspace.custom_blocks):
 		workspace.append(
@@ -218,7 +215,6 @@ def _ensure_workspace_dashboard_layout():
 		)
 		changed = True
 
-	content = _load_workspace_content(workspace)
 	if not any(
 		block.get("type") == "custom_block"
 		and (block.get("data") or {}).get("custom_block_name") == DASHBOARD_BLOCK_NAME
@@ -241,10 +237,12 @@ def _ensure_workspace_dashboard_layout():
 	if changed:
 		workspace.content = json.dumps(content, separators=(",", ":"))
 		workspace.save(ignore_permissions=True)
+	return changed
 
 
-def _load_workspace_content(workspace) -> list[dict]:
+def _load_workspace_content(workspace) -> list[dict] | None:
 	try:
-		return json.loads(workspace.content or "[]")
-	except Exception:
-		return []
+		content = json.loads(workspace.content or "[]")
+	except (TypeError, ValueError, json.JSONDecodeError):
+		return None
+	return content if isinstance(content, list) else None

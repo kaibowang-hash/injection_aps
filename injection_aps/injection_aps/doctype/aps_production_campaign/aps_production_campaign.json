@@ -1,0 +1,41 @@
+{
+ "actions":[],
+ "allow_rename":0,
+ "autoname":"APS-CAMPAIGN-.#####",
+ "doctype":"DocType",
+ "engine":"InnoDB",
+ "field_order":["planning_run","campaign_key","company","plant_floor","machine","mold","start_time","end_time","planned_cycles","actual_cycles","capacity_owner_segment","is_family_campaign","status","source_summary","linked_work_order_scheduling","input_fingerprint","outputs","audit_json"],
+ "fields":[
+  {"fieldname":"planning_run","fieldtype":"Link","label":"Planning Run","options":"APS Planning Run","read_only":1,"reqd":1,"search_index":1},
+  {"fieldname":"campaign_key","fieldtype":"Data","label":"Campaign Key","read_only":1,"reqd":1,"unique":1},
+  {"fieldname":"company","fieldtype":"Link","label":"Company","options":"Company","read_only":1,"reqd":1,"search_index":1},
+  {"fieldname":"plant_floor","fieldtype":"Link","label":"Plant Floor","options":"Plant Floor","read_only":1,"search_index":1},
+  {"fieldname":"machine","fieldtype":"Link","label":"Machine / Workstation","options":"Workstation","read_only":1,"reqd":1,"search_index":1},
+  {"fieldname":"mold","fieldtype":"Link","label":"Mold","options":"Mold","read_only":1,"reqd":1,"search_index":1},
+  {"fieldname":"start_time","fieldtype":"Datetime","label":"Start Time","read_only":1,"reqd":1,"search_index":1},
+  {"fieldname":"end_time","fieldtype":"Datetime","label":"End Time","read_only":1,"reqd":1},
+  {"fieldname":"planned_cycles","fieldtype":"Int","label":"Planned Cycles","read_only":1,"reqd":1},
+  {"fieldname":"actual_cycles","fieldtype":"Float","label":"Actual Cycles","read_only":1},
+  {"fieldname":"capacity_owner_segment","fieldtype":"Data","label":"Capacity Owner Segment","read_only":1,"reqd":1,"search_index":1},
+  {"default":"1","fieldname":"is_family_campaign","fieldtype":"Check","label":"Family Campaign","read_only":1},
+  {"default":"Draft","fieldname":"status","fieldtype":"Select","label":"Status","options":"Draft\nPlanned\nReleased\nIn Progress\nCompleted\nCancelled\nFailed","read_only":1,"search_index":1},
+  {"fieldname":"source_summary","fieldtype":"Small Text","label":"Source Summary","read_only":1},
+  {"fieldname":"linked_work_order_scheduling","fieldtype":"Link","label":"Linked Work Order Scheduling","options":"Work Order Scheduling","read_only":1},
+  {"fieldname":"input_fingerprint","fieldtype":"Data","label":"Input Fingerprint","read_only":1,"search_index":1},
+  {"fieldname":"outputs","fieldtype":"Table","label":"Campaign Outputs","options":"APS Campaign Output","read_only":1},
+  {"fieldname":"audit_json","fieldtype":"Long Text","label":"Audit JSON","read_only":1}
+ ],
+ "links":[],
+ "modified":"1970-01-01 00:00:00.000000",
+ "module":"Injection APS",
+ "name":"APS Production Campaign",
+ "permissions":[
+  {"read":1,"report":1,"export":1,"print":1,"email":1,"share":1,"role":"System Manager"},
+  {"read":1,"report":1,"export":1,"print":1,"email":1,"share":1,"role":"Manufacturing Manager"},
+  {"read":1,"report":1,"export":1,"print":1,"email":1,"share":1,"role":"GMC"},
+  {"read":1,"report":1,"export":1,"print":1,"email":1,"share":1,"role":"PMC"}
+ ],
+ "sort_field":"start_time",
+ "sort_order":"DESC",
+ "track_changes":1
+}

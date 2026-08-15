@@ -108,6 +108,7 @@ class InjectionAPSRunConsole {
 			<div class="ia-run-action-list">
 				<button class="btn btn-xs btn-default" data-run-action="open_gantt" data-run-name="${injection_aps.ui.escape(row.name)}">${__("Board")}</button>
 				<button class="btn btn-xs btn-default" data-run-action="open_release" data-run-name="${injection_aps.ui.escape(row.name)}">${__("Execution", null, "Injection APS")}</button>
+				${Number(row.v2_admission_available || 0) === 1 ? `<button class="btn btn-xs btn-default" data-run-action="open_admission" data-run-name="${injection_aps.ui.escape(row.name)}">${__("Demand Admission")}</button>` : ""}
 				${displayActions
 					.map(
 						(action, index) => `
@@ -173,10 +174,14 @@ class InjectionAPSRunConsole {
 				}
 				if (column.fieldname === "scope_policy") {
 					const scope = row.selected_plant_floor_summary || row.plant_floor || "-";
+					const sourceSummary = Number(row.v2_admission_available || 0) === 1
+						? `<div class="ia-run-cell-note"><span>${__("Carry Forward", null, "Injection APS")}:</span> ${injection_aps.ui.escape(String(row.carried_commitment_count || 0))} / <span>${__("Source Runs")}:</span> ${injection_aps.ui.escape(String(row.source_run_count || 0))}</div>`
+						: "";
 					return `
 						<div class="ia-run-cell-stack">
 							<div class="ia-run-floor" title="${injection_aps.ui.escape(scope)}">${injection_aps.ui.escape(scope)}</div>
 							<div class="ia-run-cell-note"><span>${__("Existing WO", null, "Injection APS")}:</span> ${injection_aps.ui.escape(injection_aps.ui.get_existing_work_order_policy_label(row.existing_work_order_policy))}</div>
+							${sourceSummary}
 						</div>
 					`;
 				}
@@ -289,6 +294,14 @@ class InjectionAPSRunConsole {
 			.each((_, node) => {
 				node.addEventListener("click", () => {
 					injection_aps.ui.go_to(`aps-release-center?run_name=${encodeURIComponent(node.dataset.runName || "")}`);
+				});
+			});
+
+		$(this.table)
+			.find("[data-run-action='open_admission']")
+			.each((_, node) => {
+				node.addEventListener("click", () => {
+					injection_aps.ui.go_to(`aps-demand-admission-workbench?run_name=${encodeURIComponent(node.dataset.runName || "")}`);
 				});
 			});
 	}

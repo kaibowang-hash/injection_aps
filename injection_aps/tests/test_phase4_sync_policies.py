@@ -944,6 +944,9 @@ class TestProductionSyncPolicies(unittest.TestCase):
 
 class TestDeliverySyncPolicies(unittest.TestCase):
 	def setUp(self):
+		v2_patcher = patch("injection_aps.services.v2_flags.is_v2_enabled", return_value=False)
+		v2_patcher.start()
+		self.addCleanup(v2_patcher.stop)
 		self.source = {
 			"source_delivery_note_item": "DNI-1",
 			"source_qty": 60,
@@ -1633,6 +1636,13 @@ class TestDeliverySyncPolicies(unittest.TestCase):
 			doc.source_delivery_note = "DN-ORIGINAL-1"
 			doc.effective_qty = effective_qty
 			doc.reversed_qty = 0
+			doc.source_docstatus = 1
+			doc.is_effective = 1
+			doc.reversal_reason = ""
+			doc.get.side_effect = lambda fieldname, target=doc: getattr(target, fieldname, None)
+			doc.update.side_effect = lambda values, target=doc: [
+				setattr(target, fieldname, value) for fieldname, value in values.items()
+			]
 			docs[name] = doc
 		existing = [
 			delivery_sync.frappe._dict({"name": "ALLOC-DELIVERY", "allocation_key": "KEY-1"}),

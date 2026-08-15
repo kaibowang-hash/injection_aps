@@ -581,6 +581,10 @@ def _run_full_business_chain(context: dict) -> dict:
 	_approve_proposal_batch("APS Shift Schedule Proposal Batch", shift_proposal["shift_schedule_proposal_batch"])
 	release_apply = planning.apply_shift_schedule_proposals(shift_proposal["shift_schedule_proposal_batch"])
 	_assert_positive("release_apply", "APS Release Batch", release_apply.get("release_batch"), release_apply.get("applied_rows"))
+	capacity_after_release = _ensure_capacity_current(
+		run_name,
+		reason="after shift schedule proposal apply",
+	)
 	planned_jit_after_release = _assert_planned_jit_capacity(
 		run_name,
 		due_date=due_date,
@@ -730,6 +734,7 @@ def _run_full_business_chain(context: dict) -> dict:
 			"initial": initial_capacity,
 			"after_approval": capacity_after_approval,
 			"after_work_order_apply": capacity_after_work_order,
+			"after_shift_schedule_apply": capacity_after_release,
 		},
 		"planned_jit": planned_jit,
 		"planned_jit_after_work_order": planned_jit_after_work_order,
@@ -849,7 +854,7 @@ def _scenario_decrease_after_start(context: dict, full_chain: dict) -> dict:
 	row = frappe.db.get_value(
 		"Customer Delivery Schedule Item",
 		{"parent": schedule_name, "item_code": context["flow_item"]},
-		["name", "schedule_date", "qty", "produced_qty", "delivered_qty"],
+		["name", "customer_part_no", "schedule_date", "qty", "produced_qty", "delivered_qty"],
 		as_dict=True,
 	)
 	if not schedule or not row:
@@ -866,11 +871,22 @@ def _scenario_decrease_after_start(context: dict, full_chain: dict) -> dict:
 			{
 				**_schedule_row(context["flow_item"], target_qty, row.schedule_date, source_excel_row=5),
 				"sales_order": context["sales_order"],
+				"customer_part_no": row.customer_part_no,
 				"previous_schedule_date": row.schedule_date,
 			}
 		],
 	)
 	row_preview = next(item for item in preview["rows"] if item["item_code"] == context["flow_item"])
+	if "affects_produced" not in row_preview:
+		_phase6_fail(
+			"decrease_after_start_preview_shape",
+			"Customer Delivery Schedule Item",
+			row.name,
+			"an evaluated diff row with execution-impact fields",
+			row_preview,
+			"",
+			details=preview,
+		)
 	_assert_equal(
 		"decrease_after_start_is_blocked",
 		"Customer Delivery Schedule",
@@ -883,7 +899,7 @@ def _scenario_decrease_after_start(context: dict, full_chain: dict) -> dict:
 		"Customer Delivery Schedule Item",
 		row.name,
 		1,
-		row_preview["affects_produced"],
+		row_preview.get("affects_produced"),
 	)
 	return {
 		"scenario": "decrease_after_start_is_safely_blocked",
@@ -2051,7 +2067,17 @@ def _assert_planned_jit_capacity(run_name: str, *, due_date, expected_qty: float
 	segments = frappe.get_all(
 		"APS Schedule Segment",
 		filters={"parent": ("in", result_names), "parenttype": "APS Schedule Result"},
-		fields=["name", "parent", "start_time", "end_time", "planned_qty", "production_mode", "segment_kind", "segment_status"],
+		fields=[
+			"name",
+			"parent",
+			"workstation",
+			"start_time",
+			"end_time",
+			"planned_qty",
+			"production_mode",
+			"segment_kind",
+			"segment_status",
+		],
 		order_by="start_time asc, idx asc",
 		limit_page_length=0,
 	)
@@ -2211,10 +2237,20 @@ def _assert_projected_jit_availability(
 	for result in projection_results:
 		result_name = str(result.get("result") or "")
 		expected_result = expected_results[result_name]
+		expected_segment_end = expected_result.get("last_segment_end")
+		include_due_end = bool(
+			expected_segment_end
+			and get_datetime(expected_segment_end) == due_end
+		)
 		points = [
 			row
 			for row in result.get("timeline") or []
-			if row.get("time") and due_start <= get_datetime(row.get("time")) < due_end
+			if row.get("time")
+			and due_start <= get_datetime(row.get("time"))
+			and (
+				get_datetime(row.get("time")) < due_end
+				or (include_due_end and get_datetime(row.get("time")) == due_end)
+			)
 		]
 		point_count += len(points)
 		if not points:
@@ -2238,7 +2274,6 @@ def _assert_projected_jit_availability(
 			)
 		last_point = max(points, key=lambda row: get_datetime(row.get("time")))
 		last_point_time = get_datetime(last_point.get("time"))
-		expected_segment_end = expected_result.get("last_segment_end")
 		if expected_segment_end and last_point_time < get_datetime(expected_segment_end):
 			_phase6_fail(
 				"planned_jit_availability_cutoff",
@@ -2576,20 +2611,23 @@ def _assert_persisted_segment_proposal_wos_chain(
 		)
 		if start.date() < end.date():
 			cross_midnight_segments.add(segment_name)
+			shift_start, shift_end, expected_shift_type = planning._get_shift_window_for_time(start)
 			if not (
-				proposal.get("shift_type") == "晚班"
-				and start.hour == 20
-				and start.minute == 0
-				and end.hour == 8
-				and end.minute == 0
-				and end.date() == (start + timedelta(days=1)).date()
-				and expected_posting_date == getdate(start)
+				proposal.get("shift_type") == expected_shift_type
+				and start >= shift_start
+				and end <= shift_end
+				and expected_posting_date == getdate(shift_start)
 			):
 				_phase6_fail(
 					"persisted_cross_midnight_shift_window",
 					"APS Shift Schedule Proposal Item",
 					proposal.name,
-					"20:00-08:00 late shift with opening posting date",
+					{
+						"start_gte": shift_start,
+						"end_lte": shift_end,
+						"shift_type": expected_shift_type,
+						"posting_date": getdate(shift_start),
+					},
 					{
 						"start": start,
 						"end": end,
@@ -2857,7 +2895,7 @@ def _create_delivery_return(source_delivery_note: str, *, schedule_item: str) ->
 
 
 def _create_open_overlap_probe(context: dict, *, required_date) -> dict:
-	probe_date = getdate(add_days(required_date, 1))
+	probe_date = getdate(required_date)
 	start = get_datetime(f"{probe_date} 00:20:00")
 	end = start + timedelta(hours=1)
 	run = frappe.get_doc(

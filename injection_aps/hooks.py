@@ -30,6 +30,7 @@ doctype_js = {
 	"APS Schedule Import Batch": "public/js/aps_schedule_import_batch.js",
 	"APS Change Request": "public/js/aps_change_request.js",
 	"APS Release Batch": "public/js/aps_release_batch.js",
+	"APS Unallocated Delivery": "public/js/aps_unallocated_delivery.js",
 }
 
 doctype_list_js = {
@@ -37,7 +38,11 @@ doctype_list_js = {
 }
 
 doc_events = {
+	"Delivery Plan": {
+		"validate": "injection_aps.services.delivery_fulfillment.sync_delivery_plan_lineage",
+	},
 	"Delivery Note": {
+		"before_validate": "injection_aps.services.delivery_fulfillment.inherit_delivery_note_lineage",
 		"before_submit": "injection_aps.services.delivery_sync.validate_delivery_before_submit",
 		"on_submit": "injection_aps.services.delivery_sync.queue_delivery_sync",
 		"on_cancel": "injection_aps.services.delivery_sync.queue_delivery_sync",
@@ -59,5 +64,8 @@ scheduler_events = {
 		"*/15 * * * *": [
 			"injection_aps.services.customizations.sync_machine_capabilities_from_workstations",
 		]
-	}
+	},
+	"hourly": [
+		"injection_aps.services.shift_replan.scheduled_shift_replan",
+	]
 }

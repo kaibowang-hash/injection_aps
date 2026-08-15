@@ -1,0 +1,17 @@
+{
+ "content": null,
+ "doctype": "Page",
+ "module": "Injection APS",
+ "modified": "1970-01-01 00:00:00.000000",
+ "name": "aps-demand-admission-workbench",
+ "page_name": "aps-demand-admission-workbench",
+ "roles": [
+  {"role":"System Manager"}, {"role":"GMC"}, {"role":"PMC"},
+  {"role":"Manufacturing Manager"}, {"role":"Manufacturing User"},
+  {"role":"Sales Manager"}, {"role":"Sales User"},
+  {"role":"Stock Manager"}, {"role":"Stock User"}
+ ],
+ "standard": "Yes",
+ "system_page": 0,
+ "title": "Demand Admission Workbench"
+}

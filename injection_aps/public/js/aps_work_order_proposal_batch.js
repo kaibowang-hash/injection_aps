@@ -8,9 +8,31 @@ frappe.ui.form.on("APS Work Order Proposal Batch", {
 		await WORK_ORDER_PROPOSAL_SHARED_READY;
 		injection_aps.ui.ensure_styles();
 		await render_flow(frm);
+		render_campaign_summary(frm);
 		add_actions(frm);
 	},
 });
+
+function render_campaign_summary(frm) {
+	const wrapper = frm.fields_dict.campaign_summary && frm.fields_dict.campaign_summary.$wrapper;
+	if (!wrapper) return;
+	const groups = {};
+	(frm.doc.items || []).filter((row) => row.production_campaign).forEach((row) => {
+		groups[row.production_campaign] = groups[row.production_campaign] || [];
+		groups[row.production_campaign].push(row);
+	});
+	const names = Object.keys(groups).sort();
+	if (!names.length) {
+		wrapper.empty();
+		return;
+	}
+	const cards = names.map((name) => {
+		const rows = groups[name];
+		const outputs = rows.map((row) => `${frappe.utils.escape_html(row.item_code || "-")} (${frappe.utils.escape_html(row.output_role || "-")}: ${format_number(row.proposed_qty || 0)})`).join(" · ");
+		return `<div class="ia-alert info" style="margin-bottom:8px;"><strong>${frappe.utils.escape_html(name)}</strong><br>${outputs}<br><span class="text-muted">${__("One shared machine/mold interval; review and apply every output atomically.", null, "Injection APS")}</span></div>`;
+	}).join("");
+	wrapper.html(`<div style="margin:8px 0;">${cards}</div>`);
+}
 
 async function render_flow(frm) {
 	try {
