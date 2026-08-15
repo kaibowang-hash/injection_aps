@@ -118,6 +118,9 @@ async function testRunConsoleRendersSevenStackedColumnsAndKeepsFullExport() {
 		get_existing_work_order_policy_label(value) {
 			return value === "Include" ? "考虑现有工单" : "不考虑现有工单";
 		},
+		format_number(value) {
+			return new Intl.NumberFormat("en-US", { maximumFractionDigits: 3 }).format(Number(value || 0));
+		},
 		get_value(value, pathValue, fallback) {
 			return String(pathValue || "")
 				.split(".")
@@ -137,7 +140,7 @@ async function testRunConsoleRendersSevenStackedColumnsAndKeepsFullExport() {
 			return `<a>${label}</a>`;
 		},
 	});
-	context.frappe.format = (value) => String(value);
+	context.frappe.format = (value) => `<div style='text-align: right'>${value}</div>`;
 	controller.renderRuns([
 		{
 			name: "APS-RUN-00008",
@@ -170,6 +173,9 @@ async function testRunConsoleRendersSevenStackedColumnsAndKeepsFullExport() {
 	assert.match(rendered.cells[3], /100/);
 	assert.match(rendered.cells[4], /10/);
 	assert.match(rendered.cells[5], /3/);
+	assert.doesNotMatch(rendered.cells[3], /text-align|&lt;div/i);
+	assert.doesNotMatch(rendered.cells[4], /text-align|&lt;div/i);
+	assert.doesNotMatch(rendered.cells[5], /text-align|&lt;div/i);
 	assert.equal(rendered.options.export_columns.length, 17);
 	assert.ok(rendered.options.export_columns.some((column) => column.fieldname === "total_delivered_qty"));
 	assert.equal(

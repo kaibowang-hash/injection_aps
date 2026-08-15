@@ -74,9 +74,15 @@ class TestUIStaticContracts(unittest.TestCase):
 			'class="ia-run-metrics ia-run-metrics-grid"',
 			'class="ia-run-action-list"',
 			"export_columns: exportColumns",
+			"return injection_aps.ui.format_number(value);",
 		):
 			with self.subTest(marker=marker):
 				self.assertIn(marker, source)
+		self.assertNotIn("frappe.format(", source)
+
+		rows = _read_translation_rows(APP_ROOT / "translations/zh.csv")
+		translations = {(row[0], row[2] if len(row) > 2 else ""): row[1] for row in rows}
+		self.assertEqual(translations.get(("Analyze and Apply Capacity", "")), "分析并应用产能方案")
 
 		for original_field in (
 			"total_net_requirement_qty",

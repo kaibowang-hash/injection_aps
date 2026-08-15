@@ -81,7 +81,7 @@ class InjectionAPSRunConsole {
 	}
 
 	formatRunQty(value) {
-		return frappe.format(value || 0, { fieldtype: "Float" });
+		return injection_aps.ui.format_number(value);
 	}
 
 	renderRunMetric(label, value, tone) {

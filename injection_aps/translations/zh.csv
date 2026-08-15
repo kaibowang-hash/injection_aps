@@ -518,6 +518,7 @@ Monitor Execution Drift,关注执行偏差
 Shift Proposals,班次建议
 Review Work Order Proposals,工单建议审核
 Review Day/Night Shift Proposals,白/夜班建议审核
+Analyze and Apply Capacity,分析并应用产能方案
 There are still {0} APS exceptions waiting for review.,当前仍有 {0} 条 APS 异常待处理。
 Recalculation Completed,已完成重算
 Handle Exceptions,处理异常
