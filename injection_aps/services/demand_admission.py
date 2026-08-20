@@ -14,6 +14,8 @@ from injection_aps.services.v2_flags import is_v2_enabled
 
 QTY_TOLERANCE = 0.000001
 ACTIVE_COMMITMENT_STATUSES = ("Draft", "Proposed", "Approved", "Released", "In Progress")
+EDITABLE_RUN_STATUSES = ("Draft", "Planned", "Risk")
+ADMISSION_STRATEGIES = ("standard", "conservative", "all_recommended", "custom")
 
 
 def calculate_p1_candidate(open_so_qty: float, open_schedule_qty: float, active_p1_qty: float) -> float:
@@ -57,9 +59,20 @@ def rebuild_admission_candidates(
 			}
 		)
 
-	open_so = _get_open_sales_order_qty(run.company)
-	open_schedule = _get_open_schedule_qty(run.company)
-	active_p1 = _get_active_p1_commitment_qty(run.company, exclude_run=run.name)
+	scope_customer = run.get("planning_customer_filter") or None
+	scope_item = run.get("planning_item_filter") or None
+	open_so = _get_open_sales_order_qty(
+		run.company, customer=scope_customer, item_code=scope_item
+	)
+	open_schedule = _get_open_schedule_qty(
+		run.company, customer=scope_customer, item_code=scope_item
+	)
+	active_p1 = _get_active_p1_commitment_qty(
+		run.company,
+		exclude_run=run.name,
+		customer=scope_customer,
+		item_code=scope_item,
+	)
 	for key in sorted(set(open_so) | set(open_schedule) | set(active_p1)):
 		candidate = calculate_p1_candidate(open_so.get(key), open_schedule.get(key), active_p1.get(key))
 		if candidate <= QTY_TOLERANCE:
@@ -87,7 +100,9 @@ def rebuild_admission_candidates(
 		)
 
 	projected = projected_unallocated_fg or {}
-	for item_code, safety_target in sorted(_get_safety_targets(run.company).items()):
+	for item_code, safety_target in sorted(
+		_get_safety_targets(run.company, item_code=scope_item).items()
+	):
 		candidate = calculate_p2_candidate(safety_target, projected.get(item_code))
 		if candidate <= QTY_TOLERANCE:
 			continue
@@ -139,13 +154,34 @@ def rebuild_admission_candidates(
 	decision_fingerprint = _decision_fingerprint(input_fingerprint, persisted)
 	for doc in persisted:
 		_set_admission_values(doc.name, {"decision_fingerprint": decision_fingerprint})
+	optional_rows = [doc for doc in persisted if doc.admission_class in {"P1", "P2"}]
+	auto_confirmed = not optional_rows
 	frappe.db.set_value(
 		"APS Planning Run",
 		run.name,
 		{
 			"admission_fingerprint": decision_fingerprint,
+			"admission_confirmed_fingerprint": decision_fingerprint if auto_confirmed else None,
+			"admission_confirmed_by": frappe.session.user if auto_confirmed else None,
+			"admission_confirmed_on": now_datetime() if auto_confirmed else None,
+			"admission_decision_reason": (
+				_("Automatically confirmed because the baseline contains only mandatory P0 demand.")
+				if auto_confirmed else None
+			),
+			"admission_strategy": "p0_only" if auto_confirmed else None,
 			"total_selected_p1_qty": 0,
 			"total_selected_p2_qty": 0,
+			"status": "Draft",
+			"approval_state": "Pending",
+			"consistency_status": "Unchecked",
+			"consistency_checked_on": None,
+			"capacity_balance_status": "Not Analyzed",
+			"capacity_balance_analyzed_on": None,
+			"capacity_balance_confirmed_by": None,
+			"capacity_balance_confirmed_on": None,
+			"capacity_balance_applied_on": None,
+			"capacity_balance_fingerprint": None,
+			"capacity_balance_analysis_json": None,
 		},
 		update_modified=False,
 	)
@@ -167,7 +203,7 @@ def get_demand_admission_candidates(planning_run: str) -> dict[str, Any]:
 		order_by="admission_class asc, customer asc, item_code asc, name asc",
 		limit_page_length=0,
 	)
-	return {
+	result = {
 		"planning_run": run.name,
 		"company": run.company,
 		"demand_baseline_fingerprint": run.get("demand_baseline_fingerprint"),
@@ -175,6 +211,8 @@ def get_demand_admission_candidates(planning_run: str) -> dict[str, Any]:
 		"summary": _summarize(rows),
 		"rows": [dict(row) for row in rows],
 	}
+	result["admission_state"] = get_admission_state(run.name, run=run, rows=result["rows"])
+	return result
 
 
 def preview_admission_impact(
@@ -182,18 +220,41 @@ def preview_admission_impact(
 	decisions: list[dict[str, Any]],
 	*,
 	expected_fingerprint: str,
+	strategy: str | None = None,
 ) -> dict[str, Any]:
 	current = get_demand_admission_candidates(planning_run)
 	_validate_expected_fingerprint(current, expected_fingerprint)
 	by_name = {row["name"]: row for row in current["rows"]}
 	preview_rows = _validate_decisions(by_name, decisions)
+	before_summary = _summarize(current["rows"])
+	after_summary = _summarize(preview_rows)
+	changed_rows = [
+		row for row in preview_rows
+		if abs(flt(row["selected_qty"]) - flt(by_name[row["name"]]["selected_qty"])) > QTY_TOLERANCE
+	]
+	planned_fingerprint = (current.get("admission_state") or {}).get("planned_fingerprint") or ""
 	return {
 		"planning_run": planning_run,
 		"current_fingerprint": current["admission_fingerprint"],
-		"summary": _summarize(preview_rows),
-		"invalidates_previous_analysis": any(
-			abs(flt(row["selected_qty"]) - flt(by_name[row["name"]]["selected_qty"])) > QTY_TOLERANCE
-			for row in preview_rows
+		"strategy": str(strategy or "").strip(),
+		"before_summary": before_summary,
+		"summary": after_summary,
+		"changed_row_count": len(changed_rows),
+		"excluded_row_count": sum(
+			1 for row in preview_rows
+			if row["admission_class"] in {"P1", "P2"} and flt(row["selected_qty"]) <= QTY_TOLERANCE
+		),
+		"partial_row_count": sum(
+			1 for row in preview_rows
+			if row["admission_class"] in {"P1", "P2"}
+			and QTY_TOLERANCE < flt(row["selected_qty"]) < flt(row["candidate_qty"]) - QTY_TOLERANCE
+		),
+		"total_selected_delta": round(
+			flt(after_summary.get("selected_total_qty")) - flt(before_summary.get("selected_total_qty")), 6
+		),
+		"invalidates_previous_analysis": bool(
+			planned_fingerprint
+			and (changed_rows or planned_fingerprint != current["admission_fingerprint"])
 		),
 		"rows": preview_rows,
 	}
@@ -205,22 +266,34 @@ def save_demand_admission_decisions(
 	*,
 	expected_fingerprint: str,
 	reason: str,
+	strategy: str | None = None,
 ) -> dict[str, Any]:
 	if not is_v2_enabled():
 		frappe.throw(_("APS V2 is disabled; admission decisions cannot be changed."), frappe.ValidationError)
 	reason = str(reason or "").strip()
+	strategy = str(strategy or "custom").strip() or "custom"
 	if not reason:
 		frappe.throw(_("A decision reason is required when changing P1/P2 admission."), frappe.ValidationError)
+	if strategy not in ADMISSION_STRATEGIES:
+		frappe.throw(_("The selected demand admission strategy is not valid."), frappe.ValidationError)
 	_lock_run_scope(planning_run)
+	run = frappe.get_doc("APS Planning Run", planning_run)
+	if run.status not in EDITABLE_RUN_STATUSES or run.approval_state == "Approved":
+		frappe.throw(
+			_("Demand admission can only be changed on an unapproved Draft, Planned, or Risk run."),
+			frappe.ValidationError,
+		)
 	current = get_demand_admission_candidates(planning_run)
 	_validate_expected_fingerprint(current, expected_fingerprint)
 	by_name = {row["name"]: row for row in current["rows"]}
 	preview_rows = _validate_decisions(by_name, decisions)
 	now = now_datetime()
+	changed = False
 	for row in preview_rows:
 		before = by_name[row["name"]]
-		if abs(flt(row["selected_qty"]) - flt(before["selected_qty"])) <= QTY_TOLERANCE:
+		if row["admission_class"] == "P0":
 			continue
+		changed = changed or abs(flt(row["selected_qty"]) - flt(before["selected_qty"])) > QTY_TOLERANCE
 		_set_admission_values(
 			row["name"],
 			{
@@ -249,8 +322,17 @@ def save_demand_admission_decisions(
 		planning_run,
 		{
 			"admission_fingerprint": decision_fingerprint,
+			"admission_confirmed_fingerprint": decision_fingerprint,
+			"admission_confirmed_by": frappe.session.user,
+			"admission_confirmed_on": now,
+			"admission_decision_reason": reason,
+			"admission_strategy": strategy,
 			"total_selected_p1_qty": summary["selected_p1_qty"],
 			"total_selected_p2_qty": summary["selected_p2_qty"],
+			"status": "Draft",
+			"approval_state": "Pending",
+			"consistency_status": "Unchecked",
+			"consistency_checked_on": None,
 			"capacity_balance_status": "Not Analyzed",
 			"capacity_balance_analyzed_on": None,
 			"capacity_balance_confirmed_by": None,
@@ -262,11 +344,95 @@ def save_demand_admission_decisions(
 		update_modified=True,
 	)
 	result = get_demand_admission_candidates(planning_run)
-	result["analysis_invalidated"] = 1
+	planned_fingerprint = run.get("planned_admission_fingerprint") or ""
+	result["analysis_invalidated"] = int(
+		bool(planned_fingerprint and (changed or planned_fingerprint != decision_fingerprint))
+	)
+	result["recalculation_required"] = 1
+	result["next_route"] = f"aps-run-console?run_name={planning_run}&from_admission=1"
 	return result
 
 
-def _get_open_sales_order_qty(company: str) -> dict[tuple[str, str], float]:
+def get_admission_state(
+	planning_run: str,
+	*,
+	run=None,
+	rows: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+	run = run or frappe.get_doc("APS Planning Run", planning_run)
+	if rows is None:
+		rows = [dict(row) for row in frappe.get_all(
+			"APS Demand Admission",
+			filters={"planning_run": planning_run, "status": ("!=", "Superseded")},
+			fields=["name", "admission_class", "status", "selected_qty"],
+			limit_page_length=0,
+		)]
+	optional_rows = [row for row in rows if row.get("admission_class") in {"P1", "P2"}]
+	current_fingerprint = run.get("admission_fingerprint") or ""
+	confirmed_fingerprint = run.get("admission_confirmed_fingerprint") or ""
+	planned_fingerprint = run.get("planned_admission_fingerprint") or ""
+	baseline_ready = bool(run.get("demand_baseline_fingerprint") and current_fingerprint)
+	confirmed = bool(baseline_ready and confirmed_fingerprint == current_fingerprint)
+	recalculation_required = bool(confirmed and planned_fingerprint != current_fingerprint)
+	legacy_unchecked = not baseline_ready
+	editable = bool(run.status in EDITABLE_RUN_STATUSES and run.approval_state != "Approved")
+	return {
+		"baseline_ready": int(baseline_ready),
+		"confirmed": int(confirmed),
+		"legacy_unchecked": int(legacy_unchecked),
+		"editable": int(editable),
+		"blocking_reason": (
+			""
+			if editable
+			else _("Demand admission is locked because this Run has been approved or left the editable planning states.")
+		),
+		"optional_row_count": len(optional_rows),
+		"p1_row_count": sum(1 for row in optional_rows if row.get("admission_class") == "P1"),
+		"p2_row_count": sum(1 for row in optional_rows if row.get("admission_class") == "P2"),
+		"recalculation_required": int(recalculation_required),
+		"current_fingerprint": current_fingerprint,
+		"confirmed_fingerprint": confirmed_fingerprint,
+		"planned_fingerprint": planned_fingerprint,
+		"confirmed_by": run.get("admission_confirmed_by") or "",
+		"confirmed_on": run.get("admission_confirmed_on"),
+		"decision_reason": run.get("admission_decision_reason") or "",
+		"strategy": run.get("admission_strategy") or "",
+	}
+
+
+def require_admission_ready(planning_run: str, *, require_planned: bool = False) -> dict[str, Any]:
+	state = get_admission_state(planning_run)
+	# Historical Runs created before admission fingerprints existed remain readable
+	# and are not rewritten. New prepared Runs always have a baseline fingerprint.
+	if state["legacy_unchecked"]:
+		return state
+	if not state["confirmed"]:
+		frappe.throw(
+			_("Confirm this Run's demand admission before recalculation or capacity analysis."),
+			frappe.ValidationError,
+		)
+	if require_planned and state["recalculation_required"]:
+		frappe.throw(
+			_("Demand admission changed after the last calculation. Recalculate this Run before continuing."),
+			frappe.ValidationError,
+		)
+	return state
+
+
+def _get_open_sales_order_qty(
+	company: str,
+	*,
+	customer: str | None = None,
+	item_code: str | None = None,
+) -> dict[tuple[str, str], float]:
+	conditions = []
+	params = {"company": company}
+	if customer:
+		conditions.append("and so.customer = %(customer)s")
+		params["customer"] = customer
+	if item_code:
+		conditions.append("and soi.item_code = %(item_code)s")
+		params["item_code"] = item_code
 	rows = frappe.db.sql(
 		"""
 		select so.customer, soi.item_code,
@@ -275,15 +441,29 @@ def _get_open_sales_order_qty(company: str) -> dict[tuple[str, str], float]:
 		inner join `tabSales Order` so on so.name = soi.parent
 		where so.company = %(company)s and so.docstatus = 1
 			and ifnull(so.status, '') not in ('Closed', 'Cancelled')
+			{scope_conditions}
 		group by so.customer, soi.item_code
-		""",
-		{"company": company},
+		""".format(scope_conditions="\n\t\t\t".join(conditions)),
+		params,
 		as_dict=True,
 	)
 	return {(row.customer, row.item_code): max(flt(row.open_qty), 0) for row in rows}
 
 
-def _get_open_schedule_qty(company: str) -> dict[tuple[str, str], float]:
+def _get_open_schedule_qty(
+	company: str,
+	*,
+	customer: str | None = None,
+	item_code: str | None = None,
+) -> dict[tuple[str, str], float]:
+	conditions = []
+	params = {"company": company}
+	if customer:
+		conditions.append("and s.customer = %(customer)s")
+		params["customer"] = customer
+	if item_code:
+		conditions.append("and i.item_code = %(item_code)s")
+		params["item_code"] = item_code
 	rows = frappe.db.sql(
 		"""
 		select s.customer, i.item_code,
@@ -292,15 +472,22 @@ def _get_open_schedule_qty(company: str) -> dict[tuple[str, str], float]:
 		inner join `tabCustomer Delivery Schedule` s on s.name = i.parent
 		where s.company = %(company)s and s.status = 'Active'
 			and ifnull(i.status, '') != 'Cancelled'
+			{scope_conditions}
 		group by s.customer, i.item_code
-		""",
-		{"company": company},
+		""".format(scope_conditions="\n\t\t\t".join(conditions)),
+		params,
 		as_dict=True,
 	)
 	return {(row.customer, row.item_code): max(flt(row.open_qty), 0) for row in rows}
 
 
-def _get_active_p1_commitment_qty(company: str, *, exclude_run: str | None = None) -> dict[tuple[str, str], float]:
+def _get_active_p1_commitment_qty(
+	company: str,
+	*,
+	exclude_run: str | None = None,
+	customer: str | None = None,
+	item_code: str | None = None,
+) -> dict[tuple[str, str], float]:
 	filters: dict[str, Any] = {
 		"company": company,
 		"admission_class": "P1",
@@ -313,6 +500,10 @@ def _get_active_p1_commitment_qty(company: str, *, exclude_run: str | None = Non
 	}
 	if exclude_run:
 		filters["planning_run"] = ("!=", exclude_run)
+	if customer:
+		filters["customer"] = customer
+	if item_code:
+		filters["item_code"] = item_code
 	rows = frappe.get_all(
 		"APS Demand Commitment",
 		filters=filters,
@@ -325,15 +516,18 @@ def _get_active_p1_commitment_qty(company: str, *, exclude_run: str | None = Non
 	return dict(result)
 
 
-def _get_safety_targets(company: str) -> dict[str, float]:
+def _get_safety_targets(company: str, *, item_code: str | None = None) -> dict[str, float]:
 	settings = frappe.get_cached_doc("APS Settings")
 	fieldname = str(settings.get("item_safety_stock_field") or "safety_stock").strip()
 	meta = frappe.get_meta("Item")
 	if not meta.has_field(fieldname):
 		return {}
+	filters = {"disabled": 0}
+	if item_code:
+		filters["name"] = item_code
 	rows = frappe.get_all(
 		"Item",
-		filters={"disabled": 0},
+		filters=filters,
 		fields=["name", fieldname],
 		limit_page_length=0,
 	)
@@ -382,7 +576,10 @@ def _validate_decisions(by_name: dict[str, dict[str, Any]], decisions: list[dict
 			frappe.throw(_("Admission decision contains an unknown or duplicate row."), frappe.ValidationError)
 		seen.add(name)
 		row = proposed[name]
-		selected = max(flt(decision.get("selected_qty")), 0)
+		selected = flt(decision.get("selected_qty"))
+		if selected < -QTY_TOLERANCE:
+			frappe.throw(_("Selected admission quantity cannot be negative."), frappe.ValidationError)
+		selected = max(selected, 0)
 		if row["admission_class"] == "P0" and abs(selected - flt(row["candidate_qty"])) > QTY_TOLERANCE:
 			frappe.throw(_("P0 demand is mandatory and cannot be deselected."), frappe.ValidationError)
 		if selected > flt(row["candidate_qty"]) + QTY_TOLERANCE:
@@ -395,18 +592,27 @@ def _summarize(rows: Iterable[dict[str, Any]]) -> dict[str, float]:
 	result = {
 		"p0_qty": 0.0, "p1_candidate_qty": 0.0, "p2_candidate_qty": 0.0,
 		"selected_p1_qty": 0.0, "selected_p2_qty": 0.0,
+		"p0_count": 0, "p1_count": 0, "p2_count": 0,
 	}
 	for row in rows:
 		admission_class = row.get("admission_class")
 		if admission_class == "P0":
+			result["p0_count"] += 1
 			result["p0_qty"] += flt(row.get("selected_qty"))
 		elif admission_class == "P1":
+			result["p1_count"] += 1
 			result["p1_candidate_qty"] += flt(row.get("candidate_qty"))
 			result["selected_p1_qty"] += flt(row.get("selected_qty"))
 		elif admission_class == "P2":
+			result["p2_count"] += 1
 			result["p2_candidate_qty"] += flt(row.get("candidate_qty"))
 			result["selected_p2_qty"] += flt(row.get("selected_qty"))
-	return {key: round(value, 6) for key, value in result.items()}
+	result["optional_count"] = result["p1_count"] + result["p2_count"]
+	result["selected_total_qty"] = result["p0_qty"] + result["selected_p1_qty"] + result["selected_p2_qty"]
+	return {
+		key: int(value) if key.endswith("_count") else round(value, 6)
+		for key, value in result.items()
+	}
 
 
 def _candidate_fingerprint_row(row: dict[str, Any]) -> dict[str, Any]:

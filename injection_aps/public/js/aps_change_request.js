@@ -1,5 +1,5 @@
 const CHANGE_REQUEST_SHARED_READY = frappe.require("/assets/injection_aps/js/injection_aps_ui_loader.js")
-	.then(() => injection_aps.ui_loader.load("20260815.2"));
+	.then(() => injection_aps.ui_loader.load("20260821.2"));
 
 const CHANGE_REQUEST_FIELDS = [
 	"planning_run",
@@ -38,6 +38,10 @@ frappe.ui.form.on("APS Change Request", {
 		injection_aps.ui.ensure_styles();
 		set_change_request_field_state(frm);
 		render_change_status(frm);
+		await injection_aps.ui.load_item_display_details([
+			frm.doc.item_code,
+			...collect_item_codes(parse_json(frm.doc.impact_json)),
+		]);
 		render_change_request(frm);
 		if (!frm.is_new()) {
 			add_change_request_actions(frm);
@@ -323,6 +327,18 @@ function render_change_request(frm) {
 		export_file_name: `aps_change_${frm.doc.name}`,
 	});
 	render_secondary_impact(root.querySelector(".ia-change-secondary"), impact);
+}
+
+function collect_item_codes(value, output = new Set()) {
+	if (Array.isArray(value)) {
+		value.forEach((entry) => collect_item_codes(entry, output));
+	} else if (value && typeof value === "object") {
+		if (value.item_code) {
+			output.add(value.item_code);
+		}
+		Object.values(value).forEach((entry) => collect_item_codes(entry, output));
+	}
+	return Array.from(output);
 }
 
 function render_secondary_impact(target, impact) {

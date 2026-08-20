@@ -111,6 +111,18 @@ class TestManualQuantityAdjustment(TestCase):
 				0,
 			)
 
+	def test_resize_duration_recalculates_quantity_with_item_precision(self):
+		with (
+			patch("injection_aps.services.planning._item_quantity_requires_integer", return_value=True),
+			patch("injection_aps.services.planning.frappe.get_precision", return_value=2),
+		):
+			self.assertEqual(planning._manual_duration_capacity_qty("ITEM-1", 2.5, 80), 200)
+		with (
+			patch("injection_aps.services.planning._item_quantity_requires_integer", return_value=False),
+			patch("injection_aps.services.planning.frappe.get_precision", return_value=2),
+		):
+			self.assertEqual(planning._manual_duration_capacity_qty("ITEM-2", 1.333, 10), 13.33)
+
 	def test_quantity_and_end_time_are_mutually_exclusive_before_lookup(self):
 		with patch("injection_aps.services.planning.frappe.get_all") as get_all:
 			with self.assertRaises(frappe.ValidationError):
@@ -135,6 +147,10 @@ class TestManualQuantityAdjustment(TestCase):
 		planning._validate_manual_overproduction_confirmation(
 			{"quantity_mode": 0, "overproduction_qty": 10},
 		)
+		with self.assertRaises(frappe.ValidationError):
+			planning._validate_manual_overproduction_confirmation(
+				{"quantity_mode": 0, "quantity_change_mode": 1, "overproduction_qty": 10},
+			)
 
 	def test_released_and_started_segments_are_execution_protected(self):
 		self.assertTrue(planning._is_segment_execution_protected({"linked_work_order": "WO-1"}))

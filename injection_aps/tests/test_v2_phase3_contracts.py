@@ -59,11 +59,13 @@ class TestPhase3Contracts(unittest.TestCase):
 			patch.object(app, "_require_approve_access") as approve,
 			patch.object(app, "_require_plan_access") as plan,
 			patch.object(app, "_require_complete_run_mutation_scope"),
+			patch.object(app.demand_admission, "require_admission_ready") as admission_ready,
 			patch.object(app.capacity_balance, "confirm_capacity_balance", return_value={"status": "Acknowledgment Required"}),
 		):
 			app.confirm_capacity_balance("RUN-1")
-		approve.assert_called_once_with()
-		plan.assert_not_called()
+			approve.assert_called_once_with()
+			plan.assert_not_called()
+			admission_ready.assert_called_once_with("RUN-1", require_planned=True)
 
 	def test_exclusion_api_requires_approver_and_scoped_resolution(self):
 		with (

@@ -30,18 +30,20 @@ class TestV2Phase4Contracts(unittest.TestCase):
 
 	def test_solver_api_roles_and_scope(self):
 		app.frappe.local.flags = app.frappe._dict(in_test=True)
-		with patch.object(app, "_require_plan_access") as role, patch.object(app, "_require_complete_run_mutation_scope") as scope, patch.object(app.solver_orchestration, "analyze_v2_schedule", return_value={"status": "Queued"}) as service:
+		with patch.object(app, "_require_plan_access") as role, patch.object(app, "_require_complete_run_mutation_scope") as scope, patch.object(app.demand_admission, "require_admission_ready") as admission_ready, patch.object(app.solver_orchestration, "analyze_v2_schedule", return_value={"status": "Queued"}) as service:
 			app.analyze_v2_schedule("RUN", 0)
 			role.assert_called_once_with()
 			scope.assert_called_once_with("RUN", run_ptype="write")
+			admission_ready.assert_called_once_with("RUN", require_planned=True)
 			service.assert_called_once_with("RUN", run_in_background=False)
 
 	def test_apply_api_requires_release_access(self):
 		app.frappe.local.flags = app.frappe._dict(in_test=True)
-		with patch.object(app, "_require_release_access") as role, patch.object(app, "_require_complete_run_mutation_scope") as scope, patch.object(app.solver_orchestration, "apply_v2_schedule", return_value={"status": "Applied"}) as service:
+		with patch.object(app, "_require_release_access") as role, patch.object(app, "_require_complete_run_mutation_scope") as scope, patch.object(app.demand_admission, "require_admission_ready") as admission_ready, patch.object(app.solver_orchestration, "apply_v2_schedule", return_value={"status": "Applied"}) as service:
 			app.apply_v2_schedule("RUN", "fp")
 			role.assert_called_once_with()
 			scope.assert_called_once_with("RUN", run_ptype="write")
+			admission_ready.assert_called_once_with("RUN", require_planned=True)
 			service.assert_called_once_with("RUN", expected_fingerprint="fp")
 
 	def test_v2_apply_binds_formal_capacity_evidence(self):

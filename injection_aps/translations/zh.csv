@@ -10,6 +10,21 @@ Released Batches,已释放批次
 Synced Schedules,已同步排程
 Machines Configured,已配置机台
 APS workspace refreshed.,APS 工作台已刷新。
+"demand admission Planning Run","需求准入计划运算","Injection APS"
+"Automatically confirmed because the baseline contains only mandatory P0 demand.","需求基线仅包含必须执行的 P0 需求，系统已自动确认。","Injection APS"
+"Demand admission can only be changed on an unapproved Draft or Planned run.","只有未批准的草稿或已计算运算可以变更需求准入。","Injection APS"
+"Confirm this Run's demand admission before recalculation or capacity analysis.","重新计算或分析产能前，请先确认本次运算的需求准入。","Injection APS"
+"Demand admission changed after the last calculation. Recalculate this Run before continuing.","需求准入在上次计算后发生变化，请先重新计算本次运算。","Injection APS"
+"Confirmed {0} optional admission quantity.","已确认 {0} 可选准入数量。","Injection APS"
+"APS V2 is disabled; use the existing recalculation flow.","APS V2 未启用，请使用现有重新计算流程。","Injection APS"
+"Planning Customer Filter","计划客户筛选","APS Planning Run"
+"Planning Item Filter","计划物料筛选","APS Planning Run"
+"Admission Confirmed Fingerprint","准入确认指纹","APS Planning Run"
+"Admission Confirmed By","准入确认人","APS Planning Run"
+"Admission Confirmed On","准入确认时间","APS Planning Run"
+"Admission Strategy","准入策略","APS Planning Run"
+"Admission Decision Reason","准入决策原因","APS Planning Run"
+"Planned Admission Fingerprint","排产采用的准入指纹","APS Planning Run"
 Failed to load Injection APS workspace summary.,注塑 APS 工作台汇总加载失败。
 APS Console,APS 控制台
 Schedule Import & Diff,排期导入与版本对比
@@ -1303,6 +1318,7 @@ Scheduled,已排数量,Injection APS
 Scheduling,排产单,Injection APS
 Setup,准备中,Injection APS
 Source Name,来源单据号,Injection APS
+Source Doctype,来源单据类型,Injection APS
 Start,开始时间,Injection APS
 To,结束,Injection APS
 Unscheduled,未排数量,Injection APS
@@ -4456,3 +4472,147 @@ APS Interface Failed to Load,APS 界面资源加载失败,Injection APS
 "Other Actions","其他操作","Injection APS"
 "Demand Ownership","需求归属","Injection APS"
 "Workflow","流程","Injection APS"
+"Request at most {0} Item display rows.","每次最多请求 {0} 条物料显示信息。","Injection APS"
+No blocking reason is currently recorded.,当前未记录阻断原因。,Injection APS
+Affected Object,影响对象,Injection APS
+Diagnosis / Recommendation,诊断与建议,Injection APS
+Latest details could not be loaded.,无法加载最新详情。,Injection APS
+The list summary is shown below. Refresh the page and try again.,以下显示清单摘要。请刷新页面后重试。,Injection APS
+Exception ID,异常编号,Injection APS
+Affected Context,影响范围,Injection APS
+Exception Message,异常信息,Injection APS
+Diagnostic Details,诊断明细,Injection APS
+Loading exception diagnosis and resolution guidance...,正在加载异常诊断与处理建议...,Injection APS
+Loading exception details...,正在加载异常详情...,Injection APS
+Exception details loaded.,异常详情已加载。,Injection APS
+Segment updated on the Board.,排程段已在看板中更新。,Injection APS
+"Check the linked Mold and Mold Product records for status, cycle time, cavity output, and machine-tonnage compatibility.",请检查关联的模具及模具产品记录，包括状态、周期时间、穴数产出和机台吨位兼容性。
+"Correct the mold assignment or move the segment to a compatible machine, then recalculate and confirm that the exception is cleared.",修正模具分配或将排程段移至兼容机台，然后重新运算并确认异常已清除。
+"Check APS Machine Capability, the machine calendar, and active downtime for the affected workstation.",请检查受影响机台的 APS 机台能力、机台日历和生效中的停机时段。
+"Restore capacity or move/resize the affected segment in the Board, then rerun validation.",恢复产能，或在看板中移动、调整受影响的排程段，然后重新执行校验。
+"Open the affected segment in the Board and compare its time window with adjacent machine and mold segments.",在看板中打开受影响排程段，对比其时间窗口与相邻机台、模具排程段。
+"Move, resize, or split the segment into a conflict-free window, then rerun plan validation.",将排程段移动、调整或拆分至无冲突时段，然后重新执行计划校验。
+"Verify the BOM, source warehouse, available stock, and expected supply date for the affected item.",核对受影响物料的 BOM、来源仓库、可用库存和预计到料日期。
+"Correct the material or supply data, then recalculate APS and confirm that the shortage no longer blocks the plan.",修正物料或供应数据，然后重新运算 APS，并确认短缺不再阻断计划。
+"Verify the source customer schedule or sales order line, including item, date, quantity, and Demand Identity ownership.",核对来源客户排期或销售订单行，包括物料、日期、数量和需求标识归属。
+"Correct the source demand or process it through Change Impact, then rebuild the planning run.",修正来源需求或通过变更影响流程处理，然后重建计划运算。
+"Check the linked Work Order, Work Order Scheduling, and latest execution feedback for inconsistent status or quantity.",检查关联工单、工单排产和最新执行反馈中不一致的状态或数量。
+"Correct or resync the execution document, then refresh the Execution Center and verify that the exception is cleared.",修正或重新同步执行单据，然后刷新执行中心并确认异常已清除。
+Open the source record and correct the condition described in the exception message.,打开来源记录并修正异常信息中描述的问题。
+"Recalculate or rebuild exceptions for this APS run, then confirm that the exception no longer appears before release.",重新运算或重建本次 APS 运算的异常，并在下发前确认该异常不再出现。
+Operational Facts,现场事实,Injection APS
+Schedule Result,排程结果,Injection APS
+Requested Delivery,要求交期,Injection APS
+Segment Start,排程段开始,Injection APS
+Segment End,排程段结束,Injection APS
+Projected Completion,预计完成,Injection APS
+Delay Minutes,延误分钟数,Injection APS
+Segment Qty,排程段数量,Injection APS
+Segment Status,排程段状态,Injection APS
+Confirm Manual Overproduction,确认手工超产,Injection APS
+Confirm Resize,确认调整长度,Injection APS
+Segment: {0},排程段：{0}
+Current Qty: {0},当前数量：{0}
+Overproduction Qty: {0},超产数量：{0}
+"Manual resize to {0} on {1} with mold {2}.",在机台 {1} 使用模具 {2} 手工调整排程段长度，目标数量为 {0}。
+"Compare the requested delivery date with the segment end time and the displayed delay minutes.",对比要求交期、排程段结束时间及显示的延误分钟数。
+"If a feasible earlier window exists, move, resize, or split the segment on the Board and run validation again.",如存在可行的更早时段，请在看板中移动、调整长度或拆分排程段，然后重新校验。
+"If capacity cannot meet the date, adjust machine capacity or downtime first; otherwise confirm the revised customer delivery date in the source demand and recalculate APS.",如现有产能无法满足交期，请先调整机台产能或停机时段；否则应在来源需求中确认新的客户交期，再重新运算 APS。
+Demand baseline,需求基线,Injection APS
+Batch admission,批量准入,Injection APS
+Impact confirmation,影响确认,Injection APS
+APS calculation,APS 计算,Injection APS
+Create admission draft,创建准入草稿,Injection APS
+Continue to demand admission,继续处理需求准入,Injection APS
+Confirm admission draft,确认准入草稿,Injection APS
+This creates the demand baseline without running APS. Optional demand is confirmed in the next step.,这一步只创建需求基线，不执行 APS 计算。可选需求将在下一步确认。,Injection APS
+Preparing demand baseline...,正在准备需求基线……,Injection APS
+Admission draft created.,准入草稿已创建。,Injection APS
+Demand baseline is ready. Opening the next step.,需求基线已就绪，正在打开下一步。,Injection APS
+Only P0 demand was found and confirmed automatically. Run the first APS calculation now.,仅存在 P0 需求，系统已自动确认。现在可执行首次 APS 计算。,Injection APS
+Demand admission is complete. Recalculate this Run before capacity analysis.,需求准入已完成。请在产能分析前重新计算本次运算。,Injection APS
+Open demand admission,打开需求准入,Injection APS
+Demand admission,需求准入,Injection APS
+Admission status pending review,准入状态待检查,Injection APS
+This creates the demand baseline first; APS calculation starts only after demand admission.,系统会先创建需求基线；完成需求准入后才开始 APS 计算。,Injection APS
+Review net requirements,复核净需求,Injection APS
+Continue to net requirement review,继续复核净需求,Injection APS
+Preview another import,预览其他导入,Injection APS
+Schedule import completed,排期导入已完成,Injection APS
+"Review warnings if any, then verify the net demand before creating the APS draft Run.",如有警告请先检查，再复核净需求并创建 APS 草稿运算。,Injection APS
+APS Workflow,APS 流程
+Decide optional demand in one batch,一次完成可选需求准入,Injection APS
+"P0 is included automatically. Choose one policy for P1 and P2, review the impact once, then continue to APS calculation.",P0 由系统自动纳入。为 P1 和 P2 选择一个策略，统一确认影响后即可继续 APS 计算。,Injection APS
+Admission class guide,准入类别说明,Injection APS
+"Confirmed customer demand; included and locked automatically.",客户已确认需求；系统自动全部纳入并锁定。,Injection APS
+"Framework order remainder; PMC decides whether to produce early.",框架订单剩余需求；由 PMC 决定是否提前生产。,Injection APS
+"Safety-stock replenishment; PMC decides whether to include it.",安全库存补充需求；由 PMC 决定是否纳入。,Injection APS
+Choose a batch policy,选择批量策略,Injection APS
+The policy applies to all optional rows. You can still fine-tune individual exceptions below.,策略会应用于全部可选需求；仍可在下方单独调整特殊项。,Injection APS
+Preview and confirm,预览并确认,Injection APS
+Select the draft Planning Run created from Net Requirements.,请选择由净需求创建的草稿运算。
+Preview admission impact,预览准入影响,Injection APS
+Prepare demand baseline,准备需求基线,Injection APS
+The demand baseline is missing. Prepare it before making admission decisions.,缺少需求基线。请先准备基线，再进行准入决策。,Injection APS
+"Choose the recommended standard policy for a quick decision, then preview the total impact before saving.",可选择推荐的标准策略快速完成决策，保存前再统一预览影响。,Injection APS
+This Run has no demand baseline yet.,本次运算尚无需求基线。,Injection APS
+Only mandatory P0 demand was found,仅发现必须执行的 P0 需求,Injection APS
+"The system confirmed it automatically; no optional rows require PMC input.",系统已自动确认；无需 PMC 处理可选需求。,Injection APS
+Continue to calculation,继续计算,Injection APS
+Standard policy,标准方案,Injection APS
+Recommended,推荐,Injection APS
+Use the suggested P1 quantity and exclude P2.,P1 采用系统建议量，P2 全部排除。,Injection APS
+Conservative policy,保守方案,Injection APS
+Exclude all P1 and P2 demand.,全部排除 P1 和 P2 需求。,Injection APS
+All suggestions,全部建议,Injection APS
+Use the suggested quantity for both P1 and P2.,P1 和 P2 均采用系统建议量。,Injection APS
+Filter by admission class,按准入类别筛选,Injection APS
+Search demand admission,搜索需求准入,Injection APS
+"Search customer, internal item, customer item or item name",搜索客户、内部物料号、客户物料号或物料名称,Injection APS
+Select current page,选中当前页,Injection APS
+Select all filtered,选中全部筛选结果,Injection APS
+Clear selection,清除选中,Injection APS
+Use suggestion,采用建议,Injection APS
+Restore saved value,恢复已保存值,Injection APS
+Suggested Qty,建议数量,Injection APS
+Included Qty,纳入数量,Injection APS
+Decision,决策,Injection APS
+Select row,选中本行,Injection APS
+Included,已纳入,Injection APS
+Partially included,部分纳入,Injection APS
+Excluded,已排除,Injection APS
+{0} filtered rows,筛选后 {0} 行,Injection APS
+No admission rows match the current filters.,当前筛选条件下没有需求准入数据。,Injection APS
+Included quantity must be between zero and the candidate quantity.,纳入数量必须在零与候选数量之间。,Injection APS
+Page {0} of {1},第 {0} 页，共 {1} 页,Injection APS
+Previous Page,上一页
+Next Page,下一页
+Modified rows,已修改行数,Injection APS
+P1 included,P1 纳入量,Injection APS
+P2 included,P2 纳入量,Injection APS
+Total change,总量变化,Injection APS
+Calculating admission impact...,正在计算准入影响……,Injection APS
+Custom adjustment,自定义调整,Injection APS
+"Review the complete batch impact. Saving will return this Run to pending calculation.",请检查完整的批量影响。保存后本次运算将返回待计算状态。,Injection APS
+Total plan quantity,总计划量,Injection APS
+Excluded / partial rows,排除或部分纳入行数,Injection APS
+The existing calculation and capacity analysis will become invalid. Recalculate this Run after saving.,现有计算结果和产能分析将失效。保存后请重新计算本次运算。,Injection APS
+Batch decision reason,批量决策原因,Injection APS
+Record why this batch policy is appropriate.,请记录选择本批次策略的原因。,Injection APS
+Back to adjust,返回调整,Injection APS
+Confirm admission and continue,确认准入并继续,Injection APS
+Admission impact,准入影响,Injection APS
+Enter one reason for this batch decision.,请填写本次批量决策的原因。,Injection APS
+Select a Run,选择一次运算,Injection APS
+Automatically confirmed because the baseline contains only mandatory P0 demand.,因基线仅包含必须执行的 P0 需求，系统已自动确认。
+Demand admission can only be changed on an unapproved Draft or Planned run.,只有尚未批准的草稿或已计划运算才能修改需求准入。
+Confirm this Run's demand admission before recalculation or capacity analysis.,重新计算或产能分析前，请先确认本次运算的需求准入。
+Demand admission changed after the last calculation. Recalculate this Run before continuing.,需求准入在上次计算后已变更。请重新计算本次运算后再继续。
+Confirmed {0} optional admission quantity.,已确认 {0} 可选需求纳入量。
+APS V2 is disabled; use the existing recalculation flow.,APS V2 未启用；请使用现有重新计算流程。
+"Demand admission can only be changed on an unapproved Draft, Planned, or Risk run.",只有尚未批准的草稿、已计划或风险运算才能修改需求准入。
+The selected demand admission strategy is not valid.,所选需求准入策略无效。
+Selected admission quantity cannot be negative.,需求准入数量不能为负数。
+Demand admission is locked because this Run has been approved or left the editable planning states.,本次运算已批准或已离开可编辑的计划状态，需求准入已锁定。
+You do not have permission to confirm demand admission.,您没有确认需求准入的权限。,Injection APS
+Admission decisions saved. Recalculate this Run before continuing.,需求准入决策已保存。请重新计算本次运算后再继续。,Injection APS

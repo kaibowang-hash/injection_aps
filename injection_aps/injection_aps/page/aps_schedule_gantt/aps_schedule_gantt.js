@@ -1,10 +1,10 @@
 frappe.pages["aps-schedule-gantt"].on_page_load = function (wrapper) {
-	frappe.require("/assets/injection_aps/js/injection_aps_shared.js", () => {
+	frappe.require("/assets/injection_aps/js/injection_aps_ui_loader.js", () => injection_aps.ui_loader.start("20260821.2", () => {
 		if (!wrapper.injection_aps_controller) {
 			wrapper.injection_aps_controller = new InjectionAPSScheduleGantt(wrapper);
 		}
 		wrapper.injection_aps_controller.refresh();
-	});
+	}));
 };
 
 frappe.pages["aps-schedule-gantt"].on_page_show = function (wrapper) {
@@ -30,6 +30,7 @@ class InjectionAPSScheduleGantt {
 		this.segmentSearchTerm = "";
 		this.routeRunName = "";
 		this.routeSegmentName = "";
+		this.refreshGeneration = 0;
 		this.page = frappe.ui.make_app_page({
 			parent: wrapper,
 			title: __("Board"),
@@ -234,7 +235,7 @@ class InjectionAPSScheduleGantt {
 				(row) => `
 					<tr>
 						<td>${injection_aps.ui.escape(row.segment_name || "")}</td>
-						<td>${injection_aps.ui.escape(row.item_code || "")}</td>
+						<td>${injection_aps.ui.item_identity(row)}</td>
 						<td>${injection_aps.ui.escape(row.workstation || "")}</td>
 						<td>${injection_aps.ui.escape(injection_aps.ui.format_datetime(row.old_start_time))}</td>
 						<td>${injection_aps.ui.escape(injection_aps.ui.format_datetime(row.new_start_time))}</td>
@@ -497,7 +498,7 @@ class InjectionAPSScheduleGantt {
 						success_message: __("Segment quantity adjusted."),
 						busy_key: `quantity-adjustment-apply:${segmentName}`,
 						feedback_target: this.feedback,
-						success_feedback: __("Segment quantity adjusted. Refreshing Gantt..."),
+						success_feedback: __("Segment quantity adjusted."),
 					},
 					"injection_aps.api.app.apply_manual_schedule_adjustment",
 					{
@@ -511,7 +512,7 @@ class InjectionAPSScheduleGantt {
 					return;
 				}
 				dialog.hide();
-				await this.refresh();
+				await this.applyManualAdjustmentResponse(response, latestPreview, segmentName);
 			});
 		};
 
@@ -891,9 +892,13 @@ class InjectionAPSScheduleGantt {
 	async refresh() {
 		injection_aps.ui.ensure_styles();
 		this.syncRouteContext();
+		const refreshGeneration = ++this.refreshGeneration;
 		const runName = this.runField.get_value();
 		if (!runName) {
 			const emptyData = await frappe.xcall("injection_aps.api.app.get_release_center_data", {});
+			if (refreshGeneration !== this.refreshGeneration || this.runField.get_value()) {
+				return;
+			}
 			this.runBody.style.display = "none";
 			injection_aps.ui.render_run_empty_state(this.emptyStateHost, {
 				title: __("No APS Run Selected"),
@@ -908,9 +913,13 @@ class InjectionAPSScheduleGantt {
 
 		injection_aps.ui.set_feedback(this.feedback, __("Loading board..."));
 		try {
-			this.data = await frappe.xcall("injection_aps.api.app.get_schedule_gantt_data", {
+			const data = await frappe.xcall("injection_aps.api.app.get_schedule_gantt_data", {
 				run_name: runName,
 			});
+			if (refreshGeneration !== this.refreshGeneration || this.runField.get_value() !== runName) {
+				return;
+			}
+			this.data = data;
 			injection_aps.ui.render_run_context(this.runContextHost, this.data.run_context || this.data.run || null);
 			injection_aps.ui.render_status_line(this.statusHost, this.data.run_context || this.data.run || null);
 			this.renderBlockedResults(this.data.blocked_results || []);
@@ -928,9 +937,117 @@ class InjectionAPSScheduleGantt {
 				injection_aps.ui.set_feedback(this.feedback, __("Board refreshed."));
 			}
 		} catch (error) {
+			if (refreshGeneration !== this.refreshGeneration) {
+				return;
+			}
 			console.error(error);
 			injection_aps.ui.set_feedback(this.feedback, __("Failed to load board."), "error");
 		}
+	}
+
+	applyManualAdjustmentLocally(response) {
+		const segment = response && response.updated_segment;
+		if (!segment || !segment.name || !this.data || !Array.isArray(this.data.tasks)) {
+			return false;
+		}
+		const task = this.data.tasks.find((row) => row.id === segment.name);
+		if (!task) {
+			return false;
+		}
+		const details = task.details || (task.details = {});
+		const result = response.updated_result || {};
+		if (segment.start_time) {
+			task.start = segment.start_time;
+			details.current_start_time = segment.start_time;
+		}
+		if (segment.end_time) {
+			task.end = segment.end_time;
+			details.current_end_time = segment.end_time;
+		}
+		if (segment.planned_qty != null) {
+			details.segment_planned_qty = Number(segment.planned_qty || 0);
+		}
+		[
+			"workstation",
+			"plant_floor",
+			"mould_reference",
+			"lane_key",
+			"segment_kind",
+			"segment_status",
+			"risk_flags",
+			"is_locked",
+			"is_manual",
+		].forEach((fieldname) => {
+			if (segment[fieldname] != null) {
+				details[fieldname] = segment[fieldname];
+			}
+		});
+		[
+			"planned_qty",
+			"machine_scheduled_qty",
+			"demand_covered_qty",
+			"overproduction_qty",
+			"unscheduled_qty",
+			"risk_status",
+			"schedule_delay_minutes",
+		].forEach((fieldname) => {
+			if (result[fieldname] != null) {
+				details[fieldname === "risk_status" ? "result_risk_status" : fieldname] = result[fieldname];
+			}
+		});
+		const startDate = frappe.datetime.str_to_obj(task.start);
+		const endDate = frappe.datetime.str_to_obj(task.end);
+		if (
+			this.focusWindow &&
+			startDate instanceof Date &&
+			endDate instanceof Date &&
+			(startDate.getTime() < this.focusWindow.start || endDate.getTime() > this.focusWindow.end)
+		) {
+			this.focusWindow = null;
+		}
+		const previousScrollLeft = this.ganttShell ? this.ganttShell.scrollLeft : 0;
+		this.renderGantt(this.data.tasks);
+		window.requestAnimationFrame(() => {
+			if (this.ganttShell) {
+				this.ganttShell.scrollLeft = previousScrollLeft;
+			}
+		});
+		injection_aps.ui.set_feedback(this.feedback, __("Segment updated on the Board.", null, "Injection APS"));
+		return true;
+	}
+
+	async applyManualAdjustmentResponse(response, preview, segmentName) {
+		if (!response) {
+			await this.refresh();
+			return false;
+		}
+		let payload = response;
+		if (!response.updated_segment && preview && segmentName) {
+			payload = Object.assign({}, response, {
+				updated_segment: {
+					name: segmentName,
+					start_time: preview.start_time,
+					end_time: preview.end_time,
+					planned_qty: preview.planned_qty != null ? preview.planned_qty : preview.target_qty,
+					workstation: preview.target_workstation,
+					plant_floor: preview.target_plant_floor,
+					mould_reference: preview.target_mould_reference,
+					lane_key: preview.lane_key,
+					is_manual: 1,
+				},
+				updated_result: response.updated_result || {
+					name: preview.result_name,
+					machine_scheduled_qty: preview.projected_result_qty,
+					overproduction_qty: preview.overproduction_qty,
+					unscheduled_qty: preview.unscheduled_qty,
+				},
+			});
+		}
+		if (this.applyManualAdjustmentLocally(payload)) {
+			return true;
+		}
+		await this.refresh();
+		return false;
 	}
 
 	syncRouteContext() {
@@ -980,8 +1097,7 @@ class InjectionAPSScheduleGantt {
 									data-risk-result="${injection_aps.ui.escape(row.name)}"
 								>
 									<span class="ia-risk-main">
-										<span class="ia-risk-item">${injection_aps.ui.escape(row.item_code || "")}</span>
-										<span class="ia-risk-name">${injection_aps.ui.escape(injection_aps.ui.shorten(row.item_name || "", 28))}</span>
+										${injection_aps.ui.item_identity(row, { link: false, class_name: "ia-risk-identity" })}
 										${row.diagnostic_summary ? `<span class="ia-muted">${injection_aps.ui.escape(injection_aps.ui.shorten(this.translateRiskMessage(row.diagnostic_summary), 72))}</span>` : ""}
 									</span>
 									<span class="ia-risk-side">
@@ -1186,6 +1302,7 @@ class InjectionAPSScheduleGantt {
 						const metaParts = [
 							injection_aps.ui.format_number(details.segment_planned_qty || 0),
 							details.mould_reference || "-",
+							details.customer_code || "",
 							details.customer_reference || "",
 						].filter(Boolean);
 						const visibleRiskFlags = riskFlags.slice(0, compactBar ? 1 : 2);
@@ -1287,7 +1404,7 @@ class InjectionAPSScheduleGantt {
 		}
 		const rows = outputs.map((output) => `
 			<tr>
-				<td>${injection_aps.ui.escape(output.item_code || "")}</td>
+				<td>${injection_aps.ui.item_identity(output)}</td>
 				<td>${injection_aps.ui.escape(injection_aps.ui.translate(output.output_role || ""))}</td>
 				<td>${injection_aps.ui.escape(injection_aps.ui.format_number(output.output_per_cycle || 0))}</td>
 				<td>${injection_aps.ui.escape(injection_aps.ui.format_number(output.planned_qty || 0))}</td>
@@ -2188,7 +2305,7 @@ class InjectionAPSScheduleGantt {
 					segment_name: resizeSegmentName,
 					target_workstation: targetWorkstation,
 					target_end_time: targetEndTime,
-				}
+					}
 			);
 			if (!preview || !preview.allowed) {
 				if (preview) {
@@ -2197,26 +2314,46 @@ class InjectionAPSScheduleGantt {
 				await this.refresh();
 				return;
 			}
+			let manualNote = "";
+			let allowOverproduction = 0;
+			if (Number(preview.requires_overproduction_confirmation || 0) === 1) {
+				manualNote = await injection_aps.ui.prompt_reason({
+					title: __("Confirm Manual Overproduction", null, "Injection APS"),
+					primary_action_label: __("Confirm Resize", null, "Injection APS"),
+					summary_lines: [
+						__("Segment: {0}").replace("{0}", resizeSegmentName),
+						__("Current Qty: {0}").replace("{0}", injection_aps.ui.format_number(preview.current_qty || 0)),
+						__("Target Qty: {0}").replace("{0}", injection_aps.ui.format_number(preview.target_qty || 0)),
+						__("Overproduction Qty: {0}").replace("{0}", injection_aps.ui.format_number(preview.overproduction_qty || 0)),
+					],
+				});
+				if (!manualNote) {
+					return;
+				}
+				allowOverproduction = 1;
+			}
 			const response = await injection_aps.ui.xcall(
 				{
 					message: __("Applying segment resize..."),
 					success_message: __("Segment resized."),
 					busy_key: `gantt-resize-apply:${resizeSegmentName}`,
 					feedback_target: this.feedback,
-					success_feedback: __("Segment resized. Refreshing Gantt..."),
+					success_feedback: __("Segment resized."),
 				},
 				"injection_aps.api.app.apply_manual_schedule_adjustment",
 				{
 					segment_name: resizeSegmentName,
 					target_workstation: targetWorkstation,
 					target_end_time: targetEndTime,
+					manual_note: manualNote || undefined,
+					allow_overproduction: allowOverproduction,
 				}
 			);
 			if (!response) {
 				await this.refresh();
 				return;
 			}
-			await this.refresh();
+			await this.applyManualAdjustmentResponse(response, preview, resizeSegmentName);
 		};
 		const onKeyDown = (keyEvent) => {
 			if (keyEvent.key === "Escape") {
@@ -2480,7 +2617,7 @@ class InjectionAPSScheduleGantt {
 								success_message: __("Manual override applied."),
 								busy_key: `gantt-override:${segmentName}`,
 								feedback_target: this.feedback,
-								success_feedback: __("Manual override applied. Refreshing Gantt..."),
+								success_feedback: __("Manual override applied."),
 							},
 							"injection_aps.api.app.apply_manual_schedule_adjustment",
 							{
@@ -2494,7 +2631,7 @@ class InjectionAPSScheduleGantt {
 						if (!response) {
 							return;
 						}
-						await this.refresh();
+						await this.applyManualAdjustmentResponse(response, preview, segmentName);
 					}
 				);
 				return;
@@ -2511,7 +2648,7 @@ class InjectionAPSScheduleGantt {
 						success_message: __("Manual adjustment applied."),
 						busy_key: `gantt-apply:${segmentName}`,
 						feedback_target: this.feedback,
-						success_feedback: __("Manual adjustment applied. Refreshing Gantt..."),
+						success_feedback: __("Manual adjustment applied."),
 					},
 					"injection_aps.api.app.apply_manual_schedule_adjustment",
 					{
@@ -2524,7 +2661,7 @@ class InjectionAPSScheduleGantt {
 				if (!response) {
 					return;
 				}
-				await this.refresh();
+				await this.applyManualAdjustmentResponse(response, preview, segmentName);
 			}
 		);
 	}
@@ -2548,6 +2685,9 @@ class InjectionAPSScheduleGantt {
 		const result = detail.result || {};
 		const segments = detail.segments || [];
 		const itemDetail = detail.item_detail || {};
+		const itemIdentity = Object.assign({}, result, itemDetail, {
+			item_code: itemDetail.item_code || result.item_code || "",
+		});
 		const sourceRows = detail.source_rows || [];
 		const exceptionRows = detail.exception_rows || [];
 		const moldRows = detail.mold_rows || [];
@@ -2692,8 +2832,7 @@ class InjectionAPSScheduleGantt {
 					<div class="ia-panel">
 						<h4>${__("Item", null, "Injection APS")}</h4>
 						<div class="ia-kv">
-							<div class="ia-kv-row"><div class="ia-kv-key">${__("Code", null, "Injection APS")}</div><div class="ia-kv-value">${link(itemDetail.item_route, itemDetail.item_code || result.item_code || "-")}</div></div>
-							<div class="ia-kv-row"><div class="ia-kv-key">${__("Name", null, "Injection APS")}</div><div class="ia-kv-value">${injection_aps.ui.escape(itemDetail.item_name || "")}</div></div>
+							<div class="ia-kv-row"><div class="ia-kv-key">${__("Item", null, "Injection APS")}</div><div class="ia-kv-value">${injection_aps.ui.item_identity(itemIdentity)}</div></div>
 							<div class="ia-kv-row"><div class="ia-kv-key">${__("Customer Ref")}</div><div class="ia-kv-value">${injection_aps.ui.escape(itemDetail.customer_reference || ((sourceRows[0] && sourceRows[0].customer_part_no) || ""))}</div></div>
 							<div class="ia-kv-row"><div class="ia-kv-key">${__("Drawing")}</div><div class="ia-kv-value">${injection_aps.ui.escape(itemDetail.drawing_file || "")}</div></div>
 						</div>

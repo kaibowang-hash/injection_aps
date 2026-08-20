@@ -1,5 +1,5 @@
 frappe.pages["aps-constraint-resolution-center"].on_page_load = function (wrapper) {
-	frappe.require("/assets/injection_aps/js/injection_aps_ui_loader.js", () => injection_aps.ui_loader.start("20260815.2", () => initializeConstraintResolutionCenter(wrapper)));
+	frappe.require("/assets/injection_aps/js/injection_aps_ui_loader.js", () => injection_aps.ui_loader.start("20260821.2", () => initializeConstraintResolutionCenter(wrapper)));
 };
 
 function initializeConstraintResolutionCenter(wrapper) {

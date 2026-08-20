@@ -1,5 +1,5 @@
 const RELEASE_BATCH_SHARED_READY = frappe.require("/assets/injection_aps/js/injection_aps_ui_loader.js")
-	.then(() => injection_aps.ui_loader.load("20260815.2"));
+	.then(() => injection_aps.ui_loader.load("20260821.2"));
 
 frappe.ui.form.on("APS Release Batch", {
 	async refresh(frm) {

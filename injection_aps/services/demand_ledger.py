@@ -295,6 +295,12 @@ def sync_optional_admission_commitments(
 	decision_fingerprint: str,
 ) -> None:
 	run = frappe.get_doc("APS Planning Run", planning_run)
+	optional_due_date = getdate(
+		run.get("demand_horizon_end_date")
+		or run.get("horizon_end")
+		or run.get("planning_date")
+		or now_datetime()
+	)
 	active_keys = set()
 	for row in admissions:
 		if row.get("admission_class") not in {"P1", "P2"}:
@@ -317,6 +323,8 @@ def sync_optional_admission_commitments(
 			"execution_state": "Reschedulable", "status": "Proposed", "formal_owner": 0,
 			"requested_qty": selected, "stock_covered_qty": 0, "carried_qty": 0,
 			"newly_planned_qty": selected, "remaining_qty": selected,
+			"original_due_date": optional_due_date,
+			"effective_due_time": f"{optional_due_date} 23:59:59",
 			"input_fingerprint": decision_fingerprint,
 			"ownership_fingerprint": _fingerprint({"run": run.name, "admission": row.get("name"), "qty": selected}),
 			"idempotency_key": key, "transition_reason": "Selected optional admission",
@@ -331,6 +339,96 @@ def sync_optional_admission_commitments(
 	):
 		if stale.get("idempotency_key") not in active_keys:
 			_set_commitment_values(stale.name, {"status": "Cancelled", "owner_state": "Released", "formal_owner": 0})
+
+
+def get_selected_optional_planning_rows(
+	planning_run: str,
+	*,
+	customer: str | None = None,
+	item_code: str | None = None,
+) -> list[Any]:
+	"""Project confirmed P1/P2 commitments into the planning input.
+
+	Optional admission is Run-owned and must not be inserted into the shared Net
+	Requirement ledger.  These synthetic rows give the scheduler an auditable,
+	quantity-exact input while keeping their APS Demand Commitment lineage.
+	"""
+	run = frappe.get_doc("APS Planning Run", planning_run)
+	filters: dict[str, Any] = {
+		"planning_run": run.name,
+		"admission_class": ("in", ["P1", "P2"]),
+		"status": ("in", ACTIVE_COMMITMENT_STATUSES),
+		"newly_planned_qty": (">", QTY_TOLERANCE),
+	}
+	if customer:
+		filters["customer"] = customer
+	if item_code:
+		filters["item_code"] = item_code
+	commitments = frappe.get_all(
+		"APS Demand Commitment",
+		filters=filters,
+		fields=[
+			"name", "customer", "item_code", "admission", "admission_class",
+			"original_due_date", "effective_due_time", "newly_planned_qty",
+		],
+		order_by="admission_class asc, customer asc, item_code asc, name asc",
+		limit_page_length=0,
+	)
+	rows = []
+	for commitment in commitments:
+		qty = max(flt(commitment.get("newly_planned_qty")), 0)
+		if qty <= QTY_TOLERANCE:
+			continue
+		due_date = getdate(
+			commitment.get("original_due_date")
+			or run.get("demand_horizon_end_date")
+			or run.get("horizon_end")
+			or run.get("planning_date")
+		)
+		admission_class = commitment.get("admission_class") or "P2"
+		snapshot = {
+			"source": "APS Demand Admission",
+			"admission": commitment.get("admission"),
+			"commitment": commitment.get("name"),
+			"admission_class": admission_class,
+			"confirmed_qty": qty,
+		}
+		rows.append(
+			frappe._dict(
+				{
+					"name": None,
+					"source_doctype": "APS Demand Commitment",
+					"source_name": commitment.get("name"),
+					"demand_commitment": commitment.get("name"),
+					"customer": commitment.get("customer"),
+					"sales_order": None,
+					"sales_order_item": None,
+					"item_code": commitment.get("item_code"),
+					"demand_date": due_date,
+					"demand_qty": qty,
+					"available_stock_qty": 0,
+					"open_work_order_qty": 0,
+					"planning_qty": qty,
+					"minimum_batch_qty": 0,
+					"production_strategy": "Auto Balance",
+					"demand_confidence": "Forecast",
+					"cancellation_risk_percent": 0,
+					"prebuild_allowed": 1,
+					"max_prebuild_days": 0,
+					"net_requirement_qty": qty,
+					"reason_text": _(
+						"Confirmed {0} optional admission quantity.",
+						context="Injection APS",
+					).format(admission_class),
+					"demand_source": "Sales Order Backlog" if admission_class == "P1" else "Safety Stock",
+					"demand_source_snapshot_json": json.dumps(snapshot, ensure_ascii=True, sort_keys=True),
+					"fulfillment_baseline_json": json.dumps(
+						{"optional_admission": snapshot}, ensure_ascii=True, sort_keys=True
+					),
+				}
+			)
+		)
+	return rows
 
 
 def transfer_commitment_owner(
@@ -470,6 +568,17 @@ def backfill_active_run_commitments() -> dict[str, int]:
 
 
 def _get_active_p0_demands(run) -> list[dict[str, Any]]:
+	conditions = []
+	params = {
+		"company": run.company,
+		"horizon_end": getdate(run.get("demand_horizon_end_date") or run.horizon_end),
+	}
+	if run.get("planning_customer_filter"):
+		conditions.append("and s.customer = %(customer)s")
+		params["customer"] = run.get("planning_customer_filter")
+	if run.get("planning_item_filter"):
+		conditions.append("and i.item_code = %(item_code)s")
+		params["item_code"] = run.get("planning_item_filter")
 	rows = frappe.db.sql(
 		"""
 		select i.name as schedule_item, i.demand_identity, i.item_code,
@@ -489,12 +598,10 @@ def _get_active_p0_demands(run) -> list[dict[str, Any]]:
 				or ifnull(i.produced_qty, 0) > 0
 			)
 			and coalesce(i.effective_schedule_date, i.schedule_date) <= %(horizon_end)s
+			{scope_conditions}
 		order by coalesce(i.original_schedule_date, i.schedule_date), i.demand_identity, i.name
-		""",
-		{
-			"company": run.company,
-			"horizon_end": getdate(run.get("demand_horizon_end_date") or run.horizon_end),
-		},
+		""".format(scope_conditions="\n\t\t\t".join(conditions)),
+		params,
 		as_dict=True,
 	)
 	return [dict(row) for row in rows]

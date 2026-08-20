@@ -1,5 +1,5 @@
 frappe.pages["aps-customer-schedule-progress"].on_page_load = function (wrapper) {
-	frappe.require("/assets/injection_aps/js/injection_aps_ui_loader.js", () => injection_aps.ui_loader.start("20260815.2", () => {
+	frappe.require("/assets/injection_aps/js/injection_aps_ui_loader.js", () => injection_aps.ui_loader.start("20260821.2", () => {
 		if (!wrapper.injection_aps_controller) {
 			wrapper.injection_aps_controller = new InjectionAPSCustomerScheduleProgress(wrapper);
 		}
@@ -364,7 +364,7 @@ class InjectionAPSCustomerScheduleProgress {
 	formatV2Cell(column, value, row) {
 		const number = (candidate) => injection_aps.ui.escape(injection_aps.ui.format_number(candidate || 0));
 		if (column.fieldname === "identity_summary") {
-			return `<div><div>${this.safeDocLink("Customer", row.customer)}</div><div>${this.safeDocLink("Item", row.item_code)}${row.customer_part_no ? ` <span class="ia-muted">${injection_aps.ui.escape(row.customer_part_no)}</span>` : ""}</div><div class="ia-muted">${row.demand_identity ? this.safeDocLink("APS Demand Identity", row.demand_identity) : __("No Demand Identity", null, "Injection APS")}</div></div>`;
+			return `<div><div>${this.safeDocLink("Customer", row.customer)}</div>${injection_aps.ui.item_identity(row)}<div class="ia-muted">${row.demand_identity ? this.safeDocLink("APS Demand Identity", row.demand_identity) : __("No Demand Identity", null, "Injection APS")}</div></div>`;
 		}
 		if (column.fieldname === "schedule_date") return injection_aps.ui.escape(injection_aps.ui.format_date(value));
 		if (column.fieldname === "schedule_qty") return number(value);
@@ -413,7 +413,7 @@ class InjectionAPSCustomerScheduleProgress {
 		const headers = dates.map((dateValue) => `<th class="ia-progress-date-header">${injection_aps.ui.escape(injection_aps.ui.format_date(dateValue))}</th>`).join("");
 		const body = rows.map((row) => {
 			const cells = dates.map((dateValue) => this.renderMatrixCell(row, dateValue, (row.cells || {})[dateValue])).join("");
-			return `<tr><th class="ia-progress-row-header"><div>${injection_aps.ui.escape(row.customer || "")}</div><div>${injection_aps.ui.escape(row.item_code || "")}</div><div class="ia-muted">${injection_aps.ui.escape(injection_aps.ui.format_number(row.schedule_qty || 0))} / ${injection_aps.ui.escape(injection_aps.ui.translate(row.status || ""))}</div></th>${cells}</tr>`;
+			return `<tr><th class="ia-progress-row-header"><div>${injection_aps.ui.escape(row.customer || "")}</div>${injection_aps.ui.item_identity(row)}<div class="ia-muted">${injection_aps.ui.escape(injection_aps.ui.format_number(row.schedule_qty || 0))} / ${injection_aps.ui.escape(injection_aps.ui.translate(row.status || ""))}</div></th>${cells}</tr>`;
 		}).join("");
 		this.table.innerHTML = `
 			<div class="ia-table-toolbar ia-progress-matrix-toolbar">
@@ -464,13 +464,13 @@ class InjectionAPSCustomerScheduleProgress {
 	openV2Details(row) {
 		const number = (value) => injection_aps.ui.escape(injection_aps.ui.format_number(value || 0));
 		const html = `<div style="display:grid;gap:10px;">
-			${this.detailSection(__("Demand Identity", null, "Injection APS"), [[__("Demand Identity", null, "Injection APS"), this.safeDocLink("APS Demand Identity", row.demand_identity)], [__("Customer", null, "Injection APS"), this.safeDocLink("Customer", row.customer)], [__("Item", null, "Injection APS"), this.safeDocLink("Item", row.item_code)], [__("Delivery Date", null, "Injection APS"), injection_aps.ui.escape(injection_aps.ui.format_date(row.schedule_date))], [__("Schedule Qty"), number(row.schedule_qty)]])}
+			${this.detailSection(__("Demand Identity", null, "Injection APS"), [[__("Demand Identity", null, "Injection APS"), this.safeDocLink("APS Demand Identity", row.demand_identity)], [__("Customer", null, "Injection APS"), this.safeDocLink("Customer", row.customer)], [__("Item", null, "Injection APS"), injection_aps.ui.item_identity(row)], [__("Delivery Date", null, "Injection APS"), injection_aps.ui.escape(injection_aps.ui.format_date(row.schedule_date))], [__("Schedule Qty"), number(row.schedule_qty)]])}
 			${this.detailSection(__("Original / Current / Forecast / Actual", null, "Injection APS"), [[__("Original Plan", null, "Injection APS"), `${number(row.original_plan_qty)} / ${injection_aps.ui.escape(injection_aps.ui.format_datetime(row.original_completion_time))}`], [__("Current Plan", null, "Injection APS"), `${number(row.current_plan_qty)} / ${injection_aps.ui.escape(injection_aps.ui.format_datetime(row.current_completion_time))}`], [__("Forecast", null, "Injection APS"), `${number(row.forecast_qty)} / ${injection_aps.ui.escape(injection_aps.ui.format_datetime(row.forecast_completion_time))}`], [__("Actual Good / Scrap", null, "Injection APS"), `${number(row.actual_good_qty)} / ${number(row.actual_scrap_qty)}`]])}
 			${this.detailSection(__("Delivery and Recovery", null, "Injection APS"), [[__("Delivery Plan / Delivered", null, "Injection APS"), `${number(row.delivery_plan_qty)} / ${number(row.delivered_qty)}`], [__("Stock Covered"), number(row.stock_covered_qty)], [__("Shortage / Recovery", null, "Injection APS"), `${number(row.shortage_qty)} / ${number(row.recovery_qty)}`], [__("Recovery Completion", null, "Injection APS"), injection_aps.ui.escape(injection_aps.ui.format_datetime(row.recovery_completion_time))]])}
 			${this.detailSection(__("Status and Conservation", null, "Injection APS"), [[__("Status", null, "Injection APS"), injection_aps.ui.pill(injection_aps.ui.translate(row.status || ""), row.status_tone || "gray")], [__("Reason", null, "Injection APS"), injection_aps.ui.escape(injection_aps.ui.translate(row.reason || ""))], [__("Conservation Status", null, "Injection APS"), injection_aps.ui.escape(row.conservation_status || "")], [__("Demand / Solver Delta", null, "Injection APS"), `${number(row.demand_conservation_delta)} / ${number(row.solver_partition_delta)}`]])}
 			${this.detailSection(__("Source Documents", null, "Injection APS"), [[__("Documents", null, "Injection APS"), this.sourceDocumentsHtml(row.source_documents || [])]])}
 		</div>`;
-		injection_aps.ui.open_drawer(__("Customer Schedule Progress V2", null, "Injection APS"), [row.customer, row.item_code, row.schedule_date].filter(Boolean).join(" · "), html);
+		injection_aps.ui.open_drawer(__("Customer Schedule Progress V2", null, "Injection APS"), [row.customer, row.schedule_date].filter(Boolean).join(" · "), html);
 	}
 
 	exportV2CurrentView() {
@@ -572,11 +572,7 @@ class InjectionAPSCustomerScheduleProgress {
 		}
 		if (column.fieldname === "identity_summary") {
 			const customer = this.safeDocLink("Customer", row.customer);
-			const item = this.safeDocLink("Item", row.item_code);
-			const customerPart = row.customer_part_no
-				? `<span class="ia-muted"> · ${injection_aps.ui.escape(row.customer_part_no)}</span>`
-				: "";
-			return `<div><div>${customer}</div><div>${item}${customerPart}</div></div>`;
+			return `<div><div>${customer}</div>${injection_aps.ui.item_identity(row)}</div>`;
 		}
 		if (column.fieldname === "schedule") {
 			return this.safeDocLink("Customer Delivery Schedule", value, row.version_no || value);
@@ -689,7 +685,7 @@ class InjectionAPSCustomerScheduleProgress {
 			<div style="display:grid; gap:10px;">
 				${this.detailSection(__("Demand Identity", null, "Injection APS"), [
 					[__("Customer", null, "Injection APS"), this.safeDocLink("Customer", row.customer)],
-					[__("Item", null, "Injection APS"), this.safeDocLink("Item", row.item_code)],
+					[__("Item", null, "Injection APS"), injection_aps.ui.item_identity(row)],
 					[__("Customer Part No"), text(row.customer_part_no)],
 					[__("Delivery Date", null, "Injection APS"), date(row.schedule_date)],
 					[__("Schedule", null, "Injection APS"), this.safeDocLink("Customer Delivery Schedule", row.schedule)],
@@ -739,7 +735,7 @@ class InjectionAPSCustomerScheduleProgress {
 				])}
 			</div>
 		`;
-		const subtitle = [row.customer, row.item_code, row.schedule_date ? injection_aps.ui.format_date(row.schedule_date) : ""]
+		const subtitle = [row.customer, row.schedule_date ? injection_aps.ui.format_date(row.schedule_date) : ""]
 			.filter(Boolean)
 			.join(" · ");
 		injection_aps.ui.open_drawer(__("Customer Schedule Details", null, "Injection APS"), subtitle, html);

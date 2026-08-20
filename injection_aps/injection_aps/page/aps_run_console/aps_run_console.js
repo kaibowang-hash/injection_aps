@@ -1,7 +1,7 @@
 frappe.pages["aps-run-console"].on_page_load = function (wrapper) {
 	frappe.require("/assets/injection_aps/js/injection_aps_ui_loader.js", () => {
 		ensureInjectionAPSRunConsoleStyles();
-		injection_aps.ui_loader.start("20260815.2", () => {
+		injection_aps.ui_loader.start("20260821.2", () => {
 			if (!wrapper.injection_aps_controller) {
 				wrapper.injection_aps_controller = new InjectionAPSRunConsole(wrapper);
 			}
@@ -12,7 +12,7 @@ frappe.pages["aps-run-console"].on_page_load = function (wrapper) {
 
 function ensureInjectionAPSRunConsoleStyles() {
 	const styleId = "injection-aps-run-console-style";
-	const styleHref = "/assets/injection_aps/css/aps_run_console.css?v=20260815.2";
+	const styleHref = "/assets/injection_aps/css/aps_run_console.css?v=20260821.2";
 	let style = document.getElementById(styleId);
 	if (!style) {
 		style = document.createElement("link");
@@ -35,6 +35,10 @@ class InjectionAPSRunConsole {
 	constructor(wrapper) {
 		this.wrapper = wrapper;
 		this.wrapper.classList.add("ia-app-page");
+		this.targetRun = frappe.utils.get_url_arg("run_name") || "";
+		this.fromAdmission = frappe.utils.get_url_arg("from_admission") || "";
+		this.targetRunOpened = false;
+		this.v2Enabled = false;
 		this.page = frappe.ui.make_app_page({
 			parent: wrapper,
 			title: __("Recalc Console"),
@@ -61,6 +65,7 @@ class InjectionAPSRunConsole {
 
 		this.page.main.html(`
 			<div class="ia-page">
+				<div class="ia-workflow-host"></div>
 				<div class="ia-banner ia-run-guide">
 					<p>${__("Recalculate -> Confirm Run -> Review Work Order Proposals -> Review Day/Night Shift Proposals -> Formal Scheduling -> Execution Feedback. This console centralizes each APS run and its next action.")}</p>
 				</div>
@@ -70,6 +75,7 @@ class InjectionAPSRunConsole {
 				</div>
 			</div>
 		`);
+		this.workflowHost = this.page.main.find(".ia-workflow-host")[0];
 		this.feedback = this.page.main.find(".ia-feedback")[0];
 		this.table = this.page.main.find(".ia-run-table")[0];
 	}
@@ -81,13 +87,54 @@ class InjectionAPSRunConsole {
 			const data = await frappe.xcall("injection_aps.api.app.get_run_console_data", {
 				company: this.companyField.get_value() || undefined,
 				plant_floor: this.plantFloorField.get_value() || undefined,
+				run_name: this.targetRun || undefined,
 			});
-			this.renderRuns(data.runs || []);
-			injection_aps.ui.set_feedback(this.feedback, __("Recalc Console refreshed."));
+			this.v2Enabled = Number(data.v2_enabled || 0) === 1;
+			if (injection_aps.ui.can_run_action("run_trial")) {
+				this.page.set_primary_action(
+					this.v2Enabled ? __("Create admission draft", null, "Injection APS") : __("Recalculate"),
+					() => this.openRunDialog()
+				);
+			}
+			const rows = data.runs || [];
+			this.renderRunWorkflow(rows.find((row) => row.name === this.targetRun));
+			this.renderRuns(rows);
+			this.focusTargetRun(rows);
+			injection_aps.ui.set_feedback(
+				this.feedback,
+				this.fromAdmission
+					? (this.fromAdmission === "auto" ? __("Only P0 demand was found and confirmed automatically. Run the first APS calculation now.", null, "Injection APS") : __("Demand admission is complete. Recalculate this Run before capacity analysis.", null, "Injection APS"))
+					: __("Recalc Console refreshed."),
+				this.fromAdmission ? "warning" : ""
+			);
 		} catch (error) {
 			console.error(error);
 			injection_aps.ui.set_feedback(this.feedback, __("Failed to load APS runs."), "error");
 		}
+	}
+
+	renderRunWorkflow(row) {
+		const state = injection_aps.ui.get_value(row, "next_actions.admission_state", {}) || {};
+		const admissionPending = Number(state.baseline_ready || 0) === 1 && Number(state.confirmed || 0) !== 1;
+		const calculationCurrent = Number(state.recalculation_required || 0) === 1 || (row && row.status === "Draft" && !admissionPending);
+		injection_aps.ui.render_workflow_steps(this.workflowHost, [
+			{ label: __("Demand baseline", null, "Injection APS"), status: row ? "complete" : "upcoming", route: "aps-net-requirement-workbench" },
+			{ label: __("Batch admission", null, "Injection APS"), status: admissionPending ? "current" : row ? "complete" : "upcoming", route: row ? `aps-demand-admission-workbench?run_name=${encodeURIComponent(row.name)}` : "" },
+			{ label: __("Impact confirmation", null, "Injection APS"), status: admissionPending ? "upcoming" : row ? "complete" : "upcoming" },
+			{ label: __("APS calculation", null, "Injection APS"), status: calculationCurrent ? "current" : "upcoming" },
+		]);
+	}
+
+	focusTargetRun(rows) {
+		if (!this.targetRun || this.targetRunOpened) {
+			return;
+		}
+		const row = rows.find((item) => item.name === this.targetRun);
+		if (!row) {
+			return;
+		}
+		this.targetRunOpened = true;
+		this.openRunDetails(row);
 	}
 
 	getRunStatusTone(value) {
@@ -106,6 +153,15 @@ class InjectionAPSRunConsole {
 			<div class="ia-run-metric${tone ? ` ${tone}` : ""}">
 				<span class="ia-run-metric-label">${injection_aps.ui.escape(label)}</span>
 				<strong class="ia-run-metric-value">${injection_aps.ui.escape(this.formatRunQty(value))}</strong>
+			</div>
+		`;
+	}
+
+	renderRunDrawerMetricRow(label, value, tone) {
+		return `
+			<div class="ia-kv-row${tone ? ` ia-run-drawer-row-${tone}` : ""}">
+				<div class="ia-kv-key">${injection_aps.ui.escape(label)}</div>
+				<div class="ia-kv-value ia-run-drawer-number">${injection_aps.ui.escape(this.formatRunQty(value))}</div>
 			</div>
 		`;
 	}
@@ -151,6 +207,9 @@ class InjectionAPSRunConsole {
 
 	getPrimaryRouteAction(row) {
 		const nextStep = injection_aps.ui.get_value(row, "next_actions.next_step", "");
+		if (nextStep === "Demand Admission") {
+			return { action_key: "open_admission", label: __("Open demand admission", null, "Injection APS"), is_route: 1 };
+		}
 		if (nextStep === "Analyze and Apply Capacity") {
 			return { action_key: "open_run", label: __("Open Run"), is_route: 1 };
 		}
@@ -206,13 +265,13 @@ class InjectionAPSRunConsole {
 			.filter((action) => action.action_key !== primaryAction.action_key);
 		return `
 			${secondaryActions.length ? `
-				<div class="ia-run-drawer-action-group">
-					<h5>${__("Other Actions", null, "Injection APS")}</h5>
+				<div class="ia-panel ia-run-drawer-action-group">
+					<div class="ia-panel-head"><h4>${__("Other Actions", null, "Injection APS")}</h4></div>
 					<div class="ia-run-drawer-operation-list">${secondaryActions.map((action) => this.renderRunDrawerOperation(action)).join("")}</div>
 				</div>
 			` : ""}
-			<div class="ia-run-drawer-action-group">
-				<h5>${__("Related Views", null, "Injection APS")}</h5>
+			<div class="ia-panel ia-run-drawer-action-group">
+				<div class="ia-panel-head"><h4>${__("Related Views", null, "Injection APS")}</h4></div>
 				<div class="ia-run-nav-actions" aria-label="${injection_aps.ui.escape(__("Related Views", null, "Injection APS"))}">
 					${this.renderRunNavButton("run", __("Open Run"), "open_run", row.name)}
 					${this.renderRunNavButton("board", __("Board"), "open_gantt", row.name)}
@@ -229,50 +288,52 @@ class InjectionAPSRunConsole {
 		const scope = row.selected_plant_floor_summary || row.plant_floor || "-";
 		const nextStep = injection_aps.ui.translate(injection_aps.ui.get_value(row, "next_actions.next_step", ""));
 		const blockingReason = injection_aps.ui.translate(injection_aps.ui.get_value(row, "next_actions.blocking_reason", ""));
+		const admissionState = injection_aps.ui.get_value(row, "next_actions.admission_state", {}) || {};
 		return `
-			<div class="ia-run-drawer">
-				<section class="ia-run-drawer-section">
-					<h4>${__("Overview", null, "Injection APS")}</h4>
-					<dl class="ia-run-drawer-overview">
-						<div><dt>${__("Company", null, "Injection APS")}</dt><dd>${injection_aps.ui.escape(row.company || "-")}</dd></div>
-						<div><dt>${__("Plant Floors")}</dt><dd>${injection_aps.ui.escape(scope)}</dd></div>
-						<div><dt>${__("Planning Date")}</dt><dd>${injection_aps.ui.escape(injection_aps.ui.format_date(row.planning_date))}</dd></div>
-						<div><dt>${__("Status", null, "Injection APS")}</dt><dd>${injection_aps.ui.pill(injection_aps.ui.translate(row.status), this.getRunStatusTone(row.status))}</dd></div>
-						<div><dt>${__("Approval", null, "Injection APS")}</dt><dd>${injection_aps.ui.pill(injection_aps.ui.translate(row.approval_state), row.approval_state === "Approved" ? "green" : "orange")}</dd></div>
-						<div><dt>${__("Existing WO", null, "Injection APS")}</dt><dd>${injection_aps.ui.escape(injection_aps.ui.get_existing_work_order_policy_label(row.existing_work_order_policy))}</dd></div>
-						${Number(row.v2_admission_available || 0) === 1 ? `<div><dt>${__("Demand Ownership", null, "Injection APS")}</dt><dd>${__("Carry Forward", null, "Injection APS")} ${injection_aps.ui.escape(String(row.carried_commitment_count || 0))} · ${__("Source Runs")} ${injection_aps.ui.escape(String(row.source_run_count || 0))}</dd></div>` : ""}
-					</dl>
+			<div class="ia-page ia-drawer-stack ia-run-drawer">
+				<div class="ia-status-line">
+					<div class="ia-status-cell"><span class="ia-status-label">${__("Status", null, "Injection APS")}</span><div class="ia-status-value">${injection_aps.ui.pill(injection_aps.ui.translate(row.status), this.getRunStatusTone(row.status))}</div></div>
+					<div class="ia-status-cell"><span class="ia-status-label">${__("Approval", null, "Injection APS")}</span><div class="ia-status-value">${injection_aps.ui.pill(injection_aps.ui.translate(row.approval_state), row.approval_state === "Approved" ? "green" : "orange")}</div></div>
+					<div class="ia-status-cell"><span class="ia-status-label">${__("Exceptions", null, "Injection APS")}</span><div class="ia-status-value">${injection_aps.ui.pill(String(row.exception_count || 0), Number(row.exception_count || 0) > 0 ? "red" : "blue")}</div></div>
+				</div>
+				<section class="ia-panel">
+						<div class="ia-panel-head"><h4>${__("Overview", null, "Injection APS")}</h4></div>
+						<div class="ia-kv">
+							<div class="ia-kv-row"><div class="ia-kv-key">${__("Company", null, "Injection APS")}</div><div class="ia-kv-value">${injection_aps.ui.escape(row.company || "-")}</div></div>
+							<div class="ia-kv-row"><div class="ia-kv-key">${__("Plant Floors")}</div><div class="ia-kv-value">${injection_aps.ui.escape(scope)}</div></div>
+							<div class="ia-kv-row"><div class="ia-kv-key">${__("Planning Date")}</div><div class="ia-kv-value">${injection_aps.ui.escape(injection_aps.ui.format_date(row.planning_date))}</div></div>
+							<div class="ia-kv-row"><div class="ia-kv-key">${__("Existing WO", null, "Injection APS")}</div><div class="ia-kv-value">${injection_aps.ui.escape(injection_aps.ui.get_existing_work_order_policy_label(row.existing_work_order_policy))}</div></div>
+							${Number(row.v2_admission_available || 0) === 1 ? `<div class="ia-kv-row"><div class="ia-kv-key">${__("Demand Ownership", null, "Injection APS")}</div><div class="ia-kv-value">${__("Carry Forward", null, "Injection APS")} ${injection_aps.ui.escape(String(row.carried_commitment_count || 0))} · ${__("Source Runs")} ${injection_aps.ui.escape(String(row.source_run_count || 0))}</div></div>` : ""}
+							${this.v2Enabled && Number(admissionState.legacy_unchecked || 0) === 1 ? `<div class="ia-kv-row"><div class="ia-kv-key">${__("Demand admission", null, "Injection APS")}</div><div class="ia-kv-value">${__("Admission status pending review", null, "Injection APS")}</div></div>` : ""}
+						</div>
 				</section>
-				<section class="ia-run-drawer-section">
-					<h4>${__("Planning and Fulfillment", null, "Injection APS")}</h4>
-					<div class="ia-run-drawer-metric-grid">
-						${this.renderRunMetric(__("Plan Qty", null, "Injection APS"), row.total_net_requirement_qty)}
-						${this.renderRunMetric(__("Machine Scheduled", null, "Injection APS"), row.total_machine_scheduled_qty)}
-						${this.renderRunMetric(__("Demand Covered", null, "Injection APS"), row.total_demand_covered_qty)}
-						${this.renderRunMetric(__("Unscheduled", null, "Injection APS"), row.total_unscheduled_qty, Number(row.total_unscheduled_qty || 0) > 0 ? "warning" : "")}
-						${this.renderRunMetric(__("Overproduction", null, "Injection APS"), row.total_overproduction_qty, Number(row.total_overproduction_qty || 0) > 0 ? "warning" : "")}
-						${this.renderRunMetric(__("Produced", null, "Injection APS"), row.total_produced_qty)}
-						${this.renderRunMetric(__("Delivered", null, "Injection APS"), row.total_delivered_qty)}
+				<section class="ia-panel">
+						<div class="ia-panel-head"><h4>${__("Workflow", null, "Injection APS")}</h4></div>
+						<div class="ia-run-next-step">${injection_aps.ui.escape(nextStep || "-")}</div>
+						${blockingReason ? `<div class="ia-alert warning"><strong>${__("Blocking Reason")}</strong><div>${injection_aps.ui.escape(blockingReason)}</div></div>` : `<div class="ia-muted">${__("No blocking reason is currently recorded.", null, "Injection APS")}</div>`}
+				</section>
+				<section class="ia-panel">
+					<div class="ia-panel-head"><h4>${__("Planning and Fulfillment", null, "Injection APS")}</h4></div>
+					<div class="ia-kv ia-run-drawer-metrics">
+						${this.renderRunDrawerMetricRow(__("Plan Qty", null, "Injection APS"), row.total_net_requirement_qty)}
+						${this.renderRunDrawerMetricRow(__("Machine Scheduled", null, "Injection APS"), row.total_machine_scheduled_qty)}
+						${this.renderRunDrawerMetricRow(__("Demand Covered", null, "Injection APS"), row.total_demand_covered_qty)}
+						${this.renderRunDrawerMetricRow(__("Unscheduled", null, "Injection APS"), row.total_unscheduled_qty, Number(row.total_unscheduled_qty || 0) > 0 ? "warning" : "")}
+						${this.renderRunDrawerMetricRow(__("Overproduction", null, "Injection APS"), row.total_overproduction_qty, Number(row.total_overproduction_qty || 0) > 0 ? "warning" : "")}
+						${this.renderRunDrawerMetricRow(__("Produced", null, "Injection APS"), row.total_produced_qty)}
+						${this.renderRunDrawerMetricRow(__("Delivered", null, "Injection APS"), row.total_delivered_qty)}
 					</div>
 				</section>
-				<section class="ia-run-drawer-section">
-					<h4>${__("Risk and Execution", null, "Injection APS")}</h4>
-					<div class="ia-run-drawer-status-row">
-						<div><span>${__("Consistency", null, "Injection APS")}</span>${injection_aps.ui.pill(injection_aps.ui.translate(consistencyValue), consistencyValue === "Valid" ? "green" : consistencyValue === "Invalid" ? "red" : "orange")}</div>
-						<div><span>${__("Exceptions", null, "Injection APS")}</span>${injection_aps.ui.pill(String(row.exception_count || 0), Number(row.exception_count || 0) > 0 ? "red" : "blue")}</div>
-					</div>
-					<div class="ia-run-drawer-metric-grid ia-run-drawer-execution-grid">
-						${this.renderRunMetric(__("Running", null, "Injection APS"), health.running || 0)}
-						${this.renderRunMetric(__("Delayed", null, "Injection APS"), health.delayed || 0, Number(health.delayed || 0) > 0 ? "warning" : "")}
-						${this.renderRunMetric(__("No Update"), health.no_recent_update || 0, Number(health.no_recent_update || 0) > 0 ? "warning" : "")}
+				<section class="ia-panel">
+					<div class="ia-panel-head"><h4>${__("Risk and Execution", null, "Injection APS")}</h4></div>
+					<div class="ia-kv ia-run-drawer-metrics">
+						<div class="ia-kv-row"><div class="ia-kv-key">${__("Consistency", null, "Injection APS")}</div><div class="ia-kv-value">${injection_aps.ui.pill(injection_aps.ui.translate(consistencyValue), consistencyValue === "Valid" ? "green" : consistencyValue === "Invalid" ? "red" : "orange")}</div></div>
+						${this.renderRunDrawerMetricRow(__("Running", null, "Injection APS"), health.running || 0)}
+						${this.renderRunDrawerMetricRow(__("Delayed", null, "Injection APS"), health.delayed || 0, Number(health.delayed || 0) > 0 ? "warning" : "")}
+						${this.renderRunDrawerMetricRow(__("No Update"), health.no_recent_update || 0, Number(health.no_recent_update || 0) > 0 ? "warning" : "")}
 					</div>
 				</section>
-				<section class="ia-run-drawer-section ia-run-drawer-workflow">
-					<h4>${__("Workflow", null, "Injection APS")}</h4>
-					<div class="ia-run-next-step">${injection_aps.ui.escape(nextStep)}</div>
-					${blockingReason ? `<div class="ia-run-blocking-reason"><strong>${__("Blocking Reason")}</strong><span>${injection_aps.ui.escape(blockingReason)}</span></div>` : ""}
-					${this.renderRunDrawerActions(row)}
-				</section>
+				${this.renderRunDrawerActions(row)}
 			</div>
 		`;
 	}
@@ -466,7 +527,7 @@ class InjectionAPSRunConsole {
 				{ fieldname: "horizon_days", fieldtype: "Int", label: __("Horizon Days", null, "Injection APS"), default: 14, reqd: 1 },
 				injection_aps.ui.get_existing_work_order_policy_field(),
 			],
-			primary_action_label: __("Recalculate"),
+			primary_action_label: this.v2Enabled ? __("Create admission draft", null, "Injection APS") : __("Recalculate"),
 			primary_action: async (values) => {
 				const plantFloors = this.extractPlantFloors(values.plant_floor_rows);
 				if (!plantFloors.length) {
@@ -476,7 +537,7 @@ class InjectionAPSRunConsole {
 				const confirmed = await injection_aps.ui.confirm_action(
 					{ action_key: "run_trial", confirm_required: 1 },
 					{
-						title: __("Confirm Recalculate"),
+						title: this.v2Enabled ? __("Confirm admission draft", null, "Injection APS") : __("Confirm Recalculate"),
 						summary_lines: [
 							__("Company: {0}").replace("{0}", values.company || "-"),
 							__("Plant Floors: {0}").replace("{0}", plantFloors.join(", ") || "-"),
@@ -485,6 +546,7 @@ class InjectionAPSRunConsole {
 								"{0}",
 								injection_aps.ui.get_existing_work_order_policy_label(values.existing_work_order_policy)
 							),
+							...(this.v2Enabled ? [__("This creates the demand baseline first; APS calculation starts only after demand admission.", null, "Injection APS")] : []),
 						],
 					}
 				);
@@ -493,13 +555,13 @@ class InjectionAPSRunConsole {
 				}
 				const result = await injection_aps.ui.xcall(
 					{
-						message: __("Running recalculation..."),
-						success_message: __("Recalculation completed."),
+						message: this.v2Enabled ? __("Preparing demand baseline...", null, "Injection APS") : __("Running recalculation..."),
+						success_message: this.v2Enabled ? __("Admission draft created.", null, "Injection APS") : __("Recalculation completed."),
 						busy_key: `run-console-trial:${values.company || "all"}:${plantFloors.join("|") || "all"}`,
 						feedback_target: this.feedback,
-						success_feedback: __("Recalculation completed. Refreshing console..."),
+						success_feedback: this.v2Enabled ? __("Demand baseline is ready. Opening the next step.", null, "Injection APS") : __("Recalculation completed. Refreshing console..."),
 					},
-					"injection_aps.api.app.run_planning_run",
+					this.v2Enabled ? "injection_aps.api.app.create_trial_run_for_admission" : "injection_aps.api.app.run_planning_run",
 					{
 						company: values.company,
 						plant_floor: plantFloors[0],
@@ -513,6 +575,10 @@ class InjectionAPSRunConsole {
 				}
 				injection_aps.ui.show_warnings(result, __("Planning Precheck Warnings"), "preflight_warning_count");
 				dialog.hide();
+				if (this.v2Enabled && result.next_route) {
+					injection_aps.ui.go_to(result.next_route);
+					return;
+				}
 				await this.refresh();
 			},
 		});

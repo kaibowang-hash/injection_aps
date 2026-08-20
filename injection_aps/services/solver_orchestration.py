@@ -42,6 +42,9 @@ class SolverInputBlocked(frappe.ValidationError):
 
 def analyze_v2_schedule(run_name: str, *, run_in_background: bool = True) -> dict[str, Any]:
 	_require_v2_solver()
+	from injection_aps.services import demand_admission
+
+	demand_admission.require_admission_ready(run_name, require_planned=True)
 	run = frappe.get_doc("APS Planning Run", run_name)
 	try:
 		snapshot = build_solver_input(_build_normalized_source(run))
@@ -187,6 +190,9 @@ def get_solver_scenarios(planning_run: str) -> dict[str, Any]:
 
 def select_solver_scenario(planning_run: str, scenario_key: str, *, reason: str | None, expected_fingerprint: str) -> dict[str, Any]:
 	_require_v2_solver()
+	from injection_aps.services import demand_admission
+
+	demand_admission.require_admission_ready(planning_run, require_planned=True)
 	run = frappe.get_doc("APS Planning Run", planning_run)
 	job = _latest_job(planning_run)
 	if (
@@ -215,6 +221,9 @@ def select_solver_scenario(planning_run: str, scenario_key: str, *, reason: str 
 
 
 def acknowledge_schedule_risks(planning_run: str, *, reason: str, expected_fingerprint: str) -> dict[str, Any]:
+	from injection_aps.services import demand_admission
+
+	demand_admission.require_admission_ready(planning_run, require_planned=True)
 	job = _latest_job(planning_run)
 	_assert_job_fingerprint(job, expected_fingerprint)
 	reason = str(reason or "").strip()
@@ -237,6 +246,9 @@ def cancel_solver_job(solver_job: str) -> dict[str, Any]:
 
 def apply_v2_schedule(planning_run: str, *, expected_fingerprint: str) -> dict[str, Any]:
 	_require_v2_solver()
+	from injection_aps.services import demand_admission
+
+	demand_admission.require_admission_ready(planning_run, require_planned=True)
 	run = frappe.get_doc("APS Planning Run", planning_run)
 	if run.run_type != "Formal":
 		frappe.throw(

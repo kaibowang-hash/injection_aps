@@ -1,5 +1,5 @@
 frappe.pages["aps-schedule-console"].on_page_load = function (wrapper) {
-	frappe.require("/assets/injection_aps/js/injection_aps_ui_loader.js", () => injection_aps.ui_loader.start("20260815.2", () => {
+	frappe.require("/assets/injection_aps/js/injection_aps_ui_loader.js", () => injection_aps.ui_loader.start("20260821.2", () => {
 		if (!wrapper.injection_aps_controller) {
 			wrapper.injection_aps_controller = new InjectionAPSScheduleConsole(wrapper);
 		}
@@ -28,6 +28,7 @@ class InjectionAPSScheduleConsole {
 		});
 		this.page.main.html(`
 			<div class="ia-page">
+				<div class="ia-workflow-host"></div>
 				<div class="ia-banner">
 					<h3>${__("Customer Schedule Versions")}</h3>
 					<p>${__("Preview -> formal import -> rebuild demand pool / net requirement. Keep active schedule versions by customer, company, and scope, then push the planner directly to the next step.")}</p>
@@ -36,6 +37,7 @@ class InjectionAPSScheduleConsole {
 				<div class="ia-feedback"></div>
 				<div class="ia-status-host"></div>
 				<div class="ia-action-host"></div>
+				<div class="ia-import-continuation-host"></div>
 				<div class="ia-import-checks-host"></div>
 				<div class="ia-panel ia-pending-preview-panel">
 					<h4>${__("Pending Preview")}</h4>
@@ -55,10 +57,12 @@ class InjectionAPSScheduleConsole {
 			</div>
 		`);
 
+		this.workflowHost = this.page.main.find(".ia-workflow-host")[0];
 		this.summary = this.page.main.find(".ia-summary")[0];
 		this.feedback = this.page.main.find(".ia-feedback")[0];
 		this.statusHost = this.page.main.find(".ia-status-host")[0];
 		this.actionHost = this.page.main.find(".ia-action-host")[0];
+		this.continuationHost = this.page.main.find(".ia-import-continuation-host")[0];
 		this.importChecksHost = this.page.main.find(".ia-import-checks-host")[0];
 		this.previewSummary = this.page.main.find(".ia-preview-summary")[0];
 		this.previewTable = this.page.main.find(".ia-preview-table")[0];
@@ -102,6 +106,12 @@ class InjectionAPSScheduleConsole {
 	}
 
 	renderFlow() {
+		injection_aps.ui.render_workflow_steps(this.workflowHost, [
+			{ label: __("Demand baseline", null, "Injection APS"), status: "current" },
+			{ label: __("Batch admission", null, "Injection APS"), status: "upcoming" },
+			{ label: __("Impact confirmation", null, "Injection APS"), status: "upcoming" },
+			{ label: __("APS calculation", null, "Injection APS"), status: "upcoming" },
+		]);
 		const previewReady = Boolean(
 			this.pendingImport &&
 				this.pendingImport.preview &&
@@ -131,18 +141,24 @@ class InjectionAPSScheduleConsole {
 			}
 			: {
 				current_step: this.lastImported ? __("Imported") : __("1 Upload", null, "Injection APS"),
-				next_step: this.lastImported ? __("Open Net Requirement Workbench") : __("2 Confirm Recognition", null, "Injection APS"),
+				next_step: this.lastImported ? __("Review net requirements", null, "Injection APS") : __("2 Confirm Recognition", null, "Injection APS"),
 				blocking_reason: "",
-				actions: [
-					{ label: __("Preview Import"), action_key: "preview", enabled: 1 },
-					{ label: __("Net Requirements"), action_key: "open_net_requirement", enabled: 1, route: "aps-net-requirement-workbench" },
-				].concat(
+				actions: (this.lastImported
+					? [
+						{ label: __("Continue to net requirement review", null, "Injection APS"), action_key: "open_net_requirement", enabled: 1, route: "aps-net-requirement-workbench" },
+						{ label: __("Preview another import", null, "Injection APS"), action_key: "preview", enabled: 1 },
+					]
+					: [
+						{ label: __("Preview Import"), action_key: "preview", enabled: 1 },
+						{ label: __("Net Requirements"), action_key: "open_net_requirement", enabled: 1, route: "aps-net-requirement-workbench" },
+					]).concat(
 					this.v2Enabled
 						? [{ label: __("Unallocated Deliveries", null, "Injection APS"), action_key: "open_unallocated_delivery", enabled: 1 }]
 						: []
 				),
 			};
 		injection_aps.ui.render_status_line(this.statusHost, context);
+		this.renderImportContinuation();
 		injection_aps.ui.render_actions(this.actionHost, context.actions, async (action) => {
 			if (action.action_key === "preview") {
 				this.openPreviewDialog();
@@ -175,6 +191,19 @@ class InjectionAPSScheduleConsole {
 			}
 			await injection_aps.ui.run_action(action);
 		});
+	}
+
+	renderImportContinuation() {
+		if (!this.lastImported || this.pendingImport) {
+			this.continuationHost.innerHTML = "";
+			return;
+		}
+		this.continuationHost.innerHTML = `
+			<div class="ia-import-continuation">
+				<div><strong>${__("Schedule import completed", null, "Injection APS")}</strong><span>${__("Review warnings if any, then verify the net demand before creating the APS draft Run.", null, "Injection APS")}</span></div>
+				<button type="button" class="btn btn-primary btn-sm" data-continue-net="1">${__("Continue to net requirement review", null, "Injection APS")}</button>
+			</div>`;
+		this.continuationHost.querySelector("[data-continue-net='1']").addEventListener("click", () => injection_aps.ui.go_to("aps-net-requirement-workbench"));
 	}
 
 	renderScheduleTable(rows) {
@@ -1151,6 +1180,8 @@ class InjectionAPSScheduleConsole {
 		return (rows || []).map((row) => ({
 			sales_order: row.sales_order || "",
 			item_code: row.item_code || "",
+			customer_code: row.customer_code || "",
+			item_name: row.item_name || "",
 			customer_part_no: row.customer_part_no || "",
 			external_line_reference: row.external_line_reference || "",
 			demand_identity: row.demand_identity || "",
@@ -1208,7 +1239,9 @@ class InjectionAPSScheduleConsole {
 		} else {
 			this.pendingImport.payload.import_strategy = preview.import_strategy || this.pendingImport.payload.import_strategy;
 		}
-		this.pendingImport.payload.rows_json = JSON.stringify(this.pendingImport.editableRows);
+		this.pendingImport.payload.rows_json = JSON.stringify(
+			this.pendingImport.editableRows.map(({ customer_code, item_name, ...row }) => row)
+		);
 		this.renderPreview();
 	}
 
@@ -1259,7 +1292,7 @@ class InjectionAPSScheduleConsole {
 						<td class="ia-col-seq">${injection_aps.ui.escape(String(displayLineIndex))}</td>
 						<td class="ia-col-excel-row">${injection_aps.ui.escape(String(displayExcelRows))}</td>
 						<td>${injection_aps.ui.escape(row.sales_order || "")}</td>
-						<td>${injection_aps.ui.escape(row.item_code || "")}</td>
+						<td>${injection_aps.ui.item_identity(row)}</td>
 						<td>${injection_aps.ui.escape(row.customer_part_no || "")}</td>
 						<td>${injection_aps.ui.escape(injection_aps.ui.translate(row.production_strategy || "Auto Balance"))}</td>
 						<td>${injection_aps.ui.escape(injection_aps.ui.translate(row.demand_confidence || "Confirmed"))}</td>

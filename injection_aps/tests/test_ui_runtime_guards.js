@@ -188,7 +188,10 @@ async function testRunConsoleRendersFourDecisionColumnsAndKeepsFullExport() {
 	assert.doesNotMatch(rendered.cells[1], /text-align|&lt;div/i);
 
 	const drawerHtml = controller.renderRunDrawer(row);
-	assert.match(drawerHtml, /ia-run-drawer/);
+	assert.match(drawerHtml, /ia-page ia-drawer-stack ia-run-drawer/);
+	assert.match(drawerHtml, /ia-status-line/);
+	assert.match(drawerHtml, /ia-run-drawer-metrics/);
+	assert.doesNotMatch(drawerHtml, /ia-card-grid/);
 	assert.match(drawerHtml, /390,534/);
 	assert.match(drawerHtml, /127,628/);
 	assert.match(drawerHtml, /Apply the analyzed capacity plan/);
@@ -261,7 +264,7 @@ async function testRunConsoleStylesDoNotBlockPageInitialization() {
 	let started = 0;
 	context.injection_aps.ui_loader = {
 		start(version, callback) {
-			assert.equal(version, "20260815.2");
+			assert.equal(version, "20260821.2");
 			started += 1;
 			callback();
 		},
@@ -288,8 +291,95 @@ async function testRunConsoleStylesDoNotBlockPageInitialization() {
 	assert.equal(appended[0].rel, "stylesheet");
 	assert.equal(
 		appended[0].getAttribute("href"),
-		"/assets/injection_aps/css/aps_run_console.css?v=20260815.2"
+		"/assets/injection_aps/css/aps_run_console.css?v=20260821.2"
 	);
+}
+
+async function testAdmissionBatchPolicyHandlesOneHundredRowsWithoutPerRowCalls() {
+	const { Controller, context } = loadPage(
+		"injection_aps/page/aps_demand_admission_workbench/aps_demand_admission_workbench.js",
+		"aps-demand-admission-workbench",
+		"InjectionAPSDemandAdmissionWorkbench"
+	);
+	const controller = Object.create(Controller.prototype);
+	const rows = [
+		{
+			name: "P0-1",
+			admission_class: "P0",
+			candidate_qty: 10,
+			recommended_qty: 10,
+			selected_qty: 10,
+			customer: "CUST-A",
+			item_code: "ITEM-P0",
+			customer_code: "CP-P0",
+			item_name: "Mandatory item",
+		},
+	];
+	for (let index = 1; index <= 60; index += 1) {
+		rows.push({
+			name: `P1-${index}`,
+			admission_class: "P1",
+			candidate_qty: 20,
+			recommended_qty: 12,
+			selected_qty: 0,
+			customer: index <= 30 ? "CUST-A" : "CUST-B",
+			item_code: `ITEM-P1-${index}`,
+			customer_code: `CP-P1-${index}`,
+			item_name: `Framework item ${index}`,
+		});
+	}
+	for (let index = 1; index <= 39; index += 1) {
+		rows.push({
+			name: `P2-${index}`,
+			admission_class: "P2",
+			candidate_qty: 8,
+			recommended_qty: 5,
+			selected_qty: 0,
+			customer: "CUST-C",
+			item_code: `ITEM-P2-${index}`,
+			customer_code: `CP-P2-${index}`,
+			item_name: `Safety item ${index}`,
+		});
+	}
+	controller.data = {
+		rows,
+		admission_state: { confirmed: 0, optional_row_count: 99 },
+	};
+	controller.decisionMap = new Map();
+	controller.savedDecisionMap = new Map();
+	controller.selectedRows = new Set();
+	controller.filters = { admission_class: "ALL", search_text: "" };
+	controller.pageNumber = 1;
+	controller.pageLength = 100;
+	controller.render = () => {};
+	let serverCalls = 0;
+	context.frappe.xcall = async () => {
+		serverCalls += 1;
+	};
+
+	controller.initializeDecisions(rows);
+	assert.equal(controller.decisionMap.get("P0-1"), 10);
+	assert.equal(controller.decisionMap.get("P1-1"), 12);
+	assert.equal(controller.decisionMap.get("P2-1"), 0);
+	assert.equal(controller.collectDecisions().length, 100);
+	assert.equal(controller.getDecisionSummary().p1, 720);
+	assert.equal(controller.getDecisionSummary().p2, 0);
+	assert.equal(serverCalls, 0);
+
+	controller.filters = { admission_class: "P1", search_text: "CUST-A" };
+	const filtered = controller.getFilteredRows();
+	assert.equal(filtered.length, 30);
+	filtered.forEach((row) => controller.selectedRows.add(row.name));
+	controller.applyBulkAction("exclude");
+	assert.equal(controller.decisionMap.get("P1-1"), 0);
+	assert.equal(controller.decisionMap.get("P1-31"), 12);
+	assert.equal(controller.decisionMap.get("P0-1"), 10);
+
+	controller.applyStrategy("all_recommended");
+	assert.equal(controller.decisionMap.get("P0-1"), 10);
+	assert.equal(controller.decisionMap.get("P1-60"), 12);
+	assert.equal(controller.decisionMap.get("P2-39"), 5);
+	assert.equal(serverCalls, 0);
 }
 
 function makeInspectionDialog(values) {
@@ -653,6 +743,71 @@ async function testUiLoaderReloadsSharedAssetsByVersionAndDeduplicatesRequests()
 	assert.equal(stylesEnsured, 2);
 }
 
+async function testSharedItemIdentityUsesThreeUnlabelledLines() {
+	const source = fs.readFileSync(path.join(APP_ROOT, "public/js/injection_aps_shared.js"), "utf8");
+	let detailRequests = 0;
+	const context = {
+		console,
+		document: {},
+		window: {},
+		injection_aps: { ui: {} },
+		__: (value) => String(value),
+		frappe: {
+			boot: {},
+			session: {},
+			provide() {},
+			async xcall(method, args) {
+				detailRequests += 1;
+				assert.equal(method, "frappe.client.get_list");
+				assert.deepEqual(Array.from(args.filters.name[1]), ["ITEM-CACHED"]);
+				return [{ name: "ITEM-CACHED", customer_code: "CACHED-CODE", item_name: "Cached Name" }];
+			},
+			utils: {
+				escape_html(value) {
+					return String(value == null ? "" : value)
+						.replaceAll("&", "&amp;")
+						.replaceAll("<", "&lt;")
+						.replaceAll(">", "&gt;")
+						.replaceAll('"', "&quot;");
+				},
+			},
+		},
+	};
+	vm.createContext(context);
+	vm.runInContext(source, context, { filename: "injection_aps_shared.js" });
+	const ui = context.injection_aps.ui;
+	const html = ui.item_identity({
+		item_code: "31000058",
+		customer_code: "L-1225L",
+		item_name: "Panlite Resin",
+	});
+	assert.ok(html.indexOf("31000058") < html.indexOf("L-1225L"));
+	assert.ok(html.indexOf("L-1225L") < html.indexOf("Panlite Resin"));
+	assert.doesNotMatch(html, /Customer Item|Customer Code|Item Name|客户物料号|物料名称/);
+
+	const withoutCustomerCode = ui.item_identity({ item_code: "ITEM-2", item_name: "Name 2" });
+	assert.doesNotMatch(withoutCustomerCode, /ia-item-customer-code/);
+
+	const target = { innerHTML: "" };
+	ui.render_table(
+		target,
+		[{ label: "Item", fieldname: "item_code" }],
+		[{ item_code: "ITEM-3", customer_code: "C-3", item_name: "Name 3" }],
+		() => "<a>ITEM-3</a>",
+		{ show_count: false }
+	);
+	assert.match(target.innerHTML, /ia-item-identity/);
+	assert.match(target.innerHTML, /C-3/);
+	assert.match(target.innerHTML, /Name 3/);
+
+	await ui.load_item_display_details(["ITEM-CACHED", "ITEM-CACHED"]);
+	await ui.load_item_display_details(["ITEM-CACHED"]);
+	const cachedHtml = ui.item_identity({ item_code: "ITEM-CACHED" });
+	assert.equal(detailRequests, 1);
+	assert.match(cachedHtml, /CACHED-CODE/);
+	assert.match(cachedHtml, /Cached Name/);
+}
+
 async function testGanttMachineViewCollapsesCampaignAndRendersFourPlanLayers() {
 	const { Controller, context } = loadPage(
 		"injection_aps/page/aps_schedule_gantt/aps_schedule_gantt.js",
@@ -694,11 +849,100 @@ async function testGanttMachineViewCollapsesCampaignAndRendersFourPlanLayers() {
 	assert.equal(task.details.current_start_time, "2026-08-20 09:00:00");
 }
 
+async function testGanttManualAdjustmentUpdatesVisibleSegmentImmediately() {
+	const { Controller, context } = loadPage(
+		"injection_aps/page/aps_schedule_gantt/aps_schedule_gantt.js",
+		"aps-schedule-gantt",
+		"InjectionAPSScheduleGantt"
+	);
+	const controller = Object.create(Controller.prototype);
+	controller.data = {
+		tasks: [{
+			id: "SEG-1",
+			start: "2026-08-20 08:00:00",
+			end: "2026-08-20 10:00:00",
+			details: {
+				segment_planned_qty: 100,
+				workstation: "M-1",
+				current_start_time: "2026-08-20 08:00:00",
+				current_end_time: "2026-08-20 10:00:00",
+			},
+		}],
+	};
+	controller.focusWindow = {
+		start: new Date("2026-08-20T00:00:00Z").getTime(),
+		end: new Date("2026-08-20T12:00:00Z").getTime(),
+	};
+	controller.ganttShell = { scrollLeft: 144 };
+	controller.feedback = {};
+	let renderedTasks;
+	controller.renderGantt = (tasks) => {
+		renderedTasks = tasks;
+	};
+	context.window = { requestAnimationFrame: (callback) => callback() };
+	context.frappe.datetime = {
+		str_to_obj: (value) => vm.runInContext(`new Date(${JSON.stringify(value.replace(" ", "T") + "Z")})`, context),
+	};
+	const changed = controller.applyManualAdjustmentLocally({
+		updated_segment: {
+			name: "SEG-1",
+			start_time: "2026-08-20 08:00:00",
+			end_time: "2026-08-20 14:00:00",
+			planned_qty: 300,
+			workstation: "M-2",
+			mould_reference: "MOLD-2",
+			is_manual: 1,
+		},
+		updated_result: {
+			machine_scheduled_qty: 300,
+			demand_covered_qty: 250,
+			overproduction_qty: 50,
+			unscheduled_qty: 0,
+		},
+	});
+
+	assert.equal(changed, true);
+	assert.equal(renderedTasks, controller.data.tasks);
+	assert.equal(controller.data.tasks[0].end, "2026-08-20 14:00:00");
+	assert.equal(controller.data.tasks[0].details.segment_planned_qty, 300);
+	assert.equal(controller.data.tasks[0].details.workstation, "M-2");
+	assert.equal(controller.data.tasks[0].details.machine_scheduled_qty, 300);
+	assert.equal(controller.data.tasks[0].details.overproduction_qty, 50);
+	assert.equal(controller.focusWindow, null);
+	assert.equal(controller.ganttShell.scrollLeft, 144);
+
+	let refreshCount = 0;
+	controller.refresh = async () => {
+		refreshCount += 1;
+	};
+	const fallbackChanged = await controller.applyManualAdjustmentResponse(
+		{ status: "Applied" },
+		{
+			start_time: "2026-08-20 08:00:00",
+			end_time: "2026-08-20 16:00:00",
+			target_qty: 400,
+			target_workstation: "M-2",
+			target_mould_reference: "MOLD-2",
+			projected_result_qty: 400,
+			overproduction_qty: 150,
+			unscheduled_qty: 0,
+		},
+		"SEG-1"
+	);
+
+	assert.equal(fallbackChanged, true);
+	assert.equal(refreshCount, 0);
+	assert.equal(controller.data.tasks[0].end, "2026-08-20 16:00:00");
+	assert.equal(controller.data.tasks[0].details.segment_planned_qty, 400);
+	assert.equal(controller.data.tasks[0].details.overproduction_qty, 150);
+}
+
 async function main() {
 	const tests = [
 		testGanttRiskValuesTranslateEachEnum,
 		testRunConsoleRendersFourDecisionColumnsAndKeepsFullExport,
 		testRunConsoleStylesDoNotBlockPageInitialization,
+		testAdmissionBatchPolicyHandlesOneHundredRowsWithoutPerRowCalls,
 		testSheetChangeReplacesOldMapping,
 		testHeaderChangePreservesHeaderAndReplacesOldMapping,
 		testSourceChangeDuringMappingApplyRejectsResponse,
@@ -707,7 +951,9 @@ async function main() {
 		testProgressToolbarUsesSharedIconControls,
 		testProgressMatrixCellShowsOperationalSummaryAndExactDrilldownKey,
 		testUiLoaderReloadsSharedAssetsByVersionAndDeduplicatesRequests,
+		testSharedItemIdentityUsesThreeUnlabelledLines,
 		testGanttMachineViewCollapsesCampaignAndRendersFourPlanLayers,
+		testGanttManualAdjustmentUpdatesVisibleSegmentImmediately,
 	];
 	for (const test of tests) {
 		await test();

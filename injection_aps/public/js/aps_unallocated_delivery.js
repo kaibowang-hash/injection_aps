@@ -1,9 +1,15 @@
+const UNALLOCATED_DELIVERY_SHARED_READY = frappe.require("/assets/injection_aps/js/injection_aps_ui_loader.js")
+	.then(() => injection_aps.ui_loader.load("20260821.2"));
+
 frappe.ui.form.on("APS Unallocated Delivery", {
-	refresh(frm) {
+	async refresh(frm) {
+		await UNALLOCATED_DELIVERY_SHARED_READY;
+		injection_aps.ui.ensure_styles();
 		const executionRoles = ["System Manager", "GMC", "PMC", "Manufacturing Manager", "Manufacturing User"];
 		if (frm.doc.status !== "Open" || !frappe.user_roles.some((role) => executionRoles.includes(role))) {
 			return;
 		}
+		await injection_aps.ui.load_item_display_details([frm.doc.item_code]);
 		frm.add_custom_button(__("Resolve Delivery Lineage", null, "Injection APS"), () => {
 			const dialog = new frappe.ui.Dialog({
 				title: __("Resolve Unallocated Delivery", null, "Injection APS"),
@@ -13,7 +19,7 @@ frappe.ui.form.on("APS Unallocated Delivery", {
 						fieldtype: "HTML",
 						options: `<div class="text-muted">
 							${__("Delivery Note", null, "Injection APS")}: ${frappe.utils.escape_html(frm.doc.source_delivery_note || "-")}<br>
-							${__("Item", null, "Injection APS")}: ${frappe.utils.escape_html(frm.doc.item_code || "-")}<br>
+							${injection_aps.ui.item_identity({ item_code: frm.doc.item_code })}<br>
 							${__("Unallocated Qty", null, "Injection APS")}: ${frappe.format(frm.doc.unallocated_qty || 0, { fieldtype: "Float" })}
 						</div>`,
 					},

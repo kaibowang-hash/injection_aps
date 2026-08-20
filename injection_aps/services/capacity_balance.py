@@ -1873,6 +1873,10 @@ def analyze_capacity_balance(run_name: str, persist: bool = True) -> dict[str, A
 	from injection_aps.services.v2_flags import is_v2_enabled
 
 	v2_enabled = is_v2_enabled()
+	if v2_enabled:
+		from injection_aps.services import demand_admission
+
+		demand_admission.require_admission_ready(run_name, require_planned=True)
 	result_rows, segment_rows = _get_run_balance_rows(run_name)
 	if not result_rows:
 		frappe.throw(_("APS run {0} has no schedule results to balance.").format(run_name))
@@ -2551,6 +2555,10 @@ def confirm_capacity_balance(run_name: str) -> dict[str, Any]:
 	from injection_aps.services.v2_flags import is_v2_enabled
 
 	v2_enabled = is_v2_enabled()
+	if v2_enabled:
+		from injection_aps.services import demand_admission
+
+		demand_admission.require_admission_ready(run_name, require_planned=True)
 	run_doc = frappe.get_doc("APS Planning Run", run_name)
 	run_doc = _lock_and_refresh_capacity_run(run_doc)
 	if run_doc.capacity_balance_status in ("Applied", "Applied with Exceptions"):
@@ -2617,6 +2625,10 @@ def apply_capacity_balance(run_name: str, pmc_confirmed: bool = False) -> dict[s
 	from injection_aps.services.v2_flags import is_v2_enabled
 
 	v2_enabled = is_v2_enabled()
+	if v2_enabled:
+		from injection_aps.services import demand_admission
+
+		demand_admission.require_admission_ready(run_name, require_planned=True)
 
 	save_point = "aps_capacity_apply_{0}".format(frappe.generate_hash(length=10))
 	frappe.db.savepoint(save_point)

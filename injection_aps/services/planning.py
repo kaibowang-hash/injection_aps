@@ -562,6 +562,13 @@ def _build_planning_run_context(doc) -> dict[str, Any]:
 		)
 	)
 	blocking_reason = ""
+	admission_state: dict[str, Any] = {}
+	from injection_aps.services.v2_flags import is_v2_enabled
+
+	if is_v2_enabled():
+		from injection_aps.services import demand_admission
+
+		admission_state = demand_admission.get_admission_state(doc.name, run=doc)
 	capacity_analysis = _parse_diagnostic_json(doc.get("capacity_balance_analysis_json"))
 	capacity_release_ready = bool(
 		doc.get("capacity_balance_status") in ("Applied", "Applied with Exceptions")
@@ -587,7 +594,15 @@ def _build_planning_run_context(doc) -> dict[str, Any]:
 
 	if cint(doc.exception_count) and doc.status in ("Planned", "Approved", "Work Order Proposed", "Shift Proposed"):
 		blocking_reason = "There are still {0} APS exceptions waiting for review.".format(doc.exception_count)
-	if (
+	if admission_state.get("baseline_ready") and not admission_state.get("confirmed"):
+		current_step = "Demand Baseline Prepared"
+		next_step = "Demand Admission"
+		blocking_reason = "Confirm the P1/P2 admission decision before the first calculation."
+	elif admission_state.get("recalculation_required"):
+		current_step = "Demand Admission Confirmed"
+		next_step = "Recalculate"
+		blocking_reason = "Demand admission is confirmed. Recalculate this run before capacity analysis."
+	elif (
 		not capacity_release_ready
 		and not has_applied_shift_batch
 		and doc.status != "Applied"
@@ -623,6 +638,8 @@ def _build_planning_run_context(doc) -> dict[str, Any]:
 		"consistency_status": doc.get("consistency_status") or "Unchecked",
 		"capacity_balance_status": doc.get("capacity_balance_status") or "Not Analyzed",
 		"capacity_release_ready": cint(capacity_release_ready),
+		"admission_state": admission_state,
+		"v2_admission_available": cint(bool(admission_state.get("baseline_ready"))),
 		"quantity_summary": consistency.get_run_quantity_summary(doc.name),
 		"planning_date": doc.planning_date,
 		"modified": doc.modified,
@@ -3268,23 +3285,36 @@ def run_planning_run(
 			_("Company is required when creating an APS Planning Run.", context="Injection APS"),
 			frappe.ValidationError,
 		)
-	existing_work_order_policy = _normalize_existing_work_order_policy(existing_work_order_policy)
 	settings = get_settings_dict()
-	company = company or settings["default_company"]
-	horizon_days = cint(horizon_days or settings["planning_horizon_days"] or 14)
-	horizon_start = get_datetime(now_datetime())
-	horizon_end = get_datetime(add_days(horizon_start, horizon_days))
 	from injection_aps.services.v2_flags import is_v2_enabled
 
 	v2_enabled = is_v2_enabled()
-	item_code = _resolve_item_name(item_code) if item_code else None
-
 	if run_name:
 		run_doc = frappe.get_doc("APS Planning Run", run_name)
-		run_doc.company = run_doc.company or company
+		company = run_doc.company or company or settings["default_company"]
+		customer = customer if customer is not None else run_doc.get("planning_customer_filter")
+		item_code = item_code if item_code is not None else run_doc.get("planning_item_filter")
+		horizon_days = cint(horizon_days or run_doc.horizon_days or settings["planning_horizon_days"] or 14)
+		existing_work_order_policy = _normalize_existing_work_order_policy(
+			existing_work_order_policy or run_doc.get("existing_work_order_policy")
+		)
 	else:
+		company = company or settings["default_company"]
+		horizon_days = cint(horizon_days or settings["planning_horizon_days"] or 14)
+		existing_work_order_policy = _normalize_existing_work_order_policy(existing_work_order_policy)
 		run_doc = frappe.get_doc({"doctype": "APS Planning Run"})
 		run_doc.company = company
+	# A prepared admission baseline belongs to the draft Run's original planning
+	# window.  Reusing that start keeps the saved scope, optional commitments and
+	# first calculation on the same horizon instead of silently shifting it while
+	# the user completes admission.
+	horizon_start = get_datetime(run_doc.horizon_start or now_datetime())
+	horizon_end = get_datetime(add_days(horizon_start, horizon_days))
+	item_code = _resolve_item_name(item_code) if item_code else None
+	if run_name and v2_enabled:
+		from injection_aps.services import demand_admission
+
+		demand_admission.require_admission_ready(run_doc.name)
 	if run_name and v2_enabled and run_doc.approval_state == "Approved":
 		frappe.throw(
 			_(
@@ -3320,6 +3350,9 @@ def run_planning_run(
 		run_doc.horizon_end = horizon_end
 	run_doc.run_type = run_type or run_doc.run_type or "Trial"
 	run_doc.existing_work_order_policy = existing_work_order_policy
+	if v2_enabled:
+		run_doc.planning_customer_filter = customer or None
+		run_doc.planning_item_filter = item_code or None
 	run_doc.status = "Draft"
 	run_doc.approval_state = "Pending"
 	for fieldname, value in {
@@ -3390,6 +3423,16 @@ def run_planning_run(
 	# Fully stock-covered demand still consumes a finite physical resource. Keep a
 	# zero-production Result so capacity analysis can reserve that stock across Runs.
 	net_rows = [row for row in net_rows if _net_requirement_requires_result(row)]
+	if v2_enabled and run_doc.get("demand_baseline_fingerprint"):
+		from injection_aps.services import demand_ledger
+
+		net_rows.extend(
+			demand_ledger.get_selected_optional_planning_rows(
+				run_doc.name,
+				customer=customer,
+				item_code=item_code,
+			)
+		)
 
 	capability_rows = _get_machine_capability_rows(plant_floors=selected_plant_floors)
 	workstation_state = _build_workstation_state_map(capability_rows)
@@ -3434,7 +3477,7 @@ def run_planning_run(
 			family_credit_map[credit_key] = max(flt(family_credit_map.get(credit_key)) - credit_applied, 0)
 		planning_qty = max(original_planning_qty - credit_applied, 0)
 		item_context = _get_item_context(row.item_code, settings)
-		demand_source = _get_primary_demand_source(
+		demand_source = row.get("demand_source") or _get_primary_demand_source(
 			row.item_code,
 			row.customer,
 			row.demand_date,
@@ -3564,7 +3607,7 @@ def run_planning_run(
 				"planning_run": run_doc.name,
 				"company": run_doc.company,
 				"plant_floor": result_plant_floor,
-				"net_requirement": row.name,
+				"net_requirement": row.name if row.get("source_doctype") != "APS Demand Commitment" else None,
 				"demand_commitment": demand_commitment,
 				"customer": row.customer,
 				"sales_order": row.sales_order,
@@ -3615,8 +3658,8 @@ def run_planning_run(
 				item_code=row.item_code,
 				customer=row.customer,
 				workstation=error.get("workstation"),
-				source_doctype="APS Net Requirement",
-				source_name=row.name,
+				source_doctype=row.get("source_doctype") or "APS Net Requirement",
+				source_name=row.get("source_name") or row.name,
 				resolution_hint=error.get("resolution_hint"),
 				is_blocking=error.get("is_blocking", 1),
 				diagnostic=error.get("diagnostic"),
@@ -3647,6 +3690,10 @@ def run_planning_run(
 			"existing_work_order_policy": existing_work_order_policy,
 			"status": "Planned",
 			"approval_state": "Pending",
+			**(
+				{"planned_admission_fingerprint": run_doc.get("admission_fingerprint")}
+				if v2_enabled and run_doc.get("demand_baseline_fingerprint") else {}
+			),
 			"total_net_requirement_qty": sum(flt(row.planning_qty or row.net_requirement_qty) for row in net_rows),
 			"total_scheduled_qty": total_scheduled_qty,
 			"total_unscheduled_qty": total_unscheduled_qty,
@@ -3700,6 +3747,8 @@ def run_planning_run(
 
 def _get_v2_commitment_for_result(run_name: str, net_row: Any) -> str | None:
 	"""Resolve only an unambiguous Run-owned Commitment; never date-fuzz here."""
+	if net_row.get("demand_commitment"):
+		return net_row.get("demand_commitment")
 	rows = frappe.get_all(
 		"APS Demand Commitment",
 		filters={
@@ -3744,6 +3793,12 @@ def _net_requirement_production_target_qty(row: dict[str, Any] | Any) -> float:
 
 def approve_planning_run(run_name: str) -> dict[str, Any]:
 	from injection_aps.services import capacity_balance
+	from injection_aps.services.v2_flags import is_v2_enabled
+
+	if is_v2_enabled():
+		from injection_aps.services import demand_admission
+
+		demand_admission.require_admission_ready(run_name, require_planned=True)
 
 	run_doc = frappe.get_doc("APS Planning Run", run_name)
 	consistency_gate = consistency.assert_plan_consistent(
@@ -3810,10 +3865,22 @@ def approve_planning_run(run_name: str) -> dict[str, Any]:
 
 
 def sync_planning_run_to_execution(run_name: str) -> dict[str, Any]:
+	from injection_aps.services.v2_flags import is_v2_enabled
+
+	if is_v2_enabled():
+		from injection_aps.services import demand_admission
+
+		demand_admission.require_admission_ready(run_name, require_planned=True)
 	return generate_work_order_proposals(run_name)
 
 
 def release_planning_run(run_name: str, release_horizon_days: int | None = None) -> dict[str, Any]:
+	from injection_aps.services.v2_flags import is_v2_enabled
+
+	if is_v2_enabled():
+		from injection_aps.services import demand_admission
+
+		demand_admission.require_admission_ready(run_name, require_planned=True)
 	return generate_shift_schedule_proposals(run_name=run_name, release_horizon_days=release_horizon_days)
 
 
@@ -3839,6 +3906,11 @@ def _rebind_release_capacity_resources(run_name: str, *, reason: str) -> dict[st
 
 def generate_work_order_proposals(run_name: str) -> dict[str, Any]:
 	from injection_aps.services import bom_planning, campaign_planning, v2_flags
+
+	if v2_flags.is_v2_enabled():
+		from injection_aps.services import demand_admission
+
+		demand_admission.require_admission_ready(run_name, require_planned=True)
 
 	run_doc = frappe.get_doc("APS Planning Run", run_name)
 	if run_doc.approval_state != "Approved":
@@ -4945,6 +5017,12 @@ def generate_shift_schedule_proposals(
 		segment_overrides=segment_overrides,
 	)
 	run_doc = context["run_doc"]
+	from injection_aps.services.v2_flags import is_v2_enabled
+
+	if is_v2_enabled():
+		from injection_aps.services import demand_admission
+
+		demand_admission.require_admission_ready(run_doc.name, require_planned=True)
 	consistency.assert_plan_consistent(
 		run_doc.name,
 		reason="shift schedule proposal generation",
@@ -7622,6 +7700,8 @@ def get_next_actions_for_context(doctype: str, docname: str) -> dict[str, Any]:
 			)
 		)
 		context = _build_planning_run_context(doc)
+		admission_state = context.get("admission_state") or {}
+		admission_pending = bool(admission_state.get("baseline_ready") and not admission_state.get("confirmed"))
 		is_consistent = doc.get("consistency_status") == "Valid"
 		capacity_release_ready = bool(context.get("capacity_release_ready"))
 		recalculation_locked = bool(is_v2_enabled() and doc.approval_state == "Approved")
@@ -7629,16 +7709,22 @@ def get_next_actions_for_context(doctype: str, docname: str) -> dict[str, Any]:
 			**context,
 			"actions": [
 				{
+					"label": "Demand Admission",
+					"action_key": "open_admission",
+					"route": f"aps-demand-admission-workbench?run_name={doc.name}",
+					"enabled": 1 if admission_pending else 0,
+				},
+				{
 					"label": "Recalculate",
 					"action_key": "run_trial",
 					"method": "injection_aps.api.app.run_planning_run",
 					"kwargs": {"run_name": doc.name},
-					"requires_existing_work_order_policy": 1,
-					"enabled": 0 if recalculation_locked else 1,
+					"requires_existing_work_order_policy": 0 if admission_state.get("baseline_ready") else 1,
+					"enabled": 0 if recalculation_locked or admission_pending else 1,
 					"disabled_reason": (
 						"Approved V2 runs cannot be recalculated in place. Create a new run or use the controlled change workflow."
 						if recalculation_locked
-						else ""
+						else "Confirm demand admission before recalculation." if admission_pending else ""
 					),
 					"confirm_required": 1,
 					"confirm_title": "Confirm Recalculate",
@@ -7945,7 +8031,7 @@ def _validate_manual_overproduction_confirmation(
 	allow_overproduction: int = 0,
 	manual_note: str | None = None,
 ) -> None:
-	if not cint(preview.get("quantity_mode")) or flt(preview.get("overproduction_qty")) <= 0:
+	if not cint(preview.get("quantity_change_mode", preview.get("quantity_mode"))) or flt(preview.get("overproduction_qty")) <= 0:
 		return
 	if not cint(allow_overproduction):
 		frappe.throw(
@@ -7954,6 +8040,15 @@ def _validate_manual_overproduction_confirmation(
 		)
 	if not (manual_note or "").strip():
 		frappe.throw(_("A reason is required when confirming manual overproduction."), frappe.ValidationError)
+
+
+def _manual_duration_capacity_qty(item_code: str | None, duration_hours: float, hourly_capacity: float) -> float:
+	raw_qty = max(flt(duration_hours) * max(flt(hourly_capacity), 0), 0)
+	if _item_quantity_requires_integer(item_code):
+		return float(math.floor(raw_qty + 1e-9))
+	precision = frappe.get_precision("APS Schedule Segment", "planned_qty") or 6
+	factor = 10**precision
+	return math.floor(raw_qty * factor + 1e-9) / factor
 
 
 def _max_conflict_free_qty(
@@ -7988,6 +8083,8 @@ def preview_manual_schedule_adjustment(
 	allow_overproduction: int = 0,
 ) -> dict[str, Any]:
 	quantity_mode = target_qty not in (None, "")
+	resize_mode = target_end_time not in (None, "")
+	quantity_change_mode = quantity_mode or resize_mode
 	if quantity_mode and target_end_time not in (None, ""):
 		frappe.throw(_("Target quantity and target end time cannot be supplied together."), frappe.ValidationError)
 	segment_rows = frappe.get_all(
@@ -8099,7 +8196,7 @@ def preview_manual_schedule_adjustment(
 		)
 		before_segment = before_rows[0] if before_rows else None
 	effective_target_start_time = target_start_time
-	if quantity_mode and not effective_target_start_time:
+	if quantity_change_mode and not effective_target_start_time:
 		effective_target_start_time = segment.start_time
 	requested_start_time = get_datetime(effective_target_start_time) if effective_target_start_time else None
 
@@ -8179,7 +8276,7 @@ def preview_manual_schedule_adjustment(
 				}
 			)
 		duration_hours = max((end_time - start_time).total_seconds() / 3600, 0)
-		planned_qty = max(int(duration_hours * max(hourly_capacity, 0)), 0)
+		planned_qty = _manual_duration_capacity_qty(result.item_code, duration_hours, hourly_capacity)
 	else:
 		planned_qty = flt(segment.planned_qty)
 		end_time = start_time + timedelta(hours=_estimate_run_hours(planned_qty, candidate, settings))
@@ -8335,9 +8432,9 @@ def preview_manual_schedule_adjustment(
 	)
 	overproduction_qty = flt(quantity_totals.get("overproduction_qty"))
 	requires_overproduction_confirmation = bool(
-		quantity_mode and overproduction_qty > 0 and not cint(allow_overproduction)
+		quantity_change_mode and overproduction_qty > 0 and not cint(allow_overproduction)
 	)
-	if quantity_mode and overproduction_qty > 0 and cint(allow_overproduction):
+	if quantity_change_mode and overproduction_qty > 0 and cint(allow_overproduction):
 		setup_exceptions.append(
 			{
 				"severity": "Warning",
@@ -8396,6 +8493,14 @@ def preview_manual_schedule_adjustment(
 			target_workstation,
 			candidate.get("mould_reference"),
 		)
+	elif resize_mode:
+		schedule_explanation = _(
+			"Manual resize to {0} on {1} with mold {2}."
+		).format(
+			frappe.format(planned_qty, {"fieldtype": "Float"}),
+			target_workstation,
+			candidate.get("mould_reference"),
+		)
 	else:
 		schedule_explanation = _("Manual move to {0} with mold {1}.").format(
 			target_workstation,
@@ -8405,6 +8510,8 @@ def preview_manual_schedule_adjustment(
 	return {
 		"allowed": 0 if blocked else 1,
 		"quantity_mode": 1 if quantity_mode else 0,
+		"resize_mode": 1 if resize_mode else 0,
+		"quantity_change_mode": 1 if quantity_change_mode else 0,
 		"segment_name": segment_name,
 		"result_name": result.name,
 		"planning_run": run_doc.name,
@@ -8435,7 +8542,7 @@ def preview_manual_schedule_adjustment(
 		"conflict_segments": conflict_segments,
 		"hourly_capacity_qty": hourly_capacity,
 		"blocking_reasons": list(dict.fromkeys(blocking_reasons)),
-		"blocking_title": "Quantity Adjustment Blocked" if quantity_mode else "Manual Move Blocked",
+		"blocking_title": "Quantity Adjustment Blocked" if quantity_mode else "Resize Blocked" if resize_mode else "Manual Move Blocked",
 		"blocking_summary": blocking_summary,
 		"blocking_context_rows": blocking_context_rows,
 		"resolution_suggestions": resolution_suggestions,
@@ -8584,6 +8691,8 @@ def _get_segment_with_result(segment_name: str) -> tuple[dict[str, Any], Any, An
 			"plant_floor",
 			"start_time",
 			"end_time",
+			"current_start_time",
+			"current_end_time",
 			"planned_qty",
 			"sequence_no",
 			"lane_key",
@@ -9551,7 +9660,7 @@ def apply_manual_schedule_adjustment(
 		allow_overproduction=allow_overproduction,
 		manual_note=manual_note,
 	)
-	is_overproduction = bool(cint(preview.get("quantity_mode")) and flt(preview.get("overproduction_qty")) > 0)
+	is_overproduction = bool(cint(preview.get("quantity_change_mode", preview.get("quantity_mode"))) and flt(preview.get("overproduction_qty")) > 0)
 
 	rows = frappe.get_all(
 		"APS Schedule Segment",
@@ -9700,6 +9809,15 @@ def apply_manual_schedule_adjustment(
 		run_doc.name,
 		reason="manual schedule adjustment applied",
 	)
+	updated_segment, updated_result_doc, _updated_run = _get_segment_with_result(segment_name)
+	updated_result = next(
+		(
+			row
+			for row in consistency_summary.get("results") or []
+			if row.get("name") == result_doc.name
+		),
+		{},
+	)
 
 	return {
 		"segment_name": segment_name,
@@ -9712,6 +9830,26 @@ def apply_manual_schedule_adjustment(
 		"overproduction_qty": preview.get("overproduction_qty"),
 		"requires_overproduction_confirmation": 0,
 		"max_conflict_free_qty": preview.get("max_conflict_free_qty"),
+		"updated_segment": {
+			"name": updated_segment.get("name"),
+			"result_name": updated_segment.get("parent"),
+			"start_time": updated_segment.get("current_start_time") or updated_segment.get("start_time"),
+			"end_time": updated_segment.get("current_end_time") or updated_segment.get("end_time"),
+			"planned_qty": updated_segment.get("planned_qty"),
+			"workstation": updated_segment.get("workstation"),
+			"plant_floor": updated_segment.get("plant_floor"),
+			"mould_reference": updated_segment.get("mould_reference"),
+			"lane_key": updated_segment.get("lane_key"),
+			"segment_kind": updated_segment.get("segment_kind"),
+			"segment_status": updated_segment.get("segment_status"),
+			"risk_flags": updated_segment.get("risk_flags"),
+			"is_locked": updated_segment.get("is_locked"),
+			"is_manual": updated_segment.get("is_manual"),
+		},
+		"updated_result": {
+			"name": updated_result_doc.name,
+			**updated_result,
+		},
 		"consistency": consistency_summary,
 		"next_actions": get_next_actions_for_context("APS Planning Run", run_doc.name),
 	}
@@ -9930,7 +10068,13 @@ def get_schedule_result_detail(result_name: str) -> dict[str, Any]:
 
 def get_exception_resolution_context(exception_name: str) -> dict[str, Any]:
 	doc = frappe.get_doc("APS Exception Log", exception_name)
-	return _build_exception_resolution_context(doc)
+	context = _build_exception_resolution_context(doc)
+	source_snapshot = _get_exception_source_snapshot(doc)
+	context["source_snapshot"] = source_snapshot
+	for fieldname in ("item_code", "customer", "workstation"):
+		if not context.get(fieldname) and source_snapshot.get(fieldname):
+			context[fieldname] = source_snapshot.get(fieldname)
+	return context
 
 
 def detach_standard_references(company: str | None, dry_run: bool = True) -> dict[str, Any]:
@@ -12072,6 +12216,9 @@ def _get_item_detail_snapshot(item_code: str, customer: str | None, settings: di
 	return {
 		"item_code": item_code,
 		"item_name": item_doc.item_name or "",
+		"customer_code": (
+			item_doc.get("customer_code") or "" if meta.has_field("customer_code") else ""
+		),
 		"item_group": item_doc.item_group or "",
 		"stock_uom": item_doc.stock_uom or "",
 		"customer": customer or item_doc.get("customer") or "",
@@ -12157,8 +12304,16 @@ def _get_result_exception_rows(result) -> list[dict[str, Any]]:
 
 def _build_exception_resolution_context(doc) -> dict[str, Any]:
 	diagnostic = _parse_diagnostic_json(doc.get("diagnostic_json"))
-	root_cause_text = diagnostic.get("root_cause_text") or doc.get("resolution_hint") or doc.get("message") or ""
-	suggested_actions = diagnostic.get("suggested_actions") or ([doc.get("resolution_hint")] if doc.get("resolution_hint") else [])
+	root_cause_text = diagnostic.get("root_cause_text") or doc.get("message") or doc.get("resolution_hint") or ""
+	diagnostic_actions = diagnostic.get("suggested_actions") or []
+	if diagnostic_actions:
+		suggested_actions = diagnostic_actions
+	else:
+		suggested_actions = [
+			doc.get("resolution_hint"),
+			*_get_default_exception_resolution_actions(doc),
+		]
+	suggested_actions = list(dict.fromkeys(str(row).strip() for row in suggested_actions if str(row or "").strip()))
 	related_routes = {
 		"source": _build_form_route(doc.get("source_doctype"), doc.get("source_name")),
 		"item": _build_form_route("Item", doc.get("item_code")),
@@ -12167,7 +12322,7 @@ def _build_exception_resolution_context(doc) -> dict[str, Any]:
 		"execution": f"aps-release-center?run_name={doc.get('planning_run')}" if doc.get("planning_run") else "",
 	}
 	return {
-		"name": doc.name,
+		"name": doc.get("name"),
 		"planning_run": doc.get("planning_run"),
 		"severity": doc.get("severity"),
 		"exception_type": doc.get("exception_type"),
@@ -12188,9 +12343,147 @@ def _build_exception_resolution_context(doc) -> dict[str, Any]:
 			"run_name": doc.get("planning_run"),
 			"item_code": doc.get("item_code"),
 			"workstation": doc.get("workstation"),
-			"exception_name": doc.name,
+			"exception_name": doc.get("name"),
 		},
 	}
+
+
+def _get_exception_source_snapshot(doc) -> dict[str, Any]:
+	"""Load operator-facing facts for an exception without changing the source record."""
+	source_doctype = str(doc.get("source_doctype") or "").strip()
+	source_name = str(doc.get("source_name") or "").strip()
+	if not source_doctype or not source_name:
+		return {}
+
+	segment = None
+	result = None
+	if source_doctype == "APS Schedule Segment":
+		segment = frappe.db.get_value(
+			"APS Schedule Segment",
+			source_name,
+			[
+				"name",
+				"parent",
+				"workstation",
+				"plant_floor",
+				"start_time",
+				"end_time",
+				"current_start_time",
+				"current_end_time",
+				"planned_qty",
+				"mould_reference",
+				"segment_status",
+				"schedule_delay_minutes",
+			],
+			as_dict=True,
+		)
+		if segment and segment.get("parent"):
+			result = frappe.db.get_value(
+				"APS Schedule Result",
+				segment.get("parent"),
+				[
+					"name",
+					"item_code",
+					"customer",
+					"requested_date",
+					"planned_qty",
+					"machine_scheduled_qty",
+					"unscheduled_qty",
+					"projected_completion_time",
+					"schedule_delay_minutes",
+				],
+				as_dict=True,
+			)
+	elif source_doctype == "APS Schedule Result":
+		result = frappe.db.get_value(
+			"APS Schedule Result",
+			source_name,
+			[
+				"name",
+				"item_code",
+				"customer",
+				"requested_date",
+				"planned_qty",
+				"machine_scheduled_qty",
+				"unscheduled_qty",
+				"projected_completion_time",
+				"schedule_delay_minutes",
+				"plant_floor",
+			],
+			as_dict=True,
+		)
+
+	segment = segment or {}
+	result = result or {}
+	if not segment and not result:
+		return {}
+	return {
+		"segment_name": segment.get("name"),
+		"result_name": result.get("name") or segment.get("parent"),
+		"item_code": result.get("item_code") or doc.get("item_code"),
+		"customer": result.get("customer") or doc.get("customer"),
+		"workstation": segment.get("workstation") or doc.get("workstation"),
+		"plant_floor": segment.get("plant_floor") or result.get("plant_floor"),
+		"mould_reference": segment.get("mould_reference"),
+		"segment_status": segment.get("segment_status"),
+		"start_time": segment.get("current_start_time") or segment.get("start_time"),
+		"end_time": segment.get("current_end_time") or segment.get("end_time"),
+		"segment_planned_qty": segment.get("planned_qty"),
+		"requested_date": result.get("requested_date"),
+		"result_planned_qty": result.get("planned_qty"),
+		"machine_scheduled_qty": result.get("machine_scheduled_qty"),
+		"unscheduled_qty": result.get("unscheduled_qty"),
+		"projected_completion_time": result.get("projected_completion_time"),
+		"delay_minutes": segment.get("schedule_delay_minutes") or result.get("schedule_delay_minutes"),
+	}
+
+
+def _get_default_exception_resolution_actions(doc) -> list[str]:
+	"""Return safe operational guidance for historical exceptions without diagnostics."""
+	exception_type = str(doc.get("exception_type") or "").lower()
+	message = str(doc.get("message") or "").lower()
+	search_text = f"{exception_type} {message}"
+
+	if any(token in search_text for token in ("mold", "mould", "模具")):
+		return [
+			_("Check the linked Mold and Mold Product records for status, cycle time, cavity output, and machine-tonnage compatibility."),
+			_("Correct the mold assignment or move the segment to a compatible machine, then recalculate and confirm that the exception is cleared."),
+		]
+	if any(token in search_text for token in ("delivery delay", "late delivery", "delivery", "late", "交期", "交付", "延期")):
+		return [
+			_("Compare the requested delivery date with the segment end time and the displayed delay minutes."),
+			_("If a feasible earlier window exists, move, resize, or split the segment on the Board and run validation again."),
+			_("If capacity cannot meet the date, adjust machine capacity or downtime first; otherwise confirm the revised customer delivery date in the source demand and recalculate APS."),
+		]
+	if any(token in search_text for token in ("machine", "workstation", "capacity", "机台", "产能")):
+		return [
+			_("Check APS Machine Capability, the machine calendar, and active downtime for the affected workstation."),
+			_("Restore capacity or move/resize the affected segment in the Board, then rerun validation."),
+		]
+	if any(token in search_text for token in ("overlap", "sequence", "schedule", "重叠", "排程")):
+		return [
+			_("Open the affected segment in the Board and compare its time window with adjacent machine and mold segments."),
+			_("Move, resize, or split the segment into a conflict-free window, then rerun plan validation."),
+		]
+	if any(token in search_text for token in ("material", "stock", "bom", "warehouse", "原料", "库存")):
+		return [
+			_("Verify the BOM, source warehouse, available stock, and expected supply date for the affected item."),
+			_("Correct the material or supply data, then recalculate APS and confirm that the shortage no longer blocks the plan."),
+		]
+	if any(token in search_text for token in ("demand", "delivery", "customer", "sales order", "需求", "交付", "客户")):
+		return [
+			_("Verify the source customer schedule or sales order line, including item, date, quantity, and Demand Identity ownership."),
+			_("Correct the source demand or process it through Change Impact, then rebuild the planning run."),
+		]
+	if any(token in search_text for token in ("execution", "work order", "feedback", "执行", "工单")):
+		return [
+			_("Check the linked Work Order, Work Order Scheduling, and latest execution feedback for inconsistent status or quantity."),
+			_("Correct or resync the execution document, then refresh the Execution Center and verify that the exception is cleared."),
+		]
+	return [
+		_("Open the source record and correct the condition described in the exception message."),
+		_("Recalculate or rebuild exceptions for this APS run, then confirm that the exception no longer appears before release."),
+	]
 
 
 def _get_result_mold_rows(result, segments: list[dict[str, Any]]) -> list[dict[str, Any]]:

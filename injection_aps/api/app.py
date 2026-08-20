@@ -21,8 +21,10 @@ from injection_aps.services import (
 	demand_ledger,
 	delivery_sync,
 	delivery_fulfillment,
+	item_display,
 	planning,
 	progress_v2,
+	run_preparation,
 	schedule_revision,
 	shift_replan,
 	solver_orchestration,
@@ -51,6 +53,7 @@ EXCEL_SHEET_FORBIDDEN_CHARACTERS = frozenset("[]:*?/\\")
 EXPORT_FILENAME_SAFE_CHARACTERS = frozenset(" ._-()")
 MAX_CHANGE_IMPACT_ROWS = 100
 MAX_CHANGE_ANALYSIS_BATCH = 50
+MAX_ITEM_DISPLAY_ROWS = 500
 CHANGE_REQUEST_STATUSES = (
 	"Draft",
 	"Analyzed",
@@ -91,6 +94,44 @@ def _require_execution_access():
 
 def _require_admin_access():
 	require_any_role(APS_ADMIN_ROLES, _("You need APS admin access to run this maintenance action."))
+
+
+@frappe.whitelist()
+def get_item_display_details(item_codes=None):
+	"""Return permission-filtered Item identity text for APS display components."""
+	_require_read_access()
+	if isinstance(item_codes, str):
+		value = item_codes.strip()
+		item_codes = frappe.parse_json(value) if value.startswith("[") else [value]
+	item_codes = sorted({str(value or "").strip() for value in item_codes or [] if value})
+	if len(item_codes) > MAX_ITEM_DISPLAY_ROWS:
+		frappe.throw(
+			_("Request at most {0} Item display rows.", context="Injection APS").format(
+				MAX_ITEM_DISPLAY_ROWS
+			),
+			frappe.ValidationError,
+		)
+	if not item_codes:
+		return {"items": []}
+	fields = ["name", "item_name"]
+	if frappe.get_meta("Item").has_field("customer_code"):
+		fields.append("customer_code")
+	rows = frappe.get_list(
+		"Item",
+		filters={"name": ("in", item_codes)},
+		fields=fields,
+		limit_page_length=0,
+	)
+	return {
+		"items": [
+			{
+				"item_code": row.get("name") or "",
+				"customer_code": row.get("customer_code") or "",
+				"item_name": row.get("item_name") or "",
+			}
+			for row in rows
+		]
+	}
 
 
 def _has_document_access(doctype, docname, ptype="read"):
@@ -1674,10 +1715,12 @@ def preview_customer_delivery_schedule(
 		mapping_json=mapping_json,
 		source_type=source_type,
 	)
-	return _require_schedule_import_reference_access(
-		preview,
-		customer=customer,
-		company=company,
+	return item_display.attach_item_display_fields(
+		_require_schedule_import_reference_access(
+			preview,
+			customer=customer,
+			company=company,
+		)
 	)
 
 
@@ -1737,7 +1780,9 @@ def preview_schedule_revision(
 		source_type=source_type,
 		source_contract=source_contract,
 	)
-	return _require_schedule_import_reference_access(preview, customer=customer, company=company)
+	return item_display.attach_item_display_fields(
+		_require_schedule_import_reference_access(preview, customer=customer, company=company)
+	)
 
 
 @frappe.whitelist(methods=["POST"])
@@ -1933,6 +1978,8 @@ def run_planning_run(
 		_require_scope_access(company=resolved_company, customer=customer)
 	if run_name and customer:
 		_require_document_access("Customer", customer, ptype="read")
+	if run_name and v2_flags.is_v2_enabled():
+		demand_admission.require_admission_ready(run_name)
 	_require_company_rebuild_scope(resolved_company)
 	_require_planning_reference_access(
 		item_code=item_code,
@@ -1966,6 +2013,8 @@ def recalculate_plan_consistency(run_name):
 def approve_planning_run(run_name):
 	_require_approve_access()
 	_require_complete_run_mutation_scope(run_name, run_ptype="write")
+	if v2_flags.is_v2_enabled():
+		demand_admission.require_admission_ready(run_name, require_planned=True)
 	return planning.approve_planning_run(run_name)
 
 
@@ -1973,6 +2022,8 @@ def approve_planning_run(run_name):
 def sync_planning_run_to_execution(run_name):
 	_require_release_access()
 	_require_complete_run_mutation_scope(run_name, run_ptype="write")
+	if v2_flags.is_v2_enabled():
+		demand_admission.require_admission_ready(run_name, require_planned=True)
 	return planning.sync_planning_run_to_execution(run_name)
 
 
@@ -1980,6 +2031,8 @@ def sync_planning_run_to_execution(run_name):
 def release_planning_run(run_name, release_horizon_days=None):
 	_require_release_access()
 	_require_complete_run_mutation_scope(run_name, run_ptype="write")
+	if v2_flags.is_v2_enabled():
+		demand_admission.require_admission_ready(run_name, require_planned=True)
 	return planning.release_planning_run(run_name, release_horizon_days=release_horizon_days)
 
 
@@ -1994,6 +2047,8 @@ def validate_run_mold_readiness(run_name):
 def generate_work_order_proposals(run_name):
 	_require_release_access()
 	_require_complete_run_mutation_scope(run_name, run_ptype="write")
+	if v2_flags.is_v2_enabled():
+		demand_admission.require_admission_ready(run_name, require_planned=True)
 	return planning.generate_work_order_proposals(run_name)
 
 
@@ -2001,6 +2056,10 @@ def generate_work_order_proposals(run_name):
 def apply_work_order_proposals(batch_name):
 	_require_release_access()
 	_require_complete_proposal_batch_scope("APS Work Order Proposal Batch", batch_name)
+	if v2_flags.is_v2_enabled():
+		run_name = frappe.db.get_value("APS Work Order Proposal Batch", batch_name, "planning_run")
+		if run_name:
+			demand_admission.require_admission_ready(run_name, require_planned=True)
 	return planning.apply_work_order_proposals(batch_name)
 
 
@@ -2034,12 +2093,14 @@ def preview_shift_schedule_release(run_name=None, work_order_proposal_batch=None
 		)
 	if not run_name and not work_order_proposal_batch:
 		frappe.throw(_("Provide run_name or work_order_proposal_batch."), frappe.ValidationError)
-	return planning.preview_shift_schedule_release(
-		run_name=run_name,
-		work_order_proposal_batch=work_order_proposal_batch,
-		release_horizon_days=release_horizon_days,
-		release_from_date=release_from_date,
-		shift_type=shift_type,
+	return item_display.attach_item_display_fields(
+		planning.preview_shift_schedule_release(
+			run_name=run_name,
+			work_order_proposal_batch=work_order_proposal_batch,
+			release_horizon_days=release_horizon_days,
+			release_from_date=release_from_date,
+			shift_type=shift_type,
+		)
 	)
 
 
@@ -2054,6 +2115,8 @@ def generate_shift_schedule_proposals(run_name=None, work_order_proposal_batch=N
 		)
 	if not run_name and not work_order_proposal_batch:
 		frappe.throw(_("Provide run_name or work_order_proposal_batch."), frappe.ValidationError)
+	if run_name and v2_flags.is_v2_enabled():
+		demand_admission.require_admission_ready(run_name, require_planned=True)
 	return planning.generate_shift_schedule_proposals(
 		run_name=run_name,
 		work_order_proposal_batch=work_order_proposal_batch,
@@ -2067,6 +2130,10 @@ def generate_shift_schedule_proposals(run_name=None, work_order_proposal_batch=N
 def apply_shift_schedule_proposals(batch_name):
 	_require_release_access()
 	_require_complete_proposal_batch_scope("APS Shift Schedule Proposal Batch", batch_name)
+	if v2_flags.is_v2_enabled():
+		run_name = frappe.db.get_value("APS Shift Schedule Proposal Batch", batch_name, "planning_run")
+		if run_name:
+			demand_admission.require_admission_ready(run_name, require_planned=True)
 	return planning.apply_shift_schedule_proposals(batch_name)
 
 
@@ -2169,6 +2236,8 @@ def get_fulfillment_projection(run_name=None, result_name=None, as_of=None):
 def analyze_capacity_balance(run_name):
 	_require_plan_access()
 	_require_complete_run_mutation_scope(run_name, run_ptype="write")
+	if v2_flags.is_v2_enabled():
+		demand_admission.require_admission_ready(run_name, require_planned=True)
 	return capacity_balance.analyze_capacity_balance(run_name, persist=True)
 
 
@@ -2179,6 +2248,8 @@ def confirm_capacity_balance(run_name):
 	else:
 		_require_plan_access()
 	_require_complete_run_mutation_scope(run_name, run_ptype="write")
+	if v2_flags.is_v2_enabled():
+		demand_admission.require_admission_ready(run_name, require_planned=True)
 	return capacity_balance.confirm_capacity_balance(run_name)
 
 
@@ -2189,6 +2260,8 @@ def apply_capacity_balance(run_name, pmc_confirmed=0):
 	else:
 		_require_plan_access()
 	_require_complete_run_mutation_scope(run_name, run_ptype="write")
+	if v2_flags.is_v2_enabled():
+		demand_admission.require_admission_ready(run_name, require_planned=True)
 	return capacity_balance.apply_capacity_balance(
 		run_name,
 		pmc_confirmed=bool(frappe.utils.cint(pmc_confirmed)),
@@ -2255,6 +2328,8 @@ def exclude_commitment_from_release(resolution, reason=None, expected_fingerprin
 def recompute_after_resolution(planning_run, expected_fingerprint=None):
 	_require_plan_access()
 	_require_complete_run_mutation_scope(planning_run, run_ptype="write")
+	if v2_flags.is_v2_enabled():
+		demand_admission.require_admission_ready(planning_run, require_planned=True)
 	return constraint_resolution.recompute_after_resolution(
 		planning_run,
 		expected_fingerprint=expected_fingerprint,
@@ -2265,6 +2340,7 @@ def recompute_after_resolution(planning_run, expected_fingerprint=None):
 def analyze_v2_schedule(run_name, run_in_background=1):
 	_require_plan_access()
 	_require_complete_run_mutation_scope(run_name, run_ptype="write")
+	demand_admission.require_admission_ready(run_name, require_planned=True)
 	return solver_orchestration.analyze_v2_schedule(
 		run_name,
 		run_in_background=bool(frappe.utils.cint(run_in_background)),
@@ -2289,7 +2365,10 @@ def get_solver_scenarios(planning_run):
 def get_run_bom_selections(planning_run):
 	_require_read_access()
 	_require_scoped_document_access("APS Planning Run", planning_run, ptype="read")
-	return bom_planning.get_run_bom_selections(planning_run)
+	return item_display.attach_item_display_fields(
+		bom_planning.get_run_bom_selections(planning_run),
+		item_fields=("item_code", "item"),
+	)
 
 
 @frappe.whitelist(methods=["POST"])
@@ -2309,13 +2388,17 @@ def get_bom_pegging_tree(planning_run, root_demand_key=None):
 	_require_read_access()
 	_require_scoped_document_access("APS Planning Run", planning_run, ptype="read")
 	_require_all_documents_visible("APS BOM Pegging", {"planning_run": planning_run})
-	return bom_planning.get_bom_pegging_tree(planning_run, root_demand_key=root_demand_key)
+	return item_display.attach_item_display_fields(
+		bom_planning.get_bom_pegging_tree(planning_run, root_demand_key=root_demand_key)
+	)
 
 
 @frappe.whitelist(methods=["POST"])
 def select_solver_scenario(planning_run, scenario_key, reason=None, expected_fingerprint=None):
 	_require_plan_access()
 	_require_complete_run_mutation_scope(planning_run, run_ptype="write")
+	if v2_flags.is_v2_enabled():
+		demand_admission.require_admission_ready(planning_run, require_planned=True)
 	return solver_orchestration.select_solver_scenario(
 		planning_run,
 		scenario_key,
@@ -2328,6 +2411,8 @@ def select_solver_scenario(planning_run, scenario_key, reason=None, expected_fin
 def acknowledge_schedule_risks(planning_run, reason=None, expected_fingerprint=None):
 	_require_approve_access()
 	_require_complete_run_mutation_scope(planning_run, run_ptype="write")
+	if v2_flags.is_v2_enabled():
+		demand_admission.require_admission_ready(planning_run, require_planned=True)
 	return solver_orchestration.acknowledge_schedule_risks(
 		planning_run,
 		reason=reason,
@@ -2339,6 +2424,7 @@ def acknowledge_schedule_risks(planning_run, reason=None, expected_fingerprint=N
 def apply_v2_schedule(planning_run, expected_fingerprint=None):
 	_require_release_access()
 	_require_complete_run_mutation_scope(planning_run, run_ptype="write")
+	demand_admission.require_admission_ready(planning_run, require_planned=True)
 	return solver_orchestration.apply_v2_schedule(
 		planning_run,
 		expected_fingerprint=expected_fingerprint,
@@ -2504,8 +2590,8 @@ def sync_machine_capabilities_from_workstations():
 def analyze_change_request_impact(change_request):
 	_require_demand_access()
 	_require_change_request_access(change_request, ptype="write")
-	return _require_impact_preview_access(
-		planning.analyze_change_request_impact(change_request)
+	return item_display.attach_item_display_fields(
+		_require_impact_preview_access(planning.analyze_change_request_impact(change_request))
 	)
 
 
@@ -2592,12 +2678,14 @@ def get_change_impact_center_data(
 		row["impact_json"] = raw.get("impact_json")
 		row["proposal_json"] = raw.get("proposal_json")
 		compact_rows.append(_compact_change_impact_row(row))
-	return {
-		"rows": compact_rows,
-		"summary": _summarize_change_impact_rows(compact_rows),
-		"limit": page_length,
-		"may_have_more": frappe.utils.cint(len(compact_rows) >= page_length),
-	}
+	return item_display.attach_item_display_fields(
+		{
+			"rows": compact_rows,
+			"summary": _summarize_change_impact_rows(compact_rows),
+			"limit": page_length,
+			"may_have_more": frappe.utils.cint(len(compact_rows) >= page_length),
+		}
+	)
 
 
 @frappe.whitelist(methods=["POST"])
@@ -2740,15 +2828,19 @@ def analyze_insert_order_impact(company, plant_floor=None, plant_floors=None, it
 		plant_floor=plant_floor,
 		plant_floors=plant_floors,
 	)
-	return _require_impact_preview_access(planning.analyze_insert_order_impact(
-		company=company,
-		plant_floor=plant_floor,
-		plant_floors=plant_floors,
-		item_code=item_code,
-		qty=qty,
-		required_date=required_date,
-		customer=customer,
-	))
+	return item_display.attach_item_display_fields(
+		_require_impact_preview_access(
+			planning.analyze_insert_order_impact(
+				company=company,
+				plant_floor=plant_floor,
+				plant_floors=plant_floors,
+				item_code=item_code,
+				qty=qty,
+				required_date=required_date,
+				customer=customer,
+			)
+		)
+	)
 
 
 @frappe.whitelist(methods=["POST"])
@@ -2873,6 +2965,39 @@ def create_trial_run_from_net_requirement_context(
 	)
 
 
+@frappe.whitelist(methods=["POST"])
+def create_trial_run_for_admission(
+	company=None,
+	plant_floor=None,
+	plant_floors=None,
+	item_code=None,
+	customer=None,
+	horizon_days=None,
+	existing_work_order_policy=None,
+):
+	_require_plan_access()
+	resolved_company = _require_explicit_company(
+		company,
+		action_label=_("demand admission Planning Run", context="Injection APS"),
+	)
+	_require_scope_access(company=resolved_company, customer=customer)
+	_require_company_rebuild_scope(resolved_company)
+	_require_planning_reference_access(
+		item_code=item_code,
+		plant_floor=plant_floor,
+		plant_floors=plant_floors,
+	)
+	return run_preparation.create_trial_run_for_admission(
+		company=resolved_company,
+		plant_floor=plant_floor,
+		plant_floors=plant_floors,
+		item_code=item_code,
+		customer=customer,
+		horizon_days=horizon_days,
+		existing_work_order_policy=existing_work_order_policy,
+	)
+
+
 @frappe.whitelist()
 def preview_manual_schedule_adjustment(
 	segment_name,
@@ -2891,17 +3016,21 @@ def preview_manual_schedule_adjustment(
 		_require_scoped_document_access("APS Schedule Segment", before_segment_name, ptype="read")
 	if target_workstation:
 		_require_document_access("Workstation", target_workstation, ptype="read")
-	return _require_impact_preview_access(planning.preview_manual_schedule_adjustment(
-		segment_name=segment_name,
-		target_workstation=target_workstation,
-		before_segment_name=before_segment_name,
-		target_start_time=target_start_time,
-		target_end_time=target_end_time,
-		target_qty=frappe.utils.flt(target_qty) if target_qty not in (None, "") else None,
-		allow_locked=frappe.utils.cint(allow_locked),
-		allow_risk_override=frappe.utils.cint(allow_risk_override),
-		allow_overproduction=frappe.utils.cint(allow_overproduction),
-	))
+	return item_display.attach_item_display_fields(
+		_require_impact_preview_access(
+			planning.preview_manual_schedule_adjustment(
+				segment_name=segment_name,
+				target_workstation=target_workstation,
+				before_segment_name=before_segment_name,
+				target_start_time=target_start_time,
+				target_end_time=target_end_time,
+				target_qty=frappe.utils.flt(target_qty) if target_qty not in (None, "") else None,
+				allow_locked=frappe.utils.cint(allow_locked),
+				allow_risk_override=frappe.utils.cint(allow_risk_override),
+				allow_overproduction=frappe.utils.cint(allow_overproduction),
+			)
+		)
+	)
 
 
 @frappe.whitelist(methods=["POST"])
@@ -3117,11 +3246,15 @@ def preview_schedule_impact(run_name=None, downtime_window=None, segment_name=No
 		_require_scoped_document_access("APS Schedule Segment", segment_name, ptype="read")
 	if not run_name and not downtime_window and not segment_name:
 		frappe.throw(_("Provide run_name, downtime_window, or segment_name."), frappe.ValidationError)
-	return _require_impact_preview_access(planning.preview_schedule_impact(
-		run_name=run_name,
-		downtime_window=downtime_window,
-		segment_name=segment_name,
-	))
+	return item_display.attach_item_display_fields(
+		_require_impact_preview_access(
+			planning.preview_schedule_impact(
+				run_name=run_name,
+				downtime_window=downtime_window,
+				segment_name=segment_name,
+			)
+		)
+	)
 
 
 @frappe.whitelist(methods=["POST"])
@@ -3166,13 +3299,14 @@ def get_exception_resolution_context(exception_name):
 		name = context.get(fieldname)
 		if name and not _has_document_access(doctype, name, ptype="read"):
 			context[fieldname] = ""
+			context.setdefault("source_snapshot", {})[fieldname] = ""
 			context.setdefault("related_routes", {})[
 				"item" if fieldname == "item_code" else "workstation"
 			] = ""
 			context.setdefault("gantt_focus", {})[
 				"item_code" if fieldname == "item_code" else "workstation"
 			] = ""
-	return context
+	return item_display.attach_item_display_fields(context)
 
 
 @frappe.whitelist(methods=["POST"])
@@ -3403,15 +3537,20 @@ def get_net_requirement_page_data(
 			for row in rows
 			if search_lower in str(row.get("item_code") or "").lower()
 		]
-	return {
-		"rows": rows,
-		"summary": {
-			"rows": len(rows),
-			"net_requirement_qty": sum(frappe.utils.flt(row.net_requirement_qty) for row in rows),
-			"planning_qty": sum(frappe.utils.flt(row.planning_qty) for row in rows),
-		},
-		"filters": {"company": company, "item_code": item_code, "customer": customer},
-	}
+	return item_display.attach_item_display_fields(
+		{
+			"rows": rows,
+			"v2_enabled": frappe.utils.cint(v2_flags.is_v2_enabled()),
+			"summary": {
+				"rows": len(rows),
+				"net_requirement_qty": sum(
+					frappe.utils.flt(row.net_requirement_qty) for row in rows
+				),
+				"planning_qty": sum(frappe.utils.flt(row.planning_qty) for row in rows),
+			},
+			"filters": {"company": company, "item_code": item_code, "customer": customer},
+		}
+	)
 
 
 @frappe.whitelist()
@@ -3506,7 +3645,7 @@ def get_customer_schedule_progress_data(
 	response["rows"] = visible_rows
 	response["summary"] = planning._summarize_customer_schedule_progress_rows(visible_rows)
 	response["truncated"] = bool(response.get("truncated"))
-	return response
+	return item_display.attach_item_display_fields(response)
 
 
 @frappe.whitelist()
@@ -3622,7 +3761,7 @@ def get_progress_cell_drilldown(date_value, demand_identity=None, schedule_item=
 		if _has_scoped_document_access("APS Schedule Result", name)
 	]
 	response["row"] = row
-	return response
+	return item_display.attach_item_display_fields(response)
 
 
 def _sanitize_progress_v2_response(response):
@@ -3677,7 +3816,7 @@ def _sanitize_progress_v2_response(response):
 		if _has_scoped_document_access("APS Planning Run", name, access_cache=access_cache)
 	]
 	response["projection"] = projection
-	return response
+	return item_display.attach_item_display_fields(response)
 
 
 def _filter_progress_source_documents(rows, *, access_cache=None):
@@ -3807,17 +3946,18 @@ def get_demand_admission_candidates(planning_run=None):
 	result["terminal_summary"] = baseline.get("terminal_summary", {})
 	result["validation"] = baseline.get("validation", {})
 	result["available"] = True
-	return result
+	return item_display.attach_item_display_fields(result)
 
 
 @frappe.whitelist(methods=["POST"])
-def preview_admission_impact(planning_run=None, decisions=None, input_fingerprint=None):
+def preview_admission_impact(planning_run=None, decisions=None, input_fingerprint=None, strategy=None):
 	_require_plan_access()
 	_require_scoped_document_access("APS Planning Run", planning_run, ptype="read")
 	return demand_admission.preview_admission_impact(
 		planning_run,
 		_parse_json_list(decisions, label=_("Admission decisions")),
 		expected_fingerprint=str(input_fingerprint or "").strip(),
+		strategy=str(strategy or "").strip(),
 	)
 
 
@@ -3827,6 +3967,7 @@ def save_demand_admission_decisions(
 	decisions=None,
 	input_fingerprint=None,
 	reason=None,
+	strategy=None,
 ):
 	_require_plan_access()
 	_require_scoped_document_access(
@@ -3837,14 +3978,18 @@ def save_demand_admission_decisions(
 		_parse_json_list(decisions, label=_("Admission decisions")),
 		expected_fingerprint=str(input_fingerprint or "").strip(),
 		reason=reason,
+		strategy=str(strategy or "").strip(),
 	)
 
 
 @frappe.whitelist()
-def get_run_console_data(company=None, plant_floor=None):
+def get_run_console_data(company=None, plant_floor=None, run_name=None):
 	_require_read_access()
+	if run_name:
+		_require_scoped_document_access("APS Planning Run", run_name, ptype="read")
+		company = frappe.db.get_value("APS Planning Run", run_name, "company") or company
 	_require_scope_access(company=company)
-	filters = planning._strip_none({"company": company})
+	filters = planning._strip_none({"company": company, "name": run_name})
 	run_fields = [
 		"name",
 		"company",
@@ -3873,6 +4018,8 @@ def get_run_console_data(company=None, plant_floor=None):
 		run_fields.extend(
 			[
 				"baseline_run", "demand_baseline_fingerprint", "admission_fingerprint",
+				"admission_confirmed_fingerprint", "admission_confirmed_by", "admission_confirmed_on",
+				"admission_strategy", "admission_decision_reason", "planned_admission_fingerprint",
 				"total_p0_qty", "total_stock_covered_qty", "total_carried_qty", "total_new_plan_qty",
 				"total_selected_p1_qty", "total_selected_p2_qty", "carried_commitment_count", "source_run_count",
 			]
@@ -3949,7 +4096,7 @@ def get_run_console_data(company=None, plant_floor=None):
 		row.result_count = len(results_by_run[row.name])
 		row.exception_count = exception_count_by_run[row.name]
 		if v2_enabled:
-			row.v2_admission_available = 1
+			row.v2_admission_available = frappe.utils.cint(bool(row.demand_baseline_fingerprint))
 	run_contexts = {
 		row.name: _sanitize_planning_run_context(
 			planning.get_next_actions_for_context("APS Planning Run", row.name),
@@ -3958,6 +4105,7 @@ def get_run_console_data(company=None, plant_floor=None):
 		for row in runs
 	}
 	return {
+		"v2_enabled": frappe.utils.cint(v2_enabled),
 		"runs": [
 			{
 				**row,
@@ -4264,6 +4412,7 @@ def get_schedule_gantt_data(run_name):
 					"demand_commitment": parent.demand_commitment,
 					"item_code": parent.item_code,
 					"item_name": item_detail.get("item_name"),
+					"customer_code": item_detail.get("customer_code"),
 					"customer_reference": item_detail.get("customer_reference"),
 					"food_grade": item_detail.get("food_grade"),
 					"customer": parent.customer,
@@ -4452,6 +4601,7 @@ def get_schedule_gantt_data(run_name):
 				"name": row.name,
 				"item_code": row.item_code,
 				"item_name": item_detail.get("item_name"),
+				"customer_code": item_detail.get("customer_code"),
 				"customer": row.customer,
 				"requested_date": row.requested_date,
 				"demand_source": row.demand_source,
@@ -4529,23 +4679,25 @@ def get_schedule_gantt_data(run_name):
 		planning.get_next_actions_for_context("APS Planning Run", run_name),
 		quantity_summary=quantity_summary,
 	)
-	return {
-		"tasks": tasks,
-		"dependencies": dependencies,
-		"campaigns": campaign_summary,
-		"rows": segments,
-		"lanes": lanes,
-		"downtime_windows": downtime_windows,
-		"selected_plant_floors": selected_plant_floors,
-		"blocked_results": blocked_results,
-		"run": run_context,
-		"run_context": run_context,
-		"quantity_summary": quantity_summary,
-		"fulfillment_summary": fulfillment.get("summary") or {},
-		"fulfillment_results": fulfillment.get("results") or [],
-		"fulfillment_warning_count": len(fulfillment.get("warnings") or []),
-		"fulfillment_warnings": fulfillment.get("warnings") or [],
-	}
+	return item_display.attach_item_display_fields(
+		{
+			"tasks": tasks,
+			"dependencies": dependencies,
+			"campaigns": campaign_summary,
+			"rows": segments,
+			"lanes": lanes,
+			"downtime_windows": downtime_windows,
+			"selected_plant_floors": selected_plant_floors,
+			"blocked_results": blocked_results,
+			"run": run_context,
+			"run_context": run_context,
+			"quantity_summary": quantity_summary,
+			"fulfillment_summary": fulfillment.get("summary") or {},
+			"fulfillment_results": fulfillment.get("results") or [],
+			"fulfillment_warning_count": len(fulfillment.get("warnings") or []),
+			"fulfillment_warnings": fulfillment.get("warnings") or [],
+		}
+	)
 
 
 @frappe.whitelist()
@@ -4641,11 +4793,11 @@ def get_release_center_data(run_name=None):
 		if _has_exception_source_access(row, exception_access_cache)
 	]
 	for row in exceptions:
-		diagnostic = planning._parse_diagnostic_json(row.get("diagnostic_json"))
-		row["diagnostic"] = diagnostic
-		row["root_cause_codes"] = diagnostic.get("root_cause_codes") or []
-		row["root_cause_text"] = diagnostic.get("root_cause_text") or row.get("resolution_hint") or row.get("message")
-		row["suggested_actions"] = diagnostic.get("suggested_actions") or []
+		resolution_context = planning._build_exception_resolution_context(row)
+		row["diagnostic"] = resolution_context.get("diagnostic") or {}
+		row["root_cause_codes"] = resolution_context.get("root_cause_codes") or []
+		row["root_cause_text"] = resolution_context.get("root_cause_text") or row.get("message")
+		row["suggested_actions"] = resolution_context.get("suggested_actions") or []
 		row["has_resolution_context"] = 1
 		row.update(_build_exception_routes(row))
 		exception_run_name = row.get("planning_run") or run_name
@@ -4708,16 +4860,18 @@ def get_release_center_data(run_name=None):
 			if _has_document_access("Plant Floor", name, ptype="read")
 		]
 		recent_runs.append(row)
-	return {
-		"work_order_proposal_batches": work_order_proposal_batches,
-		"shift_schedule_proposal_batches": shift_schedule_proposal_batches,
-		"release_batches": release_batches,
-		"exceptions": exceptions,
-		"run_context": run_context,
-		"quantity_summary": quantity_summary,
-		"execution_health": execution_health,
-		"fulfillment_summary": (fulfillment or {}).get("summary"),
-		"fulfillment_warning_count": len((fulfillment or {}).get("warnings") or []),
-		"fulfillment_warnings": (fulfillment or {}).get("warnings") or [],
-		"recent_runs": recent_runs,
-	}
+	return item_display.attach_item_display_fields(
+		{
+			"work_order_proposal_batches": work_order_proposal_batches,
+			"shift_schedule_proposal_batches": shift_schedule_proposal_batches,
+			"release_batches": release_batches,
+			"exceptions": exceptions,
+			"run_context": run_context,
+			"quantity_summary": quantity_summary,
+			"execution_health": execution_health,
+			"fulfillment_summary": (fulfillment or {}).get("summary"),
+			"fulfillment_warning_count": len((fulfillment or {}).get("warnings") or []),
+			"fulfillment_warnings": (fulfillment or {}).get("warnings") or [],
+			"recent_runs": recent_runs,
+		}
+	)

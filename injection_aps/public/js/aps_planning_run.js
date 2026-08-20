@@ -1,5 +1,5 @@
 const PLANNING_RUN_SHARED_READY = frappe.require("/assets/injection_aps/js/injection_aps_ui_loader.js")
-	.then(() => injection_aps.ui_loader.load("20260815.2"));
+	.then(() => injection_aps.ui_loader.load("20260821.2"));
 
 frappe.ui.form.on("APS Planning Run", {
 	async refresh(frm) {
@@ -588,7 +588,7 @@ async function show_bom_decisions(frm) {
 		const defaultBom = (options.find((row) => Number(row.is_default || 0) === 1) || options[0] || {}).name || "";
 		return `
 			<tr>
-				<td>${injection_aps.ui.escape(item)}</td>
+				<td>${injection_aps.ui.item_identity(Object.assign({ item_code: item }, options[0] || {}))}</td>
 				<td>${injection_aps.ui.escape(defaultBom || "-")}</td>
 				<td><select class="form-control input-sm ia-bom-choice" data-item="${injection_aps.ui.escape(item)}" ${data.policy === "Explicit Approved Alternative" ? "" : "disabled"}>
 					<option value="">${injection_aps.ui.escape(__("Use Default BOM", null, "Injection APS"))}</option>
@@ -626,9 +626,9 @@ async function show_bom_tree(frm) {
 	const summary = data.summary || {};
 	const rows = (data.links || []).map((row) => `<tr>
 		<td>${injection_aps.ui.escape(row.root_demand_key || "-")}</td>
-		<td>${injection_aps.ui.escape(((data.nodes || []).find((node) => node.key === row.from) || {}).item_code || "-")}</td>
+		<td>${injection_aps.ui.item_identity((data.nodes || []).find((node) => node.key === row.from) || {})}</td>
 		<td>→</td>
-		<td>${injection_aps.ui.escape(((data.nodes || []).find((node) => node.key === row.to) || {}).item_code || "-")}</td>
+		<td>${injection_aps.ui.item_identity((data.nodes || []).find((node) => node.key === row.to) || {})}</td>
 		<td>${injection_aps.ui.escape(injection_aps.ui.format_number(row.required_qty || 0))}</td>
 		<td>${injection_aps.ui.escape(injection_aps.ui.format_number(row.stock_covered_qty || 0))}</td>
 		<td>${injection_aps.ui.escape(injection_aps.ui.format_number(row.wip_covered_qty || 0))}</td>

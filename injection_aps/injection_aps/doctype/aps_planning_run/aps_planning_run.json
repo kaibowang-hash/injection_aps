@@ -25,10 +25,18 @@
   "due_time_policy",
   "run_type",
   "existing_work_order_policy",
+  "planning_customer_filter",
+  "planning_item_filter",
   "baseline_run",
   "latest_replan_cycle",
   "demand_baseline_fingerprint",
   "admission_fingerprint",
+  "admission_confirmed_fingerprint",
+  "admission_confirmed_by",
+  "admission_confirmed_on",
+  "admission_strategy",
+  "admission_decision_reason",
+  "planned_admission_fingerprint",
   "bom_selection_json",
   "bom_selection_fingerprint",
   "bom_selection_by",
@@ -233,6 +241,20 @@
    "read_only": 1
   },
   {
+   "fieldname": "planning_customer_filter",
+   "fieldtype": "Link",
+   "label": "Planning Customer Filter",
+   "options": "Customer",
+   "read_only": 1
+  },
+  {
+   "fieldname": "planning_item_filter",
+   "fieldtype": "Link",
+   "label": "Planning Item Filter",
+   "options": "Item",
+   "read_only": 1
+  },
+  {
    "fieldname": "baseline_run",
    "fieldtype": "Link",
    "label": "Baseline Run",
@@ -259,6 +281,47 @@
    "fieldname": "admission_fingerprint",
    "fieldtype": "Data",
    "label": "Admission Fingerprint",
+   "read_only": 1,
+   "search_index": 1
+  },
+  {
+   "fieldname": "admission_confirmed_fingerprint",
+   "fieldtype": "Data",
+   "hidden": 1,
+   "label": "Admission Confirmed Fingerprint",
+   "read_only": 1,
+   "search_index": 1
+  },
+  {
+   "fieldname": "admission_confirmed_by",
+   "fieldtype": "Link",
+   "label": "Admission Confirmed By",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "fieldname": "admission_confirmed_on",
+   "fieldtype": "Datetime",
+   "label": "Admission Confirmed On",
+   "read_only": 1
+  },
+  {
+   "fieldname": "admission_strategy",
+   "fieldtype": "Data",
+   "label": "Admission Strategy",
+   "read_only": 1
+  },
+  {
+   "fieldname": "admission_decision_reason",
+   "fieldtype": "Small Text",
+   "label": "Admission Decision Reason",
+   "read_only": 1
+  },
+  {
+   "fieldname": "planned_admission_fingerprint",
+   "fieldtype": "Data",
+   "hidden": 1,
+   "label": "Planned Admission Fingerprint",
    "read_only": 1,
    "search_index": 1
   },

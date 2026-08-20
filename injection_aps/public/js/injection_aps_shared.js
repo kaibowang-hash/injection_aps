@@ -1,7 +1,7 @@
 frappe.provide("injection_aps.ui");
 
 (function () {
-	const UI_ASSET_VERSION = "20260815.2";
+	const UI_ASSET_VERSION = "20260821.2";
 	if (injection_aps.ui.__asset_version === UI_ASSET_VERSION) {
 		return;
 	}
@@ -12,6 +12,9 @@ frappe.provide("injection_aps.ui");
 	injection_aps.ui.local_icon_sprite = `/assets/injection_aps/icons/aps-icons.svg?v=${UI_ASSET_VERSION}`;
 	injection_aps.ui.__busy_keys = injection_aps.ui.__busy_keys || new Set();
 	injection_aps.ui.__freeze_depth = injection_aps.ui.__freeze_depth || 0;
+	injection_aps.ui.__item_display_cache = injection_aps.ui.__item_display_cache || new Map();
+	injection_aps.ui.__pending_item_display_codes = injection_aps.ui.__pending_item_display_codes || new Set();
+	injection_aps.ui.__item_display_timer = null;
 	injection_aps.ui.__action_role_map = {
 		preview: ["System Manager", "GMC", "PMC", "Sales Manager", "Sales User", "Manufacturing Manager"],
 		preview_current_rows: ["System Manager", "GMC", "PMC", "Sales Manager", "Sales User", "Manufacturing Manager"],
@@ -145,6 +148,147 @@ frappe.provide("injection_aps.ui");
 	injection_aps.ui.doc_link = function (doctype, name, label) {
 		const route = injection_aps.ui.doc_route(doctype, name);
 		return route ? injection_aps.ui.route_link(label || name, route) : injection_aps.ui.escape(label || name || "");
+	};
+
+	injection_aps.ui.item_identity = function (row, options) {
+		const source = row || {};
+		const settings = Object.assign({}, options || {});
+		const itemCode = String(source.item_code || settings.item_code || "").trim();
+		const hasInlineDetails = Object.prototype.hasOwnProperty.call(source, "customer_code")
+			&& Object.prototype.hasOwnProperty.call(source, "item_name");
+		if (itemCode && hasInlineDetails) {
+			const existing = injection_aps.ui.__item_display_cache.get(itemCode) || {};
+			injection_aps.ui.__item_display_cache.set(itemCode, Object.assign({}, existing, {
+				item_code: itemCode,
+				customer_code: source.customer_code || "",
+				item_name: source.item_name || "",
+			}));
+		}
+		const cached = injection_aps.ui.__item_display_cache.get(itemCode) || {};
+		const customerCode = String(source.customer_code || cached.customer_code || "").trim();
+		const itemName = String(source.item_name || cached.item_name || "").trim();
+		let codeHtml = settings.code_html;
+		if (codeHtml == null) {
+			codeHtml = settings.link === false
+				? injection_aps.ui.escape(itemCode || "-")
+				: injection_aps.ui.doc_link("Item", itemCode, itemCode || "-");
+		}
+		const className = ["ia-item-identity", settings.class_name || ""].filter(Boolean).join(" ");
+		if (itemCode && !injection_aps.ui.__item_display_cache.has(itemCode)) {
+			injection_aps.ui.queue_item_display_details([itemCode]);
+		}
+		return `
+			<span class="${injection_aps.ui.escape(className)}" data-ia-item-identity="${injection_aps.ui.escape(itemCode)}">
+				<span class="ia-item-code">${codeHtml}</span>
+				${customerCode ? `<span class="ia-item-customer-code" title="${injection_aps.ui.escape(customerCode)}">${injection_aps.ui.escape(customerCode)}</span>` : ""}
+				${itemName ? `<span class="ia-item-name" title="${injection_aps.ui.escape(itemName)}">${injection_aps.ui.escape(itemName)}</span>` : ""}
+			</span>
+		`;
+	};
+
+	injection_aps.ui.refresh_item_identity_nodes = function (itemCodes) {
+		if (typeof document === "undefined" || !document.querySelectorAll) {
+			return;
+		}
+		const requested = new Set((itemCodes || []).map((value) => String(value || "").trim()).filter(Boolean));
+		document.querySelectorAll("[data-ia-item-identity]").forEach((node) => {
+			const itemCode = String(node.dataset.iaItemIdentity || "").trim();
+			if (!itemCode || (requested.size && !requested.has(itemCode))) {
+				return;
+			}
+			const item = injection_aps.ui.__item_display_cache.get(itemCode) || {};
+			[
+				["ia-item-customer-code", item.customer_code],
+				["ia-item-name", item.item_name],
+			].forEach(([className, rawValue]) => {
+				const value = String(rawValue || "").trim();
+				let detailNode = node.querySelector(`.${className}`);
+				if (!value) {
+					if (detailNode) {
+						detailNode.remove();
+					}
+					return;
+				}
+				if (!detailNode) {
+					detailNode = document.createElement("span");
+					detailNode.className = className;
+					node.appendChild(detailNode);
+				}
+				detailNode.textContent = value;
+				detailNode.title = value;
+			});
+		});
+	};
+
+	injection_aps.ui.queue_item_display_details = function (itemCodes) {
+		(itemCodes || []).forEach((value) => {
+			const itemCode = String(value || "").trim();
+			if (itemCode && !injection_aps.ui.__item_display_cache.has(itemCode)) {
+				injection_aps.ui.__pending_item_display_codes.add(itemCode);
+			}
+		});
+		if (
+			injection_aps.ui.__item_display_timer
+			|| !injection_aps.ui.__pending_item_display_codes.size
+			|| typeof window === "undefined"
+			|| typeof window.setTimeout !== "function"
+		) {
+			return;
+		}
+		injection_aps.ui.__item_display_timer = window.setTimeout(async () => {
+			injection_aps.ui.__item_display_timer = null;
+			const pending = Array.from(injection_aps.ui.__pending_item_display_codes);
+			injection_aps.ui.__pending_item_display_codes.clear();
+			await injection_aps.ui.load_item_display_details(pending);
+		}, 0);
+	};
+
+	injection_aps.ui.load_item_display_details = async function (itemCodes) {
+		const codes = Array.from(
+			new Set((itemCodes || []).map((value) => String(value || "").trim()).filter(Boolean))
+		);
+		const missing = codes.filter((itemCode) => !injection_aps.ui.__item_display_cache.has(itemCode));
+		if (!missing.length) {
+			return injection_aps.ui.__item_display_cache;
+		}
+		try {
+			let response;
+			try {
+				const rows = await frappe.xcall("frappe.client.get_list", {
+					doctype: "Item",
+					fields: ["name", "item_name", "customer_code"],
+					filters: { name: ["in", missing] },
+					limit_page_length: missing.length,
+				});
+				response = {
+					items: (rows || []).map((row) => ({
+						item_code: row.name || "",
+						customer_code: row.customer_code || "",
+						item_name: row.item_name || "",
+					})),
+				};
+			} catch (clientError) {
+				response = await frappe.xcall("injection_aps.api.app.get_item_display_details", {
+					item_codes: missing,
+				});
+			}
+			const found = new Set();
+			((response && response.items) || []).forEach((row) => {
+				const itemCode = String(row.item_code || "").trim();
+				if (!itemCode) {
+					return;
+				}
+				found.add(itemCode);
+				injection_aps.ui.__item_display_cache.set(itemCode, row);
+			});
+			missing.filter((itemCode) => !found.has(itemCode)).forEach((itemCode) => {
+				injection_aps.ui.__item_display_cache.set(itemCode, {});
+			});
+			injection_aps.ui.refresh_item_identity_nodes(missing);
+		} catch (error) {
+			console.error(error);
+		}
+		return injection_aps.ui.__item_display_cache;
 	};
 
 	injection_aps.ui.shorten = function (value, length) {
@@ -803,9 +947,12 @@ frappe.provide("injection_aps.ui");
 				const cells = columns
 					.map((column) => {
 						const rawValue = row[column.fieldname];
-						const value = formatter
+						const formattedValue = formatter
 							? formatter(column, rawValue, row, rowIndex)
 							: injection_aps.ui.escape(rawValue == null ? "" : String(rawValue));
+						const value = column.fieldname === "item_code" && column.item_identity !== false
+							? injection_aps.ui.item_identity(row, { code_html: formattedValue })
+							: formattedValue;
 						const classNames = [
 							injection_aps.ui.is_numeric_like(rawValue, column.fieldtype) ? "ia-cell-number" : "",
 							column.className || "",
@@ -889,6 +1036,32 @@ frappe.provide("injection_aps.ui");
 					<div class="ia-status-value ${context.blocking_reason ? "ia-risk-text" : "ia-muted"}">${injection_aps.ui.escape(injection_aps.ui.translate(context.blocking_reason || __("None", null, "Injection APS")))}</div>
 				</div>
 			</div>
+		`;
+	};
+
+	injection_aps.ui.render_workflow_steps = function (target, steps) {
+		if (!target) {
+			return;
+		}
+		const rows = (steps || []).filter((step) => step && step.label);
+		if (!rows.length) {
+			target.innerHTML = "";
+			return;
+		}
+		target.innerHTML = `
+			<nav class="ia-workflow-steps" aria-label="${injection_aps.ui.escape(__("APS Workflow"))}">
+				${rows.map((step, index) => {
+					const state = ["complete", "current", "blocked"].includes(step.status) ? step.status : "upcoming";
+					const content = `
+						<span class="ia-workflow-index" aria-hidden="true">${index + 1}</span>
+						<span class="ia-workflow-label">${injection_aps.ui.escape(injection_aps.ui.translate(step.label))}</span>
+					`;
+					if (step.route && state === "complete") {
+						return `<a class="ia-workflow-step ${state}" href="/app/${injection_aps.ui.escape(step.route)}">${content}</a>`;
+					}
+					return `<span class="ia-workflow-step ${state}" ${state === "current" ? 'aria-current="step"' : ""}>${content}</span>`;
+				}).join("")}
+			</nav>
 		`;
 	};
 

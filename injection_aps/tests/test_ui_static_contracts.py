@@ -68,11 +68,13 @@ class TestUIStaticContracts(unittest.TestCase):
 			'fieldname: "next_action"',
 			'class="ia-run-overview"',
 			'class="ia-run-metric-grid ia-run-key-metrics"',
-			'class="ia-run-drawer"',
+			'class="ia-status-line"',
+			'class="ia-page ia-drawer-stack ia-run-drawer"',
+			'class="ia-kv ia-run-drawer-metrics"',
 			'data-run-details=',
 			'injection_aps.ui.open_drawer(',
 			'action_key: "open_run"',
-			'aps_run_console.css?v=20260815.2',
+			'aps_run_console.css?v=20260821.2',
 			"export_columns: exportColumns",
 			"return injection_aps.ui.format_number(value);",
 		):
@@ -104,15 +106,73 @@ class TestUIStaticContracts(unittest.TestCase):
 			".ia-run-table .ia-table",
 			"min-width: 900px",
 			".ia-run-key-metrics",
-			".ia-run-drawer-section",
-			".ia-run-drawer-metric-grid",
-			":has(.ia-run-drawer)",
+			".ia-run-drawer-number",
 			".ia-run-nav-actions",
 			"@media (max-width: 960px)",
 			"@media (max-width: 640px)",
 		):
 			with self.subTest(css_marker=marker):
 				self.assertIn(marker, css)
+		self.assertNotIn(":has(.ia-run-drawer)", css)
+		self.assertNotIn(".ia-run-drawer-section", css)
+
+	def test_execution_exception_drawer_loads_authoritative_context_and_guidance(self):
+		source = (
+			APP_ROOT
+			/ "injection_aps/page/aps_release_center/aps_release_center.js"
+		).read_text(encoding="utf-8")
+		for marker in (
+			'"injection_aps.api.app.get_exception_resolution_context"',
+			"renderExceptionResolution(detail, loadError)",
+			'class="ia-page ia-drawer-stack ia-exception-drawer"',
+			'class="ia-panel ia-resolution-panel"',
+			"renderExceptionSourceFacts(detail)",
+			"getExceptionSuggestedActions(detail)",
+			"injection_aps.ui.item_identity(row)",
+			'fieldname: "root_cause_text"',
+			'fieldname: "suggested_actions"',
+		):
+			with self.subTest(marker=marker):
+				self.assertIn(marker, source)
+
+	def test_gantt_manual_changes_return_and_render_authoritative_segment_state(self):
+		gantt = (
+			APP_ROOT
+			/ "injection_aps/page/aps_schedule_gantt/aps_schedule_gantt.js"
+		).read_text(encoding="utf-8")
+		planning = (APP_ROOT / "services/planning.py").read_text(encoding="utf-8")
+		for marker in (
+			"this.refreshGeneration = 0",
+			"const refreshGeneration = ++this.refreshGeneration",
+			"applyManualAdjustmentLocally(response)",
+			"details.segment_planned_qty = Number(segment.planned_qty || 0)",
+			"this.renderGantt(this.data.tasks)",
+		):
+			with self.subTest(marker=marker):
+				self.assertIn(marker, gantt)
+		for marker in (
+			'"updated_segment": {',
+			'"start_time": updated_segment.get("current_start_time")',
+			'"planned_qty": updated_segment.get("planned_qty")',
+			'"updated_result": {',
+		):
+			with self.subTest(marker=marker):
+				self.assertIn(marker, planning)
+
+	def test_gantt_uses_version_safe_shared_ui_loader(self):
+		gantt = (
+			APP_ROOT
+			/ "injection_aps/page/aps_schedule_gantt/aps_schedule_gantt.js"
+		).read_text(encoding="utf-8")
+		self.assertIn(
+			'frappe.require("/assets/injection_aps/js/injection_aps_ui_loader.js"',
+			gantt,
+		)
+		self.assertIn('injection_aps.ui_loader.start("20260821.2"', gantt)
+		self.assertNotIn(
+			'frappe.require("/assets/injection_aps/js/injection_aps_shared.js?v=',
+			gantt,
+		)
 
 	def test_gantt_risk_values_are_translated_per_enum_across_all_render_paths(self):
 		source = (
@@ -267,7 +327,7 @@ class TestUIStaticContracts(unittest.TestCase):
 					f'const {ready_name} = frappe.require("/assets/injection_aps/js/injection_aps_ui_loader.js")',
 					source,
 				)
-				self.assertIn('.then(() => injection_aps.ui_loader.load("20260815.2"))', source)
+				self.assertIn('.then(() => injection_aps.ui_loader.load("20260821.2"))', source)
 				self.assertIn(f"await {ready_name};", source)
 				self.assertLess(
 					source.index(f"await {ready_name};"),
@@ -288,12 +348,12 @@ class TestUIStaticContracts(unittest.TestCase):
 					'frappe.require("/assets/injection_aps/js/injection_aps_ui_loader.js"',
 					source,
 				)
-				self.assertIn('injection_aps.ui_loader.start("20260815.2"', source)
+				self.assertIn('injection_aps.ui_loader.start("20260821.2"', source)
 
 		loader = (APP_ROOT / "public/js/injection_aps_ui_loader.js").read_text(encoding="utf-8")
 		shared = (APP_ROOT / "public/js/injection_aps_shared.js").read_text(encoding="utf-8")
 		self.assertIn('injection_aps_shared.js?v=${encodeURIComponent(version)}', loader)
-		self.assertIn('const UI_ASSET_VERSION = "20260815.2"', shared)
+		self.assertIn('const UI_ASSET_VERSION = "20260821.2"', shared)
 		self.assertIn('existingStyle.setAttribute("href", styleHref)', shared)
 		self.assertIn('aps-icons.svg?v=${UI_ASSET_VERSION}', shared)
 
