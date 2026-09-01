@@ -45,7 +45,11 @@ doc_events = {
 		"before_validate": "injection_aps.services.delivery_fulfillment.inherit_delivery_note_lineage",
 		"before_submit": "injection_aps.services.delivery_sync.validate_delivery_before_submit",
 		"on_submit": "injection_aps.services.delivery_sync.queue_delivery_sync",
-		"on_cancel": "injection_aps.services.delivery_sync.queue_delivery_sync",
+		"on_cancel": [
+			"injection_aps.services.delivery_sync.retire_delivery_artifacts",
+			"injection_aps.services.delivery_sync.queue_delivery_sync",
+		],
+		"on_trash": "injection_aps.services.delivery_sync.delete_delivery_artifacts",
 	},
 	"Stock Entry": {
 		"before_submit": "injection_aps.services.execution_sync.validate_manufacture_before_submit",
