@@ -1,5 +1,5 @@
 frappe.pages["aps-solver-scenario-comparison"].on_page_load = function (wrapper) {
-	injection_aps.ui_loader.start("20260901.1", () => initializeSolverComparison(wrapper));
+	injection_aps.ui_loader.start("20260902.1", () => initializeSolverComparison(wrapper));
 };
 
 function initializeSolverComparison(wrapper) {

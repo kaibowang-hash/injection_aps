@@ -1,4 +1,4 @@
-let PLANNING_RUN_SHARED_READY = injection_aps.ui_loader.load("20260901.1");
+let PLANNING_RUN_SHARED_READY = injection_aps.ui_loader.load("20260902.1");
 
 frappe.ui.form.on("APS Planning Run", {
 	async refresh(frm) {
@@ -34,7 +34,7 @@ frappe.ui.form.on("APS Planning Run", {
 function show_ui_load_failure(frm) {
 	frm.clear_custom_buttons();
 	frm.add_custom_button(__("Retry APS Interface", null, "Injection APS"), () => {
-		PLANNING_RUN_SHARED_READY = injection_aps.ui_loader.load("20260901.1");
+		PLANNING_RUN_SHARED_READY = injection_aps.ui_loader.load("20260902.1");
 		frm.refresh();
 	});
 	frm.dashboard.set_headline(`<div class="alert alert-danger">${__("APS Interface Failed to Load", null, "Injection APS")}</div>`);

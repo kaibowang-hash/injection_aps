@@ -1,5 +1,5 @@
 frappe.pages["aps-shift-replan-center"].on_page_load = function (wrapper) {
-	injection_aps.ui_loader.start("20260901.1", () => initializeShiftReplanCenter(wrapper));
+	injection_aps.ui_loader.start("20260902.1", () => initializeShiftReplanCenter(wrapper));
 };
 
 function initializeShiftReplanCenter(wrapper) {

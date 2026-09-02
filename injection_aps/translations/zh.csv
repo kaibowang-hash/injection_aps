@@ -4726,3 +4726,15 @@ The shift schedule preview permission scope is incomplete. Refresh and retry.,�
 Schedule Result {0} no longer matches the admitted demand and frozen production-lot boundary for Commitment {1}. Recalculate the Planning Run before analysis.,排产结果 {0} 已不再匹配需求承诺 {1} 的准入需求量及冻结生产批量边界。请重新计算计划运算后再分析。
 Schedule Result {0} has no frozen production quantity evidence.,排产结果 {0} 缺少冻结的生产数量依据。
 Fixed production coverage {0} exceeds production boundary {1} for Schedule Result {2}. Reconcile execution before analysis.,排产结果 {2} 的固定生产覆盖量 {0} 超过生产边界 {1}。请在分析前核对执行数据。
+"Allocated Stock","已分配库存","Injection APS"
+"APS Unscheduled","APS 未排数量","Injection APS"
+"APS Unscheduled / Recovery","APS 未排数量 / 补数","Injection APS"
+"Unfulfilled Qty","未交付数量","Injection APS"
+"No Formal Plan","暂无正式计划","Injection APS"
+"No Formal APS Projection","暂无正式 APS 计划","Injection APS"
+"No Formal APS owner exists in this scope. Trial Run stock and plan quantities are excluded; production and delivery appear only after APS attributes their source documents to this demand.","当前范围没有正式生效的 APS 计划；试算批次的库存和计划不会合并显示，生产与交付也只展示已归属到该需求的来源单据。","Injection APS"
+"No Formal APS owner exists for this demand. Select a Trial Run to inspect trial stock and planning quantities.","该需求没有正式生效的 APS 计划。请选择一个试算批次查看对应的库存分配和计划数量。","Injection APS"
+"Select a Trial Run to inspect it. Until a Run is selected, plan and allocated-stock quantities are not projected.","请选择一个试算批次查看试算结果；选择批次前不展示 APS 计划和已分配库存。","Injection APS"
+"APS Attributed Production","APS 已归属生产","Injection APS"
+"APS Attributed Inbound","APS 已归属入库","Injection APS"
+"Allocated Delivery","已归属交付","Injection APS"

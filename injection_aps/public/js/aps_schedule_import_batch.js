@@ -1,4 +1,4 @@
-const SCHEDULE_IMPORT_BATCH_SHARED_READY = injection_aps.ui_loader.load("20260901.1");
+const SCHEDULE_IMPORT_BATCH_SHARED_READY = injection_aps.ui_loader.load("20260902.1");
 
 frappe.ui.form.on("APS Schedule Import Batch", {
 	async refresh(frm) {

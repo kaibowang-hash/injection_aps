@@ -268,6 +268,59 @@ class TestPhase1DeliveryIntegration(FrappeTestCase):
 			frappe.db.set_single_value("APS Settings", "enable_aps_v2", self.original_v2)
 			frappe.clear_cache(doctype="APS Settings")
 
+	def test_initial_schedule_replays_open_unallocated_delivery(self):
+		item = self._create_item("APS-V2-P1-REPLAY")
+		delivery_note, delivery_item = self._create_delivery_note(item, 20)
+		first_sync = delivery_fulfillment.sync_delivery_allocations(
+			company=self.company,
+			customer=self.customer,
+			source_delivery_note=delivery_note,
+		)
+		self.assertEqual(first_sync["unallocated_count"], 1)
+
+		scope = f"APS-V2-P1-REPLAY-{frappe.generate_hash(length=10)}"
+		rows = [{
+			"item_code": item,
+			"schedule_date": self.due_date,
+			"qty": 100,
+			"external_line_reference": "REPLAY-LINE",
+		}]
+		preview = schedule_revision.preview_revision(
+			customer=self.customer,
+			company=self.company,
+			version_no="BASE",
+			schedule_scope=scope,
+			revision_mode="Full Replacement",
+			rows_json=rows,
+		)
+		result = schedule_revision.apply_revision(
+			customer=self.customer,
+			company=self.company,
+			version_no="BASE",
+			schedule_scope=scope,
+			confirmed_revision_mode="Full Replacement",
+			rows_json=rows,
+			expected_active_state_token=preview["active_state_token"],
+			expected_revision_fingerprint=preview["revision_fingerprint"],
+		)
+
+		allocation = frappe.db.get_value(
+			"APS Delivery Allocation",
+			{"source_delivery_note_item": delivery_item, "is_effective": 1},
+			["customer_schedule_item", "effective_qty"],
+			as_dict=True,
+		)
+		self.assertIsNotNone(allocation)
+		self.assertEqual(allocation.effective_qty, 20)
+		self.assertEqual(
+			frappe.db.get_value("Customer Delivery Schedule Item", allocation.customer_schedule_item, "parent"),
+			result["schedule"],
+		)
+		self.assertEqual(
+			frappe.db.get_value("APS Unallocated Delivery", {"source_delivery_note_item": delivery_item}, "status"),
+			"Resolved",
+		)
+
 	def test_explicit_delivery_and_return_follow_original_identity(self):
 		delivery_note, delivery_item = self._create_delivery_note(
 			self.item,

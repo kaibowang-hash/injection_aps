@@ -1100,6 +1100,13 @@ def _persist_revision(*, preview, file_url, source_type, mode_confirmation_reaso
 		if item.identity_match_method == "Manual Resolution":
 			values.update({"last_resolution_reason": item.identity_resolution_reason, "last_resolved_by": frappe.session.user, "last_resolved_on": now_datetime()})
 		frappe.db.set_value("APS Demand Identity", item.demand_identity, values, update_modified=False)
+	from injection_aps.services import delivery_fulfillment
+
+	delivery_fulfillment.sync_delivery_allocations(
+		company=preview["company"],
+		customer=preview["customer"],
+		item_codes=sorted({item.item_code for item in schedule.items if item.item_code}),
+	)
 	frappe.db.set_value("APS Schedule Import Batch", batch.name, "schedule_reference", schedule.name, update_modified=False)
 	planning._record_schedule_deltas(
 		import_batch=batch.name,

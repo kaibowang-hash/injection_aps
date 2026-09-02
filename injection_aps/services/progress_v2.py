@@ -222,7 +222,7 @@ def aggregate_matrix_rows(rows: Iterable[dict[str, Any]], visible_dates: Iterabl
 	for row in rows or []:
 		grouped[_matrix_group_key(row)].append(row)
 	result = []
-	status_rank = {"Delivered": 0, "Stock Covered": 1, "On Track": 2, "Unknown": 3, "At Risk": 4, "Uncovered": 5, "Late": 6}
+	status_rank = {"Delivered": 0, "Stock Covered": 1, "On Track": 2, "No Formal Plan": 3, "Unknown": 3, "At Risk": 4, "Uncovered": 5, "Late": 6}
 	for key, group_rows in grouped.items():
 		worst = max(group_rows, key=lambda row: status_rank.get(row.get("status"), 3))
 		events = [event for row in group_rows for event in row.get("events") or []]
@@ -243,8 +243,10 @@ def aggregate_matrix_rows(rows: Iterable[dict[str, Any]], visible_dates: Iterabl
 				"demand_identities": [row.get("demand_identity") for row in group_rows if row.get("demand_identity")],
 				**{
 					fieldname: sum(flt(row.get(fieldname)) for row in group_rows)
-					for fieldname in (*LAYER_FIELDS, "open_demand_qty")
+					for fieldname in (*LAYER_FIELDS, "open_demand_qty", "unprojected_open_qty")
 				},
+				"projection_available": cint(all(cint(row.get("projection_available", 1)) for row in group_rows)),
+				"unprojected_rows": sum(1 for row in group_rows if not cint(row.get("projection_available", 1))),
 				"conservation_status": "Mismatch" if any(row.get("conservation_status") == "Mismatch" for row in group_rows) else "OK",
 				"status": worst.get("status"),
 				"status_tone": worst.get("status_tone"),
@@ -342,6 +344,8 @@ def summarize_rows(rows: Iterable[dict[str, Any]]) -> dict[str, Any]:
 		"stock_covered_qty": sum(flt(row.get("stock_covered_qty")) for row in rows),
 		"shortage_qty": sum(flt(row.get("shortage_qty")) for row in rows),
 		"recovery_qty": sum(flt(row.get("recovery_qty")) for row in rows),
+		"unprojected_rows": sum(cint(row.get("unprojected_rows")) or cint(not row.get("projection_available", 1)) for row in rows),
+		"unprojected_open_qty": sum(flt(row.get("unprojected_open_qty")) for row in rows),
 		"conservation_issue_rows": sum(1 for row in rows if row.get("conservation_status") == "Mismatch"),
 		"status_counts": dict(status_counts),
 	}
@@ -359,6 +363,8 @@ def classify_progress_row(row: dict[str, Any], *, today: date | None = None) -> 
 	due_time = _as_datetime(row.get("effective_due_time")) or datetime.combine(due_date, time.max)
 	if schedule_qty <= QTY_TOLERANCE or delivered_qty + QTY_TOLERANCE >= schedule_qty:
 		return "Delivered", "green", _("Actual Delivery Note allocations cover the effective schedule quantity.", context="Injection APS")
+	if not cint(row.get("projection_available", 1)):
+		return "No Formal Plan", "gray", _("No Formal APS owner exists for this demand. Select a Trial Run to inspect trial stock and planning quantities.", context="Injection APS")
 	if delivered_qty + stock_qty + QTY_TOLERANCE >= schedule_qty:
 		return "Stock Covered", "blue", _("Delivered quantity and active finished-goods allocation cover the demand.", context="Injection APS")
 	if not row.get("demand_identity"):
@@ -492,7 +498,11 @@ def _build_projection(
 			row for row in production_rows
 			if not row.get("segment") or row.get("segment") in visible_segment_names
 		]
-	stock_rows = _get_stock_allocations(identities, run_name=run_name)
+	stock_rows = _get_stock_allocations(
+		identities,
+		run_name=run_name,
+		commitment_names=commitment_names,
+	)
 	delivery_rows = _get_delivery_allocations(identities)
 	delivery_plan_rows = _get_delivery_plan_rows(identities)
 	pegging_rows = _get_bom_peggings(commitment_names)
@@ -545,9 +555,11 @@ def _build_projection(
 				delivery_rows=delivery_by_identity.get(identity) or [],
 				delivery_plan_rows=dp_by_identity.get(identity) or [],
 				pegging_rows=root_peggings,
+				projection_available=bool(run_name or identity_commitments),
 			)
 		)
 	selected_runs.discard(None)
+	projection_available = bool(run_name or selected_runs)
 	projection_type = "Single Run" if run_name else "Effective Cross-Run"
 	return {
 		"projection": {
@@ -555,11 +567,20 @@ def _build_projection(
 			"single_run_view": cint(bool(run_name)),
 			"selected_run": run_name,
 			"run_names": sorted(selected_runs | ({run_name} if run_name else set())),
-			"label": _("Single Run view", context="Injection APS") if run_name else _("Current effective cross-Run projection", context="Injection APS"),
+			"available": cint(projection_available),
+			"label": (
+				_("Single Run view", context="Injection APS")
+				if run_name
+				else _("Current effective cross-Run projection", context="Injection APS")
+				if projection_available
+				else _("No Formal APS Projection", context="Injection APS")
+			),
 			"reason": (
 				_("Only commitments from the explicitly selected APS Run are shown.", context="Injection APS")
 				if run_name
 				else _("Each Demand Identity is projected from its current Formal owner; no recent old Run is selected by status priority.", context="Injection APS")
+				if projection_available
+				else _("No Formal APS owner exists in this scope. Trial Run stock and plan quantities are excluded; production and delivery appear only after APS attributes their source documents to this demand.", context="Injection APS")
 			),
 		},
 		"rows": rows,
@@ -577,6 +598,7 @@ def _project_row(
 	delivery_rows: list[dict[str, Any]],
 	delivery_plan_rows: list[dict[str, Any]],
 	pegging_rows: list[dict[str, Any]],
+	projection_available: bool = True,
 ) -> dict[str, Any]:
 	row = dict(schedule_row)
 	schedule_qty = max(flt(row.get("schedule_qty")), 0)
@@ -590,7 +612,7 @@ def _project_row(
 	on_time_qty = sum(flt(item.get("on_time_qty")) for item in commitments)
 	recovery_qty = sum(flt(item.get("late_qty")) for item in commitments)
 	shortage_qty = sum(flt(item.get("unscheduled_qty")) for item in commitments)
-	if not commitments:
+	if not commitments and projection_available:
 		shortage_qty = open_demand_qty
 	if commitments and shortage_qty <= QTY_TOLERANCE:
 		shortage_qty = sum(flt(item.get("critical_unplanned_qty")) for item in results)
@@ -677,6 +699,8 @@ def _project_row(
 		{
 			"schedule_qty": schedule_qty,
 			"open_demand_qty": open_demand_qty,
+			"projection_available": cint(projection_available),
+			"unprojected_open_qty": open_demand_qty if not projection_available else 0,
 			"requested_open_qty": requested_open_qty,
 			"original_plan_qty": original_plan_qty,
 			"current_plan_qty": current_plan_qty,
@@ -1248,12 +1272,16 @@ def _get_production_allocations(schedule_items, result_names, *, run_name):
 	]
 
 
-def _get_stock_allocations(identities, *, run_name):
+def _get_stock_allocations(identities, *, run_name, commitment_names=()):
 	if not identities or not frappe.db.exists("DocType", "APS Stock Coverage Allocation"):
+		return []
+	commitment_names = sorted({name for name in commitment_names or [] if name})
+	if not commitment_names:
 		return []
 	filters: dict[str, Any] = {"demand_identity": ("in", identities), "status": "Active"}
 	if run_name:
 		filters["owner_run"] = run_name
+	filters["commitment"] = ("in", commitment_names)
 	return [dict(row) for row in frappe.get_list("APS Stock Coverage Allocation", filters=filters, fields=["name", "demand_identity", "commitment", "owner_run", "warehouse", "allocated_qty", "consumed_qty", "released_qty", "remaining_qty", "status"], limit_page_length=0)]
 
 

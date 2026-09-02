@@ -83,7 +83,7 @@ class TestUIStaticContracts(unittest.TestCase):
 			'data-run-details=',
 			'injection_aps.ui.open_drawer(',
 			'action_key: "open_run"',
-			'aps_run_console.css?v=20260901.1',
+			'aps_run_console.css?v=20260902.1',
 			"export_columns: exportColumns",
 			"return injection_aps.ui.format_number(value);",
 		):
@@ -195,7 +195,7 @@ class TestUIStaticContracts(unittest.TestCase):
 			'frappe.require("/assets/injection_aps/js/injection_aps_ui_loader.js"',
 			gantt,
 		)
-		self.assertIn('injection_aps.ui_loader.start("20260901.1"', gantt)
+		self.assertIn('injection_aps.ui_loader.start("20260902.1"', gantt)
 		self.assertNotIn(
 			'frappe.require("/assets/injection_aps/js/injection_aps_shared.js?v=',
 			gantt,
@@ -374,7 +374,7 @@ class TestUIStaticContracts(unittest.TestCase):
 			with self.subTest(filename=filename):
 				declaration = "let" if filename == "aps_planning_run.js" else "const"
 				self.assertIn(
-					f'{declaration} {ready_name} = injection_aps.ui_loader.load("20260901.1")',
+					f'{declaration} {ready_name} = injection_aps.ui_loader.load("20260902.1")',
 					source,
 				)
 				self.assertIn(f"await {ready_name};", source)
@@ -397,7 +397,7 @@ class TestUIStaticContracts(unittest.TestCase):
 					'frappe.require("/assets/injection_aps/js/injection_aps_ui_loader.js"',
 					source,
 				)
-				self.assertIn('injection_aps.ui_loader.start("20260901.1"', source)
+				self.assertIn('injection_aps.ui_loader.start("20260902.1"', source)
 
 		loader = (APP_ROOT / "public/js/injection_aps_ui_loader.js").read_text(encoding="utf-8")
 		shared = (APP_ROOT / "public/js/injection_aps_shared.js").read_text(encoding="utf-8")
@@ -407,7 +407,7 @@ class TestUIStaticContracts(unittest.TestCase):
 			hooks.index('"/assets/injection_aps/js/injection_aps_shared.js"'),
 		)
 		self.assertIn('injection_aps_shared.js?v=${encodeURIComponent(version)}', loader)
-		self.assertIn('const UI_ASSET_VERSION = "20260901.1"', shared)
+		self.assertIn('const UI_ASSET_VERSION = "20260902.1"', shared)
 		self.assertIn('existingStyle.setAttribute("href", styleHref)', shared)
 		self.assertIn('aps-icons.svg?v=${UI_ASSET_VERSION}', shared)
 
@@ -437,7 +437,7 @@ class TestUIStaticContracts(unittest.TestCase):
 	def test_dynamic_select_options_use_app_translation_context(self):
 		contracts = {
 			"injection_aps/page/aps_customer_schedule_progress/aps_customer_schedule_progress.js": (
-				'["", "Delivered", "Stock Covered", "On Track", "At Risk", "Late", "Uncovered"].join("\\n")',
+				'["", "Delivered", "Stock Covered", "On Track", "At Risk", "Late", "Uncovered", "No Formal Plan"].join("\\n")',
 			),
 			"injection_aps/page/aps_change_impact_center/aps_change_impact_center.js": (
 				'options: "\\nDraft\\nAnalyzed\\nPMC Confirmed\\nApproved\\nApplied\\nRejected\\nCancelled"',
@@ -468,6 +468,7 @@ class TestUIStaticContracts(unittest.TestCase):
 		keys = {(row[0], row[2] if len(row) > 2 else "") for row in rows}
 		for value in (
 			"Stock Covered",
+			"No Formal Plan",
 			"At Risk",
 			"Uncovered",
 			"Draft",

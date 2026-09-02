@@ -1,7 +1,7 @@
 frappe.provide("injection_aps.ui");
 
 (function () {
-	const UI_ASSET_VERSION = "20260901.1";
+	const UI_ASSET_VERSION = "20260902.1";
 	if (injection_aps.ui.__asset_version === UI_ASSET_VERSION) {
 		return;
 	}

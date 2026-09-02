@@ -154,6 +154,65 @@ class TestV2Phase8Progress(unittest.TestCase):
 		self.assertEqual(rows, [])
 		get_list.assert_not_called()
 
+	def test_cross_run_stock_is_limited_to_formal_commitments(self):
+		db = MagicMock()
+		db.exists.return_value = True
+		with (
+			patch.object(progress_v2.frappe, "db", db),
+			patch.object(progress_v2.frappe, "get_list", return_value=[]) as get_list,
+		):
+			progress_v2._get_stock_allocations(
+				["DEMAND-1"],
+				run_name=None,
+				commitment_names=["FORMAL-COMMITMENT"],
+			)
+		self.assertEqual(
+			get_list.call_args.kwargs["filters"]["commitment"],
+			("in", ["FORMAL-COMMITMENT"]),
+		)
+
+	def test_single_run_stock_is_limited_to_visible_commitments(self):
+		db = MagicMock()
+		db.exists.return_value = True
+		with (
+			patch.object(progress_v2.frappe, "db", db),
+			patch.object(progress_v2.frappe, "get_list", return_value=[]) as get_list,
+		):
+			progress_v2._get_stock_allocations(
+				["DEMAND-1"],
+				run_name="RUN-1",
+				commitment_names=["COMMITMENT-1"],
+			)
+		filters = get_list.call_args.kwargs["filters"]
+		self.assertEqual(filters["owner_run"], "RUN-1")
+		self.assertEqual(filters["commitment"], ("in", ["COMMITMENT-1"]))
+
+	def test_no_formal_projection_does_not_report_trial_stock_or_aps_shortage(self):
+		with patch.object(progress_v2, "nowdate", return_value="2026-08-01"):
+			row = progress_v2._project_row(
+				{
+					"schedule": "SCHEDULE-1",
+					"schedule_item": "SCHEDULE-ITEM-1",
+					"demand_identity": "IDENTITY-1",
+					"schedule_date": "2026-08-20",
+					"schedule_qty": 72_643,
+					"schedule_delivered_qty": 0,
+				},
+				commitments=[],
+				results=[],
+				segments=[],
+				production_rows=[],
+				stock_rows=[],
+				delivery_rows=[],
+				delivery_plan_rows=[],
+				pegging_rows=[],
+				projection_available=False,
+			)
+		self.assertEqual(row["stock_covered_qty"], 0)
+		self.assertEqual(row["shortage_qty"], 0)
+		self.assertEqual(row["unprojected_open_qty"], 72_643)
+		self.assertEqual(row["status"], "No Formal Plan")
+
 	def test_actual_inbound_uses_effective_stock_entry_allocation_date(self):
 		segment = {
 			"name": "SEG-1", "parent": "RESULT-1", "planned_qty": 100,

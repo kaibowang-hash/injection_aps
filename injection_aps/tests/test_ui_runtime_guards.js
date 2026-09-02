@@ -24,6 +24,9 @@ function loadPage(relativePath, pageName, className) {
 				escape(value) {
 					return String(value == null ? "" : value);
 				},
+				format_number(value) {
+					return Number(value || 0).toLocaleString("en-US");
+				},
 				set_feedback() {},
 				translate(value) {
 					return String(value == null ? "" : value);
@@ -264,7 +267,7 @@ async function testRunConsoleStylesDoNotBlockPageInitialization() {
 	let started = 0;
 	context.injection_aps.ui_loader = {
 		start(version, callback) {
-			assert.equal(version, "20260901.1");
+			assert.equal(version, "20260902.1");
 			started += 1;
 			callback();
 		},
@@ -288,7 +291,7 @@ async function testRunConsoleStylesDoNotBlockPageInitialization() {
 	assert.equal(appended[0].rel, "stylesheet");
 	assert.equal(
 		appended[0].getAttribute("href"),
-		"/assets/injection_aps/css/aps_run_console.css?v=20260901.1"
+		"/assets/injection_aps/css/aps_run_console.css?v=20260902.1"
 	);
 }
 
@@ -692,6 +695,32 @@ async function testCustomerProgressResyncsAndClearsRouteRunOnPageReuse() {
 	assert.equal(controller.syncRouteState(), false);
 }
 
+async function testCustomerProgressExplainsMissingFormalProjection() {
+	const { Controller } = loadPage(
+		"injection_aps/page/aps_customer_schedule_progress/aps_customer_schedule_progress.js",
+		"aps-customer-schedule-progress",
+		"InjectionAPSCustomerScheduleProgress"
+	);
+	const controller = Object.create(Controller.prototype);
+	controller.projectionBanner = { innerHTML: "" };
+	controller.statusHost = { innerHTML: "stale" };
+	controller.renderProjectionStatus(
+		{
+			available: 0,
+			single_run_view: 0,
+			label: "No Formal APS Projection",
+			reason: "Trial Run stock and plan quantities are intentionally excluded.",
+			run_names: [],
+		},
+		{ unprojected_open_qty: 72643 }
+	);
+
+	assert.match(controller.projectionBanner.innerHTML, /No Formal APS Projection/);
+	assert.match(controller.projectionBanner.innerHTML, /Select a Trial Run/);
+	assert.match(controller.projectionBanner.innerHTML, /72,643/);
+	assert.equal(controller.statusHost.innerHTML, "");
+}
+
 async function testProgressToolbarUsesSharedIconControls() {
 	const { Controller, context } = loadPage(
 		"injection_aps/page/aps_customer_schedule_progress/aps_customer_schedule_progress.js",
@@ -1020,6 +1049,7 @@ async function main() {
 		testCustomerProgressIgnoresOlderResponse,
 		testCustomerProgressV2DispatchesDetailAndMatrixWithoutChangingLegacyCall,
 		testCustomerProgressResyncsAndClearsRouteRunOnPageReuse,
+		testCustomerProgressExplainsMissingFormalProjection,
 		testProgressToolbarUsesSharedIconControls,
 		testProgressMatrixCellSeparatesFourOperationalLayersAndUsesGroupedRowKey,
 		testUiLoaderReloadsSharedAssetsByVersionAndDeduplicatesRequests,

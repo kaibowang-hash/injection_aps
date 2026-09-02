@@ -1,4 +1,4 @@
-const CUSTOMER_SCHEDULE_SHARED_READY = injection_aps.ui_loader.load("20260901.1");
+const CUSTOMER_SCHEDULE_SHARED_READY = injection_aps.ui_loader.load("20260902.1");
 
 frappe.ui.form.on("Customer Delivery Schedule", {
 	async refresh(frm) {

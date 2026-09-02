@@ -36,7 +36,7 @@ class TestPhase8Contracts(unittest.TestCase):
 		source = (ROOT / "injection_aps/page/aps_customer_schedule_progress/aps_customer_schedule_progress.js").read_text()
 		for token in (
 			"Date Matrix", "renderV2Table", "renderMatrix", "column_offset", "page_length",
-			"export_rows_to_excel", "getMatrixLayers", "renderProgressToolbar", "Actual Inbound",
+			"export_rows_to_excel", "getMatrixLayers", "renderProgressToolbar", "APS Attributed Inbound",
 		):
 			self.assertIn(token, source)
 		self.assertIn('this.progressView = "Date Matrix"', source)

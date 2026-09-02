@@ -1,6 +1,6 @@
 frappe.pages["aps-run-console"].on_page_load = function (wrapper) {
 	ensureInjectionAPSRunConsoleStyles();
-	injection_aps.ui_loader.start("20260901.1", () => {
+	injection_aps.ui_loader.start("20260902.1", () => {
 		if (!wrapper.injection_aps_controller) {
 			wrapper.injection_aps_controller = new InjectionAPSRunConsole(wrapper);
 		}
@@ -10,7 +10,7 @@ frappe.pages["aps-run-console"].on_page_load = function (wrapper) {
 
 function ensureInjectionAPSRunConsoleStyles() {
 	const styleId = "injection-aps-run-console-style";
-	const styleHref = "/assets/injection_aps/css/aps_run_console.css?v=20260901.1";
+	const styleHref = "/assets/injection_aps/css/aps_run_console.css?v=20260902.1";
 	let style = document.getElementById(styleId);
 	if (!style) {
 		style = document.createElement("link");
