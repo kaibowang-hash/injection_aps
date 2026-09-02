@@ -8,6 +8,10 @@
   "planning_horizon_days",
   "release_horizon_days",
   "freeze_days",
+  "default_freeze_horizon_days",
+  "default_restricted_horizon_days",
+  "default_recovery_horizon_days",
+  "due_time_policy",
   "default_production_strategy",
   "capacity_bucket_mode",
   "default_max_prebuild_days",
@@ -33,7 +37,19 @@
   "plant_floor_source_warehouse_field",
   "plant_floor_wip_warehouse_field",
   "plant_floor_fg_warehouse_field",
-  "plant_floor_scrap_warehouse_field"
+  "plant_floor_scrap_warehouse_field",
+  "aps_v2_section",
+  "enable_aps_v2",
+  "solver_engine",
+  "enable_shift_replan",
+  "enable_coproduct_campaign",
+  "enable_multilevel_bom_planning",
+  "aps_producible_item_groups",
+  "aps_bom_policy",
+  "delivery_legacy_match_tolerance_days",
+  "max_execution_staleness_minutes",
+  "solver_time_limit_seconds",
+  "shift_solver_time_limit_seconds"
  ],
  "fields": [
   {
@@ -65,6 +81,31 @@
    "fieldname": "freeze_days",
    "fieldtype": "Int",
    "label": "Freeze Days"
+  },
+  {
+   "default": "2",
+   "fieldname": "default_freeze_horizon_days",
+   "fieldtype": "Int",
+   "label": "Default Freeze Horizon Days"
+  },
+  {
+   "default": "7",
+   "fieldname": "default_restricted_horizon_days",
+   "fieldtype": "Int",
+   "label": "Default Restricted Horizon Days"
+  },
+  {
+   "default": "7",
+   "fieldname": "default_recovery_horizon_days",
+   "fieldtype": "Int",
+   "label": "Default Recovery Horizon Days"
+  },
+  {
+   "default": "Delivery Date End Of Day",
+   "fieldname": "due_time_policy",
+   "fieldtype": "Select",
+   "label": "Due Time Policy",
+   "options": "Delivery Date End Of Day\nDelivery Date Last Production Shift End"
   },
   {
    "default": "Auto Balance",
@@ -141,7 +182,7 @@
    "label": "Missing Cycle Fallback Seconds"
   },
   {
-   "default": "custom_aps_food_grade",
+   "default": "custom_food_grade",
    "fieldname": "item_food_grade_field",
    "fieldtype": "Data",
    "label": "Item Food Grade Field"
@@ -223,6 +264,95 @@
    "fieldname": "plant_floor_scrap_warehouse_field",
    "fieldtype": "Data",
    "label": "Plant Floor Scrap Warehouse Field"
+  },
+  {
+   "collapsible": 1,
+   "fieldname": "aps_v2_section",
+   "fieldtype": "Section Break",
+   "hidden": 1,
+   "label": "APS V2 (Controlled Rollout)"
+  },
+  {
+   "default": "0",
+   "fieldname": "enable_aps_v2",
+   "fieldtype": "Check",
+   "hidden": 1,
+   "label": "Enable APS V2"
+  },
+  {
+   "default": "Legacy",
+   "fieldname": "solver_engine",
+   "fieldtype": "Select",
+   "hidden": 1,
+   "label": "Solver Engine",
+   "options": "Legacy\nCP-SAT"
+  },
+  {
+   "default": "0",
+   "fieldname": "enable_shift_replan",
+   "fieldtype": "Check",
+   "hidden": 1,
+   "label": "Enable Shift Replan"
+  },
+  {
+   "default": "0",
+   "fieldname": "enable_coproduct_campaign",
+   "fieldtype": "Check",
+   "hidden": 1,
+   "label": "Enable Co-product Campaign"
+  },
+  {
+   "default": "0",
+   "fieldname": "enable_multilevel_bom_planning",
+   "fieldtype": "Check",
+   "hidden": 1,
+   "label": "Enable Multilevel BOM Planning"
+  },
+  {
+   "default": "Plastic Part\nSub-assemblies",
+   "description": "One Item Group per line. Only these manufactured components become APS machine demands.",
+   "fieldname": "aps_producible_item_groups",
+   "fieldtype": "Small Text",
+   "label": "APS Producible Item Groups"
+  },
+  {
+   "default": "Default BOM Only",
+   "fieldname": "aps_bom_policy",
+   "fieldtype": "Select",
+   "label": "APS BOM Policy",
+   "options": "Default BOM Only\nExplicit Approved Alternative"
+  },
+  {
+   "default": "3",
+   "fieldname": "delivery_legacy_match_tolerance_days",
+   "fieldtype": "Int",
+   "hidden": 1,
+   "label": "Delivery Legacy Match Tolerance Days",
+   "non_negative": 1
+  },
+  {
+   "default": "30",
+   "fieldname": "max_execution_staleness_minutes",
+   "fieldtype": "Int",
+   "hidden": 1,
+   "label": "Max Execution Staleness Minutes",
+   "non_negative": 1
+  },
+  {
+   "default": "120",
+   "fieldname": "solver_time_limit_seconds",
+   "fieldtype": "Int",
+   "hidden": 1,
+   "label": "Solver Time Limit Seconds",
+   "non_negative": 1
+  },
+  {
+   "default": "30",
+   "fieldname": "shift_solver_time_limit_seconds",
+   "fieldtype": "Int",
+   "hidden": 1,
+   "label": "Shift Solver Time Limit Seconds",
+   "non_negative": 1
   }
  ],
  "issingle": 1,

@@ -6,10 +6,31 @@ from urllib.parse import urlencode
 
 import frappe
 from frappe import _
-from frappe.utils import flt, get_datetime, now_datetime
+from frappe.utils import cint, escape_html, flt, get_datetime, now_datetime
 from frappe.utils.xlsxutils import make_xlsx
 
-from injection_aps.services import availability, capacity_balance, consistency, customizations, delivery_sync, planning
+from injection_aps.services import (
+	availability,
+	bom_planning,
+	capacity_balance,
+	campaign_planning,
+	consistency,
+	constraint_resolution,
+	customizations,
+	demand_admission,
+	demand_ledger,
+	delivery_sync,
+	delivery_fulfillment,
+	item_display,
+	planning,
+	progress_v2,
+	run_preparation,
+	schedule_revision,
+	shift_replan,
+	solver_orchestration,
+	v2_baseline,
+	v2_flags,
+)
 from injection_aps.services.permissions import (
 	APS_ADMIN_ROLES,
 	APS_APPROVE_ROLES,
@@ -32,6 +53,7 @@ EXCEL_SHEET_FORBIDDEN_CHARACTERS = frozenset("[]:*?/\\")
 EXPORT_FILENAME_SAFE_CHARACTERS = frozenset(" ._-()")
 MAX_CHANGE_IMPACT_ROWS = 100
 MAX_CHANGE_ANALYSIS_BATCH = 50
+MAX_ITEM_DISPLAY_ROWS = 500
 CHANGE_REQUEST_STATUSES = (
 	"Draft",
 	"Analyzed",
@@ -74,25 +96,74 @@ def _require_admin_access():
 	require_any_role(APS_ADMIN_ROLES, _("You need APS admin access to run this maintenance action."))
 
 
-def _has_document_access(doctype, docname, ptype="read"):
+@frappe.whitelist()
+def get_item_display_details(item_codes=None):
+	"""Return permission-filtered Item identity text for APS display components."""
+	_require_read_access()
+	if isinstance(item_codes, str):
+		value = item_codes.strip()
+		item_codes = frappe.parse_json(value) if value.startswith("[") else [value]
+	item_codes = sorted({str(value or "").strip() for value in item_codes or [] if value})
+	if len(item_codes) > MAX_ITEM_DISPLAY_ROWS:
+		frappe.throw(
+			_("Request at most {0} Item display rows.", context="Injection APS").format(
+				MAX_ITEM_DISPLAY_ROWS
+			),
+			frappe.ValidationError,
+		)
+	if not item_codes:
+		return {"items": []}
+	fields = ["name", "item_name"]
+	if frappe.get_meta("Item").has_field("customer_code"):
+		fields.append("customer_code")
+	rows = frappe.get_list(
+		"Item",
+		filters={"name": ("in", item_codes)},
+		fields=fields,
+		limit_page_length=0,
+	)
+	return {
+		"items": [
+			{
+				"item_code": row.get("name") or "",
+				"customer_code": row.get("customer_code") or "",
+				"item_name": row.get("item_name") or "",
+			}
+			for row in rows
+		]
+	}
+
+
+def _has_document_access(doctype, docname, ptype="read", access_cache=None):
 	if not docname:
 		return True
+	cache = access_cache if access_cache is not None else {}
+	key = ("document", doctype, docname, ptype)
+	if key in cache:
+		return cache[key]
 	if frappe.session.user == "Administrator":
-		return True
-	return bool(frappe.has_permission(doctype, ptype=ptype, doc=docname))
+		cache[key] = True
+	else:
+		cache[key] = bool(frappe.has_permission(doctype, ptype=ptype, doc=docname))
+	return cache[key]
+
+
+def _message_value(value):
+	"""Escape request-derived identifiers before Frappe renders an HTML message."""
+	return escape_html(str(value or "-"))
 
 
 def _require_document_access(doctype, docname, ptype="read"):
 	if not docname or not frappe.db.exists(doctype, docname):
 		frappe.throw(
-			_("{0} {1} was not found.", context="Injection APS").format(_(doctype), docname or "-"),
+			_("{0} {1} was not found.", context="Injection APS").format(_(doctype), _message_value(docname)),
 			frappe.DoesNotExistError,
 		)
 	if not _has_document_access(doctype, docname, ptype=ptype):
 		frappe.throw(
 			_("You do not have permission to access {0} {1}.", context="Injection APS").format(
 				_(doctype),
-				docname,
+				_message_value(docname),
 			),
 			frappe.PermissionError,
 		)
@@ -126,7 +197,7 @@ def _require_sales_order_item_access(sales_order_item, *, sales_order=None, item
 	if not row or row.get("parenttype") not in (None, "", "Sales Order"):
 		frappe.throw(
 			_("Sales Order Item {0} was not found.", context="Injection APS").format(
-				sales_order_item
+				_message_value(sales_order_item)
 			),
 			frappe.DoesNotExistError,
 		)
@@ -134,7 +205,7 @@ def _require_sales_order_item_access(sales_order_item, *, sales_order=None, item
 	if not parent:
 		frappe.throw(
 			_("Sales Order Item {0} has no Sales Order parent.", context="Injection APS").format(
-				sales_order_item
+				_message_value(sales_order_item)
 			),
 			frappe.ValidationError,
 		)
@@ -143,7 +214,7 @@ def _require_sales_order_item_access(sales_order_item, *, sales_order=None, item
 			_(
 				"Sales Order Item {0} no longer belongs to Sales Order {1}.",
 				context="Injection APS",
-			).format(sales_order_item, sales_order),
+			).format(_message_value(sales_order_item), _message_value(sales_order)),
 			frappe.ValidationError,
 		)
 	if item_code and row.get("item_code") and row.get("item_code") != item_code:
@@ -151,11 +222,41 @@ def _require_sales_order_item_access(sales_order_item, *, sales_order=None, item
 			_(
 				"Sales Order Item {0} no longer matches Item {1}.",
 				context="Injection APS",
-			).format(sales_order_item, item_code),
+			).format(_message_value(sales_order_item), _message_value(item_code)),
 			frappe.ValidationError,
 		)
 	_require_document_access("Sales Order", parent, ptype="read")
 	_require_document_access("Sales Order Item", sales_order_item, ptype="read")
+
+
+def _has_sales_order_item_access(
+	sales_order_item,
+	*,
+	sales_order=None,
+	item_code=None,
+	access_cache=None,
+):
+	"""Check a Sales Order child through its parent without loading the full order."""
+	if not sales_order_item:
+		return True
+	cache = access_cache if access_cache is not None else {}
+	key = ("sales-order-item", sales_order_item, sales_order or "", item_code or "")
+	if key in cache:
+		return cache[key]
+	row = frappe.db.get_value(
+		"Sales Order Item",
+		sales_order_item,
+		["parent", "parenttype", "item_code"],
+		as_dict=True,
+	) or {}
+	parent = row.get("parent")
+	allowed = bool(parent) and row.get("parenttype") in (None, "", "Sales Order")
+	allowed = allowed and (not sales_order or parent == sales_order)
+	allowed = allowed and (not item_code or not row.get("item_code") or row.get("item_code") == item_code)
+	if allowed:
+		allowed = _has_document_access("Sales Order", parent, ptype="read", access_cache=cache)
+	cache[key] = bool(allowed)
+	return cache[key]
 
 
 def _require_scope_access(*, company=None, customer=None, planning_run=None, ptype="read"):
@@ -210,6 +311,7 @@ APS_SCOPED_DOCUMENT_FIELDS = {
 		"sales_order_item",
 		"plant_floor",
 		"net_requirement",
+		"demand_commitment",
 	),
 	"APS Work Order Proposal Batch": ("company", "planning_run", "plant_floor"),
 	"APS Shift Schedule Proposal Batch": ("company", "planning_run", "plant_floor"),
@@ -218,10 +320,120 @@ APS_SCOPED_DOCUMENT_FIELDS = {
 	"APS Net Requirement": ("company", "customer", "item_code", "sales_order", "sales_order_item"),
 	"APS Downtime Window": ("company", "planning_run", "plant_floor", "workstation"),
 	"APS Schedule Import Batch": ("company", "customer"),
+	"APS Demand Identity": (
+		"company", "customer", "item_code", "current_schedule", "current_schedule_item",
+	),
+	"APS Demand Commitment": (
+		"company", "customer", "planning_run", "source_run", "item_code",
+		"demand_identity", "schedule_item",
+	),
+	"APS Demand Admission": (
+		"company", "customer", "planning_run", "item_code", "demand_identity",
+		"source_doctype", "source_name",
+	),
+	"APS Solver Job": ("company", "planning_run", "plant_floor"),
+	"APS Replan Cycle": (
+		"company", "baseline_run", "plant_floor",
+		"work_order_proposal_batch", "shift_schedule_proposal_batch",
+	),
+	"APS Production Campaign": (
+		"company", "planning_run", "plant_floor", "machine", "mold",
+		"capacity_owner_segment", "linked_work_order_scheduling",
+	),
+	"APS BOM Pegging": (
+		"company", "planning_run", "root_commitment", "parent_commitment", "child_commitment",
+		"parent_result", "child_result", "parent_item", "component_item", "bom",
+	),
+	"APS Constraint Resolution": (
+		"company", "planning_run", "plant_floor", "schedule_result", "schedule_segment",
+		"demand_commitment", "affected_customer", "affected_item",
+	),
+	"APS Production Allocation": (
+		"planning_run", "schedule_result", "segment", "customer_schedule",
+		"work_order", "work_order_scheduling", "source_stock_entry",
+	),
+	"APS Delivery Allocation": (
+		"company", "customer", "item_code", "sales_order", "sales_order_item",
+		"customer_schedule", "demand_identity", "source_delivery_note", "return_against",
+	),
+	"APS Schedule Segment": (
+		"parent", "workstation", "plant_floor", "linked_work_order",
+		"linked_work_order_scheduling", "mould_reference",
+	),
+	"APS Stock Coverage Allocation": (
+		"company", "item_code", "warehouse", "demand_identity", "commitment", "owner_run",
+	),
+	"APS Unallocated Delivery": (
+		"company", "customer", "item_code", "source_delivery_note", "source_delivery_note_item",
+	),
 	"Customer Delivery Schedule": ("company", "customer"),
 	"APS Change Request": ("company", "customer", "planning_run", "item_code", "plant_floor"),
 }
 APS_CONTEXT_DOCTYPES = frozenset((*APS_SCOPED_DOCUMENT_FIELDS, "APS Schedule Segment"))
+APS_DIRECT_SCOPE_LINKS = (
+	("item_code", "Item"),
+	("sales_order", "Sales Order"),
+	("plant_floor", "Plant Floor"),
+	("workstation", "Workstation"),
+	("machine", "Workstation"),
+	("parent_item", "Item"),
+	("component_item", "Item"),
+	("affected_customer", "Customer"),
+	("affected_item", "Item"),
+	("linked_work_order", "Work Order"),
+	("linked_work_order_scheduling", "Work Order Scheduling"),
+	("bom", "BOM"),
+	("mold", "Mold"),
+	("mould_reference", "Mold"),
+	("warehouse", "Warehouse"),
+	("work_order", "Work Order"),
+	("work_order_scheduling", "Work Order Scheduling"),
+	("source_stock_entry", "Stock Entry"),
+	("source_delivery_note", "Delivery Note"),
+	("return_against", "Delivery Note"),
+)
+APS_NESTED_SCOPE_LINKS = (
+	("source_run", "APS Planning Run"),
+	("schedule_result", "APS Schedule Result"),
+	("schedule_segment", "APS Schedule Segment"),
+	("demand_commitment", "APS Demand Commitment"),
+	("root_commitment", "APS Demand Commitment"),
+	("parent_commitment", "APS Demand Commitment"),
+	("child_commitment", "APS Demand Commitment"),
+	("parent_result", "APS Schedule Result"),
+	("child_result", "APS Schedule Result"),
+	("capacity_owner_segment", "APS Schedule Segment"),
+	("work_order_proposal_batch", "APS Work Order Proposal Batch"),
+	("shift_schedule_proposal_batch", "APS Shift Schedule Proposal Batch"),
+	("customer_schedule", "Customer Delivery Schedule"),
+	("demand_identity", "APS Demand Identity"),
+	("commitment", "APS Demand Commitment"),
+	("owner_run", "APS Planning Run"),
+	("segment", "APS Schedule Segment"),
+	("current_schedule", "Customer Delivery Schedule"),
+)
+APS_INHERITED_SCOPE_LINKS = (
+	("schedule_item", "Customer Delivery Schedule Item"),
+	("current_schedule_item", "Customer Delivery Schedule Item"),
+	("source_delivery_note_item", "Delivery Note Item"),
+)
+
+
+def _iter_document_scope_links(scope):
+	for fieldname, linked_doctype in APS_DIRECT_SCOPE_LINKS:
+		if scope.get(fieldname):
+			yield linked_doctype, scope.get(fieldname), False
+	for fieldname, linked_doctype in APS_NESTED_SCOPE_LINKS:
+		if scope.get(fieldname):
+			yield linked_doctype, scope.get(fieldname), True
+
+
+def _iter_inherited_scope_links(scope):
+	for fieldname, linked_doctype in APS_INHERITED_SCOPE_LINKS:
+		if scope.get(fieldname):
+			yield linked_doctype, scope.get(fieldname)
+	if scope.get("source_doctype") and scope.get("source_name"):
+		yield scope.get("source_doctype"), scope.get("source_name")
 
 
 def _has_linked_document_access(doctype, docname, *, access_cache=None):
@@ -247,13 +459,23 @@ def _has_linked_document_access(doctype, docname, *, access_cache=None):
 			allowed = bool(parent) and _has_scoped_document_access(
 				"Customer Delivery Schedule", parent, access_cache=cache
 			)
+		elif doctype == "Delivery Plan Item Qty":
+			parent = frappe.db.get_value(doctype, docname, "parent")
+			allowed = bool(parent) and _has_document_access(
+				"Delivery Plan", parent, ptype="read", access_cache=cache
+			)
+		elif doctype == "Delivery Note Item":
+			parent = frappe.db.get_value(doctype, docname, "parent")
+			allowed = bool(parent) and _has_document_access(
+				"Delivery Note", parent, ptype="read", access_cache=cache
+			)
 		elif doctype == "Scheduling Item":
 			parent = frappe.db.get_value(doctype, docname, "parent")
-			allowed = bool(parent) and _has_document_access("Work Order Scheduling", parent, ptype="read")
+			allowed = bool(parent) and _has_document_access("Work Order Scheduling", parent, ptype="read", access_cache=cache)
 		elif doctype in APS_CONTEXT_DOCTYPES:
 			allowed = _has_scoped_document_access(doctype, docname, access_cache=cache)
 		else:
-			allowed = _has_document_access(doctype, docname, ptype="read")
+			allowed = _has_document_access(doctype, docname, ptype="read", access_cache=cache)
 	except frappe.DoesNotExistError:
 		# Covers the narrow race where the source is deleted after ``exists``.
 		allowed = False
@@ -261,12 +483,21 @@ def _has_linked_document_access(doctype, docname, *, access_cache=None):
 	return cache[cache_key]
 
 
-def _get_document_scope(doctype, docname):
+def _get_document_scope(doctype, docname, access_cache=None):
+	cache = access_cache if access_cache is not None else {}
+	cache_key = ("scope", doctype, docname)
+	if cache_key in cache:
+		return cache[cache_key]
 	fields = APS_SCOPED_DOCUMENT_FIELDS.get(doctype) or ()
 	if not fields:
-		return frappe._dict()
+		cache[cache_key] = frappe._dict()
+		return cache[cache_key]
 	row = frappe.db.get_value(doctype, docname, list(fields), as_dict=True)
-	return frappe._dict(row) if isinstance(row, dict) else frappe._dict()
+	scope = frappe._dict(row) if isinstance(row, dict) else frappe._dict()
+	if scope.get("baseline_run") and not scope.get("planning_run"):
+		scope.planning_run = scope.baseline_run
+	cache[cache_key] = scope
+	return cache[cache_key]
 
 
 def _require_scoped_document_access(doctype, docname, ptype="read", *, linked_run_ptype="read"):
@@ -278,16 +509,28 @@ def _require_scoped_document_access(doctype, docname, ptype="read", *, linked_ru
 	if doctype == "APS Schedule Segment":
 		if not docname or not frappe.db.exists(doctype, docname):
 			frappe.throw(
-				_("{0} {1} was not found.", context="Injection APS").format(_(doctype), docname or "-"),
+				_("{0} {1} was not found.", context="Injection APS").format(_(doctype), _message_value(docname)),
 				frappe.DoesNotExistError,
 			)
-		parent = frappe.db.get_value(doctype, docname, "parent")
+		scope = _get_document_scope(doctype, docname)
+		parent = scope.get("parent")
 		_require_scoped_document_access(
 			"APS Schedule Result",
 			parent,
 			ptype=ptype,
 			linked_run_ptype=linked_run_ptype,
 		)
+		for linked_doctype, linked_name, is_scoped in _iter_document_scope_links(scope):
+			if is_scoped:
+				_require_scoped_document_access(linked_doctype, linked_name, ptype="read")
+			else:
+				_require_document_access(linked_doctype, linked_name, ptype="read")
+		for linked_doctype, linked_name in _iter_inherited_scope_links(scope):
+			if not _has_linked_document_access(linked_doctype, linked_name):
+				frappe.throw(
+					_("This APS record links to data outside your permitted scope."),
+					frappe.PermissionError,
+				)
 		return
 
 	_require_document_access(doctype, docname, ptype=ptype)
@@ -298,14 +541,17 @@ def _require_scoped_document_access(doctype, docname, ptype="read", *, linked_ru
 		planning_run=scope.get("planning_run"),
 		ptype=linked_run_ptype,
 	)
-	for fieldname, linked_doctype in (
-		("item_code", "Item"),
-		("sales_order", "Sales Order"),
-		("plant_floor", "Plant Floor"),
-		("workstation", "Workstation"),
-	):
-		if scope.get(fieldname):
-			_require_document_access(linked_doctype, scope.get(fieldname), ptype="read")
+	for linked_doctype, linked_name, is_scoped in _iter_document_scope_links(scope):
+		if is_scoped:
+			_require_scoped_document_access(linked_doctype, linked_name, ptype="read")
+		else:
+			_require_document_access(linked_doctype, linked_name, ptype="read")
+	for linked_doctype, linked_name in _iter_inherited_scope_links(scope):
+		if not _has_linked_document_access(linked_doctype, linked_name):
+			frappe.throw(
+				_("This APS record links to data outside your permitted scope."),
+				frappe.PermissionError,
+			)
 	if scope.get("sales_order_item"):
 		_require_sales_order_item_access(
 			scope.get("sales_order_item"),
@@ -322,26 +568,46 @@ def _require_scoped_document_access(doctype, docname, ptype="read", *, linked_ru
 			_require_document_access("Plant Floor", plant_floor, ptype="read")
 
 
-def _has_scoped_document_access(doctype, docname, ptype="read", access_cache=None):
+def _has_scoped_document_access(
+	doctype,
+	docname,
+	ptype="read",
+	access_cache=None,
+):
 	if not docname:
 		return False
 	cache = access_cache if access_cache is not None else {}
-	key = (doctype, docname, ptype)
+	key = ("scoped", doctype, docname, ptype)
 	if key in cache:
 		return cache[key]
 	if doctype == "APS Schedule Segment":
-		parent = frappe.db.get_value(doctype, docname, "parent")
+		scope = _get_document_scope(doctype, docname, access_cache=cache)
+		parent = scope.get("parent")
 		allowed = bool(parent) and _has_scoped_document_access(
 			"APS Schedule Result", parent, ptype=ptype, access_cache=cache
 		)
+		if allowed:
+			for linked_doctype, linked_name, is_scoped in _iter_document_scope_links(scope):
+				allowed = (
+					_has_scoped_document_access(linked_doctype, linked_name, access_cache=cache)
+					if is_scoped
+					else _has_document_access(linked_doctype, linked_name, ptype="read", access_cache=cache)
+				)
+				if not allowed:
+					break
+		if allowed:
+			allowed = all(
+				_has_linked_document_access(linked_doctype, linked_name, access_cache=cache)
+				for linked_doctype, linked_name in _iter_inherited_scope_links(scope)
+			)
 		cache[key] = allowed
 		return allowed
-	if not _has_document_access(doctype, docname, ptype=ptype):
+	if not _has_document_access(doctype, docname, ptype=ptype, access_cache=cache):
 		cache[key] = False
 		return False
-	scope = _get_document_scope(doctype, docname)
+	scope = _get_document_scope(doctype, docname, access_cache=cache)
 	allowed = all(
-		_has_document_access(scope_doctype, scope_name, ptype="read")
+		_has_document_access(scope_doctype, scope_name, ptype="read", access_cache=cache)
 		for scope_doctype, scope_name in (
 			("Company", scope.get("company")),
 			("Customer", scope.get("customer")),
@@ -349,29 +615,31 @@ def _has_scoped_document_access(doctype, docname, ptype="read", access_cache=Non
 		)
 		if scope_name
 	)
-	allowed = allowed and all(
-		_has_document_access(linked_doctype, scope.get(fieldname), ptype="read")
-		for fieldname, linked_doctype in (
-			("item_code", "Item"),
-			("sales_order", "Sales Order"),
-			("plant_floor", "Plant Floor"),
-			("workstation", "Workstation"),
-		)
-		if scope.get(fieldname)
-	)
-	if allowed and scope.get("sales_order_item"):
-		try:
-			_require_sales_order_item_access(
-				scope.get("sales_order_item"),
-				sales_order=scope.get("sales_order"),
-				item_code=scope.get("item_code"),
+	if allowed:
+		for linked_doctype, linked_name, is_scoped in _iter_document_scope_links(scope):
+			allowed = (
+				_has_scoped_document_access(linked_doctype, linked_name, access_cache=cache)
+				if is_scoped
+				else _has_document_access(linked_doctype, linked_name, ptype="read", access_cache=cache)
 			)
-		except (frappe.DoesNotExistError, frappe.PermissionError, frappe.ValidationError):
-			allowed = False
-	if allowed and scope.get("planning_run"):
-		run_scope = _get_document_scope("APS Planning Run", scope.get("planning_run"))
+			if not allowed:
+				break
+	if allowed:
 		allowed = all(
-			_has_document_access("Plant Floor", plant_floor, ptype="read")
+			_has_linked_document_access(linked_doctype, linked_name, access_cache=cache)
+			for linked_doctype, linked_name in _iter_inherited_scope_links(scope)
+		)
+	if allowed and scope.get("sales_order_item"):
+		allowed = _has_sales_order_item_access(
+			scope.get("sales_order_item"),
+			sales_order=scope.get("sales_order"),
+			item_code=scope.get("item_code"),
+			access_cache=cache,
+		)
+	if allowed and scope.get("planning_run"):
+		run_scope = _get_document_scope("APS Planning Run", scope.get("planning_run"), access_cache=cache)
+		allowed = all(
+			_has_document_access("Plant Floor", plant_floor, ptype="read", access_cache=cache)
 			for plant_floor in planning._coerce_plant_floor_list(
 				plant_floors=run_scope.get("selected_plant_floor_summary"),
 				plant_floor=run_scope.get("plant_floor"),
@@ -383,7 +651,7 @@ def _has_scoped_document_access(doctype, docname, ptype="read", access_cache=Non
 		)
 	if allowed and doctype == "APS Planning Run":
 		allowed = all(
-			_has_document_access("Plant Floor", plant_floor, ptype="read")
+			_has_document_access("Plant Floor", plant_floor, ptype="read", access_cache=cache)
 			for plant_floor in planning._coerce_plant_floor_list(
 				plant_floors=scope.get("selected_plant_floor_summary"),
 				plant_floor=scope.get("plant_floor"),
@@ -393,12 +661,454 @@ def _has_scoped_document_access(doctype, docname, ptype="read", access_cache=Non
 	return allowed
 
 
+def _has_document_permission_hook(doctype):
+	hooks = frappe.get_hooks("has_permission") or {}
+	return bool(hooks.get(doctype) or hooks.get("*"))
+
+
+def _seed_permission_filtered_rows(rows, doctype, access_cache):
+	"""Cache facts already established by a permission-aware ``frappe.get_list``."""
+	scope_fields = APS_SCOPED_DOCUMENT_FIELDS.get(doctype) or ()
+	trust_list_permission = frappe.session.user == "Administrator" or not _has_document_permission_hook(doctype)
+	for row in rows or []:
+		name = row.get("name")
+		if not name:
+			continue
+		# List permissions include roles, owner/share rules, User Permissions and
+		# permission_query_conditions. A custom has_permission hook is document-only,
+		# so retain the per-document check when one exists.
+		if trust_list_permission:
+			access_cache[("document", doctype, name, "read")] = True
+		if scope_fields and all(fieldname in row for fieldname in scope_fields):
+			scope = frappe._dict({fieldname: row.get(fieldname) for fieldname in scope_fields})
+			if scope.get("baseline_run") and not scope.get("planning_run"):
+				scope.planning_run = scope.baseline_run
+			access_cache[("scope", doctype, name)] = scope
+
+
+def _prime_document_access(doctype, names, access_cache):
+	"""Resolve many direct read checks with permission-aware list queries."""
+	names = sorted({str(name) for name in names or [] if name})
+	missing = [
+		name for name in names
+		if ("document", doctype, name, "read") not in access_cache
+	]
+	if not missing:
+		return
+	if frappe.session.user == "Administrator":
+		for name in missing:
+			access_cache[("document", doctype, name, "read")] = True
+		return
+	if _has_document_permission_hook(doctype):
+		for name in missing:
+			_has_document_access(doctype, name, ptype="read", access_cache=access_cache)
+		return
+
+	visible = set()
+	try:
+		for start in range(0, len(missing), 500):
+			visible.update(
+				row.get("name")
+				for row in frappe.get_list(
+					doctype,
+					filters={"name": ("in", missing[start : start + 500])},
+					fields=["name"],
+					limit_page_length=0,
+				)
+				if row.get("name")
+			)
+	except frappe.PermissionError:
+		visible = set()
+	for name in missing:
+		access_cache[("document", doctype, name, "read")] = name in visible
+
+
+def _get_permission_filtered_scoped_rows(doctype, names, access_cache):
+	fields = APS_SCOPED_DOCUMENT_FIELDS.get(doctype) or ()
+	names = sorted({str(name) for name in names or [] if name})
+	missing = [name for name in names if ("scope", doctype, name) not in access_cache]
+	rows = [
+		frappe._dict({"name": name, **dict(access_cache[("scope", doctype, name)])})
+		for name in names
+		if ("scope", doctype, name) in access_cache
+	]
+	fetched_rows = []
+	for start in range(0, len(missing), 500):
+		fetched_rows.extend(
+			frappe.get_list(
+				doctype,
+				filters={"name": ("in", missing[start : start + 500])},
+				fields=["name", *fields],
+				limit_page_length=0,
+			)
+		)
+	_seed_permission_filtered_rows(fetched_rows, doctype, access_cache)
+	rows.extend(fetched_rows)
+	if frappe.session.user != "Administrator" and not _has_document_permission_hook(doctype):
+		visible = {row.get("name") for row in rows}
+		for name in missing:
+			access_cache[("document", doctype, name, "read")] = name in visible
+	return rows
+
+
+def _get_scoped_rows_for_priming(doctype, names, access_cache):
+	if doctype != "APS Schedule Segment":
+		return _get_permission_filtered_scoped_rows(doctype, names, access_cache)
+	fields = APS_SCOPED_DOCUMENT_FIELDS[doctype]
+	names = sorted({name for name in names or [] if name})
+	rows = [
+		frappe._dict({"name": name, **dict(access_cache[("scope", doctype, name)])})
+		for name in names
+		if ("scope", doctype, name) in access_cache
+	]
+	missing = [name for name in names if ("scope", doctype, name) not in access_cache]
+	fetched_rows = frappe.get_all(
+		doctype,
+		filters={"name": ("in", missing)},
+		fields=["name", *fields],
+		limit_page_length=0,
+	) if missing else []
+	for row in fetched_rows:
+		access_cache[("scope", doctype, row.get("name"))] = frappe._dict(
+			{fieldname: row.get(fieldname) for fieldname in fields}
+		)
+	return [*rows, *fetched_rows]
+
+
+def _prime_scoped_document_dependencies(rows, doctype, access_cache):
+	"""Batch the linked scope checks used by Run and Result read endpoints."""
+	rows = list(rows or [])
+	_seed_permission_filtered_rows(rows, doctype, access_cache)
+	scope_rows = list(rows)
+
+	if doctype == "APS Schedule Result":
+		net_requirements = {row.get("net_requirement") for row in rows if row.get("net_requirement")}
+		scope_rows.extend(
+			_get_permission_filtered_scoped_rows("APS Net Requirement", net_requirements, access_cache)
+		)
+
+	planning_runs = {row.get("planning_run") for row in scope_rows if row.get("planning_run")}
+	run_rows = _get_permission_filtered_scoped_rows("APS Planning Run", planning_runs, access_cache)
+	scope_rows.extend(run_rows)
+
+	references = defaultdict(set)
+	nested_references = defaultdict(set)
+	inherited_references = defaultdict(set)
+	for row in scope_rows:
+		for fieldname, linked_doctype in (("company", "Company"), ("customer", "Customer"), *APS_DIRECT_SCOPE_LINKS):
+			if row.get(fieldname):
+				references[linked_doctype].add(row.get(fieldname))
+		for fieldname, linked_doctype in APS_NESTED_SCOPE_LINKS:
+			if row.get(fieldname):
+				nested_references[linked_doctype].add(row.get(fieldname))
+		for linked_doctype, linked_name in _iter_inherited_scope_links(row):
+			inherited_references[linked_doctype].add(linked_name)
+	for row in run_rows or ([row for row in rows if doctype == "APS Planning Run"]):
+		references["Plant Floor"].update(
+			planning._coerce_plant_floor_list(
+				plant_floors=row.get("selected_plant_floor_summary"),
+				plant_floor=row.get("plant_floor"),
+			)
+		)
+
+	item_references = {
+		(row.get("sales_order_item"), row.get("sales_order"), row.get("item_code"))
+		for row in scope_rows
+		if row.get("sales_order_item")
+	}
+	item_names = sorted({reference[0] for reference in item_references})
+	item_rows = []
+	for start in range(0, len(item_names), 500):
+		item_rows.extend(
+			frappe.get_all(
+				"Sales Order Item",
+				filters={"name": ("in", item_names[start : start + 500])},
+				fields=["name", "parent", "parenttype", "item_code"],
+				limit_page_length=0,
+			)
+		)
+	item_by_name = {row.get("name"): row for row in item_rows}
+	references["Sales Order"].update(row.get("parent") for row in item_rows if row.get("parent"))
+
+	for linked_doctype, names in references.items():
+		_prime_document_access(linked_doctype, names, access_cache)
+	for linked_doctype, names in nested_references.items():
+		linked_rows = _get_scoped_rows_for_priming(linked_doctype, names, access_cache)
+		_prime_scoped_document_dependencies(linked_rows, linked_doctype, access_cache)
+	_prime_linked_document_access(inherited_references, access_cache)
+	for item_name, expected_order, expected_item in item_references:
+		row = item_by_name.get(item_name) or {}
+		parent = row.get("parent")
+		allowed = bool(parent) and row.get("parenttype") in (None, "", "Sales Order")
+		allowed = allowed and (not expected_order or parent == expected_order)
+		allowed = allowed and (not expected_item or not row.get("item_code") or row.get("item_code") == expected_item)
+		if allowed:
+			allowed = _has_document_access("Sales Order", parent, ptype="read", access_cache=access_cache)
+		access_cache[("sales-order-item", item_name, expected_order or "", expected_item or "")] = bool(allowed)
+
+
+def _prime_linked_document_access(references, access_cache):
+	"""Batch the linked-source checks used by progress projections."""
+	child_parents = {
+		"Customer Delivery Schedule Item": ("Customer Delivery Schedule", True),
+		"Delivery Plan Item Qty": ("Delivery Plan", False),
+		"Delivery Note Item": ("Delivery Note", False),
+		"Scheduling Item": ("Work Order Scheduling", False),
+	}
+	for doctype, source_names in (references or {}).items():
+		names = sorted({str(name) for name in source_names or [] if name})
+		if not doctype or not names:
+			continue
+		if not frappe.db.exists("DocType", doctype, cache=True):
+			for name in names:
+				access_cache[("linked", doctype, name, "read")] = False
+			continue
+
+		if doctype in child_parents:
+			parent_doctype, parent_is_scoped = child_parents[doctype]
+			rows = frappe.get_all(
+				doctype,
+				filters={"name": ("in", names)},
+				fields=["name", "parent"],
+				limit_page_length=0,
+			)
+			parent_by_name = {row.get("name"): row.get("parent") for row in rows}
+			parents = {parent for parent in parent_by_name.values() if parent}
+			if parent_is_scoped:
+				parent_rows = _get_scoped_rows_for_priming(parent_doctype, parents, access_cache)
+				_prime_scoped_document_dependencies(parent_rows, parent_doctype, access_cache)
+			else:
+				_prime_document_access(parent_doctype, parents, access_cache)
+			for name in names:
+				parent = parent_by_name.get(name)
+				allowed = bool(parent) and (
+					_has_scoped_document_access(parent_doctype, parent, access_cache=access_cache)
+					if parent_is_scoped
+					else _has_document_access(parent_doctype, parent, access_cache=access_cache)
+				)
+				access_cache[("linked", doctype, name, "read")] = bool(allowed)
+			continue
+
+		if doctype in APS_CONTEXT_DOCTYPES:
+			rows = _get_scoped_rows_for_priming(doctype, names, access_cache)
+			_prime_scoped_document_dependencies(rows, doctype, access_cache)
+			visible_names = {row.get("name") for row in rows}
+			for name in names:
+				access_cache[("linked", doctype, name, "read")] = bool(
+					name in visible_names
+					and _has_scoped_document_access(doctype, name, access_cache=access_cache)
+				)
+			continue
+
+		# A has_permission hook receives a document name and may raise when the
+		# source was deleted. Administrator also bypasses normal list filtering.
+		# Resolve existence once for those two cases, rather than once per name.
+		existing_names = set(names)
+		if frappe.session.user == "Administrator" or _has_document_permission_hook(doctype):
+			existing_names = set(
+				frappe.get_all(
+					doctype,
+					filters={"name": ("in", names)},
+					pluck="name",
+					limit_page_length=0,
+				)
+			)
+		_prime_document_access(doctype, existing_names, access_cache)
+		for name in names:
+			access_cache[("linked", doctype, name, "read")] = bool(
+				name in existing_names
+				and _has_document_access(doctype, name, access_cache=access_cache)
+			)
+
+
+def _prime_exception_source_access(rows, access_cache):
+	grouped = defaultdict(set)
+	for row in rows or []:
+		if row.get("source_doctype") and row.get("source_name"):
+			grouped[row.get("source_doctype")].add(row.get("source_name"))
+
+	segment_names = grouped.pop("APS Schedule Segment", set())
+	if segment_names:
+		segment_rows = frappe.get_all(
+			"APS Schedule Segment",
+			filters={"name": ("in", sorted(segment_names))},
+			fields=["name", "parent"],
+			limit_page_length=0,
+		)
+		segment_by_name = {row.get("name"): row.get("parent") for row in segment_rows}
+		parents = set(segment_by_name.values())
+		parent_rows = _get_permission_filtered_scoped_rows("APS Schedule Result", parents, access_cache)
+		_prime_scoped_document_dependencies(parent_rows, "APS Schedule Result", access_cache)
+		for name in segment_names:
+			parent = segment_by_name.get(name)
+			allowed = bool(parent) and _has_scoped_document_access(
+				"APS Schedule Result", parent, access_cache=access_cache
+			)
+			access_cache[("linked", "APS Schedule Segment", name, "read")] = bool(allowed)
+
+	for source_doctype, names in grouped.items():
+		if source_doctype not in APS_SCOPED_DOCUMENT_FIELDS:
+			continue
+		source_rows = _get_permission_filtered_scoped_rows(source_doctype, names, access_cache)
+		_prime_scoped_document_dependencies(source_rows, source_doctype, access_cache)
+		visible = {row.get("name") for row in source_rows}
+		for name in names:
+			access_cache[("linked", source_doctype, name, "read")] = bool(
+				name in visible
+				and _has_scoped_document_access(source_doctype, name, access_cache=access_cache)
+			)
+
+
 def _filter_accessible_documents(rows, doctype, access_cache=None):
+	"""Apply linked-scope checks to rows already filtered by ``frappe.get_list``."""
 	cache = access_cache if access_cache is not None else {}
+	rows = list(rows or [])
+	_seed_permission_filtered_rows(rows, doctype, cache)
+	# Callers only need to select fields used by their response.  Fill the full
+	# permission scope once here so an omitted linked field cannot silently fall
+	# back to one database query per row (or escape the nested-scope check).
+	scope_rows = _get_scoped_rows_for_priming(
+		doctype,
+		{row.get("name") for row in rows if row.get("name")},
+		cache,
+	)
+	_prime_scoped_document_dependencies(scope_rows, doctype, cache)
+	return [
+		row for row in rows
+		if row.get("name") and _has_scoped_document_access(doctype, row.get("name"), access_cache=cache)
+	]
+
+
+def _progress_projection_access_filters(access_cache):
+	"""Filter owner rows before they contribute quantities, statuses, or events."""
+	return {
+		"commitment_access_filter": lambda rows: _filter_accessible_documents(
+			rows, "APS Demand Commitment", access_cache
+		),
+		"result_access_filter": lambda rows: _filter_accessible_documents(
+			rows, "APS Schedule Result", access_cache
+		),
+		"segment_access_filter": lambda rows: _filter_visible_schedule_segments(
+			rows, access_cache
+		),
+	}
+
+
+def _filter_visible_schedule_segments(rows, access_cache=None):
+	"""Drop child rows when any document identity embedded in the segment is hidden."""
+	cache = access_cache if access_cache is not None else {}
+	rows = list(rows or [])
+	segment_names = {row.get("name") for row in rows if row.get("name")}
+	owner_names = {row.get("capacity_owner") for row in rows if row.get("capacity_owner")}
+	scope_rows = _get_scoped_rows_for_priming(
+		"APS Schedule Segment", segment_names | owner_names, cache
+	)
+	parent_rows = _get_scoped_rows_for_priming(
+		"APS Schedule Result", {row.get("parent") for row in scope_rows if row.get("parent")}, cache
+	)
+	_prime_scoped_document_dependencies(parent_rows, "APS Schedule Result", cache)
+	_prime_scoped_document_dependencies(scope_rows, "APS Schedule Segment", cache)
+	rows = _filter_accessible_documents(rows, "APS Schedule Segment", cache)
+	known_owners = {row.get("name") for row in scope_rows if row.get("name") in owner_names}
+
+	campaign_names = {row.get("production_campaign") for row in rows if row.get("production_campaign")}
+	campaign_rows = _get_scoped_rows_for_priming("APS Production Campaign", campaign_names, cache)
+	_prime_scoped_document_dependencies(campaign_rows, "APS Production Campaign", cache)
+	visible_campaigns = {
+		row.get("name")
+		for row in campaign_rows
+		if _has_scoped_document_access("APS Production Campaign", row.get("name"), access_cache=cache)
+	}
+
+	item_names = {
+		row.get(fieldname)
+		for row in rows
+		for fieldname in ("primary_item_code", "co_product_item_code")
+		if row.get(fieldname)
+	}
+	_prime_document_access("Item", item_names, cache)
+
+	scheduling_items = {row.get("linked_scheduling_item") for row in rows if row.get("linked_scheduling_item")}
+	_prime_linked_document_access({"Scheduling Item": scheduling_items}, cache)
+
 	return [
 		row
-		for row in rows or []
-		if _has_scoped_document_access(doctype, row.get("name"), access_cache=cache)
+		for row in rows
+		if (not row.get("production_campaign") or row.get("production_campaign") in visible_campaigns)
+		and all(
+			_has_document_access("Item", row.get(fieldname), access_cache=cache)
+			for fieldname in ("primary_item_code", "co_product_item_code")
+			if row.get(fieldname)
+		)
+		and (
+			not row.get("linked_scheduling_item")
+			or _has_linked_document_access("Scheduling Item", row.get("linked_scheduling_item"), access_cache=cache)
+		)
+		and (
+			row.get("capacity_owner") not in known_owners
+			or _has_scoped_document_access("APS Schedule Segment", row.get("capacity_owner"), access_cache=cache)
+		)
+	]
+
+
+def _filter_visible_gantt_results(rows, access_cache=None):
+	"""Apply the Gantt-only BOM, campaign, and mold links before totals are built."""
+	cache = access_cache if access_cache is not None else {}
+	rows = list(rows or [])
+	bom_names = {row.get("selected_bom") for row in rows if row.get("selected_bom")}
+	mold_names = {
+		name
+		for row in rows
+		for name in [
+			row.get("primary_mould_reference"),
+			*str(row.get("selected_moulds") or "").splitlines(),
+		]
+		if name
+	}
+	_prime_document_access("BOM", bom_names, cache)
+	_prime_document_access("Mold", mold_names, cache)
+
+	campaign_names = {row.get("production_campaign") for row in rows if row.get("production_campaign")}
+	campaign_rows = _get_scoped_rows_for_priming("APS Production Campaign", campaign_names, cache)
+	_prime_scoped_document_dependencies(campaign_rows, "APS Production Campaign", cache)
+	visible_campaigns = {
+		row.get("name")
+		for row in campaign_rows
+		if _has_scoped_document_access("APS Production Campaign", row.get("name"), access_cache=cache)
+	}
+
+	commitment_names = {
+		row.get(fieldname)
+		for row in rows
+		for fieldname in ("root_commitment", "parent_commitment")
+		if row.get(fieldname)
+	}
+	commitment_rows = _get_scoped_rows_for_priming("APS Demand Commitment", commitment_names, cache)
+	_prime_scoped_document_dependencies(commitment_rows, "APS Demand Commitment", cache)
+	visible_commitments = {
+		row.get("name")
+		for row in commitment_rows
+		if _has_scoped_document_access("APS Demand Commitment", row.get("name"), access_cache=cache)
+	}
+
+	return [
+		row
+		for row in rows
+		if (not row.get("selected_bom") or _has_document_access("BOM", row.get("selected_bom"), access_cache=cache))
+		and all(
+			_has_document_access("Mold", name, access_cache=cache)
+			for name in [
+				row.get("primary_mould_reference"),
+				*str(row.get("selected_moulds") or "").splitlines(),
+			]
+			if name
+		)
+		and (not row.get("production_campaign") or row.get("production_campaign") in visible_campaigns)
+		and all(
+			row.get(fieldname) in visible_commitments
+			for fieldname in ("root_commitment", "parent_commitment")
+			if row.get(fieldname)
+		)
 	]
 
 
@@ -414,11 +1124,16 @@ def _has_exception_source_access(row, access_cache=None):
 	)
 
 
-def _filter_link_list(value, doctype):
+def _filter_link_list(value, doctype, access_cache=None):
 	return "\n".join(
 		name
 		for name in str(value or "").splitlines()
-		if name and _has_document_access(doctype, name, ptype="read")
+		if name and _has_document_access(
+			doctype,
+			name,
+			ptype="read",
+			access_cache=access_cache,
+		)
 	)
 
 
@@ -443,7 +1158,7 @@ def _require_all_documents_visible(doctype, filters):
 		)
 	)
 	if not all_names:
-		return
+		return all_names
 	visible_names = {
 		row.get("name")
 		for row in frappe.get_list(
@@ -462,6 +1177,66 @@ def _require_all_documents_visible(doctype, filters):
 			),
 			frappe.PermissionError,
 		)
+	return all_names
+
+
+def _require_all_scoped_documents_visible(doctype, filters):
+	if doctype == "APS Schedule Segment":
+		names = set(frappe.get_all(doctype, filters=filters, pluck="name", limit_page_length=0))
+	else:
+		names = _require_all_documents_visible(doctype, filters) or set()
+	if not names:
+		return names
+	access_cache = {}
+	rows = _get_scoped_rows_for_priming(doctype, names, access_cache)
+	_prime_scoped_document_dependencies(rows, doctype, access_cache)
+	if any(
+		not _has_scoped_document_access(doctype, name, access_cache=access_cache)
+		for name in sorted(names)
+	):
+		frappe.throw(
+			_(
+				"This APS payload includes records or linked references outside your permitted scope.",
+				context="Injection APS",
+			),
+			frappe.PermissionError,
+		)
+	return names
+
+
+def _require_payload_link_access(rows, links):
+	"""Batch-check document names embedded in a computed JSON payload."""
+	grouped = defaultdict(set)
+	for row in rows or []:
+		for fieldname, linked_doctype, is_scoped in links:
+			if row.get(fieldname):
+				grouped[(linked_doctype, is_scoped)].add(row.get(fieldname))
+	access_cache = {}
+	hidden = False
+	for (linked_doctype, is_scoped), names in grouped.items():
+		if is_scoped:
+			linked_rows = _get_scoped_rows_for_priming(linked_doctype, names, access_cache)
+			_prime_scoped_document_dependencies(linked_rows, linked_doctype, access_cache)
+			hidden = hidden or {row.get("name") for row in linked_rows} != names
+			hidden = hidden or any(
+				not _has_scoped_document_access(linked_doctype, name, access_cache=access_cache)
+				for name in sorted(names)
+			)
+		else:
+			_prime_document_access(linked_doctype, names, access_cache)
+			hidden = hidden or any(
+				not _has_document_access(linked_doctype, name, ptype="read", access_cache=access_cache)
+				for name in sorted(names)
+			)
+	if hidden:
+		frappe.throw(
+			_(
+				"This APS payload includes linked records outside your permitted scope.",
+				context="Injection APS",
+			),
+			frappe.PermissionError,
+		)
+	return rows
 
 
 def _require_company_rebuild_scope(company):
@@ -496,7 +1271,11 @@ PROPOSAL_CHILD_SCOPE_FIELDS = {
 	"APS Work Order Proposal Item": (
 		"name",
 		"result_reference",
+		"production_campaign",
+		"demand_commitment",
+		"capacity_owner",
 		"item_code",
+		"selected_bom",
 		"customer",
 		"sales_order",
 		"sales_order_item",
@@ -507,6 +1286,8 @@ PROPOSAL_CHILD_SCOPE_FIELDS = {
 		"name",
 		"result_reference",
 		"segment_reference",
+		"production_campaign",
+		"capacity_owner",
 		"item_code",
 		"work_order",
 		"plant_floor",
@@ -527,26 +1308,45 @@ def _require_complete_run_mutation_scope(run_name, *, run_ptype="write"):
 		linked_run_ptype=run_ptype,
 	)
 	filters = {"planning_run": run_name}
-	_require_all_documents_visible("APS Schedule Result", filters)
-	result_names = frappe.get_all(
-		"APS Schedule Result",
-		filters=filters,
-		pluck="name",
-		limit_page_length=0,
-	)
-	for result_name in sorted({name for name in result_names if name}):
-		# Result rows are engine-managed and ordinarily read-only. The controlled
-		# API role plus write permission on the Run authorizes the mutation, while
-		# every descendant and its Customer/SO/SOI lineage must remain readable.
-		_require_scoped_document_access(
-			"APS Schedule Result",
-			result_name,
-			ptype="read",
-			linked_run_ptype="read",
+	result_names = _require_all_scoped_documents_visible("APS Schedule Result", filters)
+	if result_names:
+		_require_all_scoped_documents_visible(
+			"APS Schedule Segment",
+			{"parent": ("in", sorted(result_names)), "parenttype": "APS Schedule Result"},
 		)
+	for doctype in ("APS Demand Commitment", "APS Demand Admission"):
+		if not frappe.db.exists("DocType", doctype):
+			continue
+		_require_all_scoped_documents_visible(doctype, filters)
 
 
-def _require_complete_proposal_batch_scope(batch_doctype, batch_name):
+def _require_derived_run_scope(doctype, docname, run_field, *, run_ptype):
+	"""Authorize an engine-owned child through its complete Planning Run scope."""
+	_require_scoped_document_access(
+		doctype,
+		docname,
+		ptype="read",
+		linked_run_ptype=run_ptype,
+	)
+	run_name = frappe.db.get_value(doctype, docname, run_field)
+	if not run_name:
+		frappe.throw(
+			_("{0} {1} is no longer linked to a Planning Run.", context="Injection APS").format(
+				_(doctype), docname
+			),
+			frappe.ValidationError,
+		)
+	_require_complete_run_mutation_scope(run_name, run_ptype=run_ptype)
+	return run_name
+
+
+def _require_complete_proposal_batch_scope(
+	batch_doctype,
+	batch_name,
+	*,
+	run_ptype="write",
+	require_run_scope=True,
+):
 	"""Authorize a proposal transition only when every child identity is visible."""
 	child_doctype = PROPOSAL_CHILD_DOCTYPES.get(batch_doctype)
 	if not child_doctype:
@@ -570,7 +1370,11 @@ def _require_complete_proposal_batch_scope(batch_doctype, batch_name):
 			),
 			frappe.ValidationError,
 		)
-	_require_complete_run_mutation_scope(batch_scope.get("planning_run"), run_ptype="write")
+	if require_run_scope:
+		_require_complete_run_mutation_scope(
+			batch_scope.get("planning_run"),
+			run_ptype=run_ptype,
+		)
 
 	rows = frappe.get_all(
 		child_doctype,
@@ -602,6 +1406,7 @@ def _require_complete_proposal_batch_scope(batch_doctype, batch_name):
 		for doctype, docname in (
 			("Customer", row.get("customer")),
 			("Item", row.get("item_code")),
+			("BOM", row.get("selected_bom")),
 			("Sales Order", row.get("sales_order")),
 			("Plant Floor", row.get("plant_floor")),
 			("Workstation", row.get("workstation")),
@@ -609,25 +1414,52 @@ def _require_complete_proposal_batch_scope(batch_doctype, batch_name):
 			("Work Order", row.get("existing_work_order")),
 			("Work Order", row.get("target_work_order")),
 			("Work Order Scheduling", row.get("existing_scheduling")),
-			("Scheduling Item", row.get("existing_scheduling_item")),
 			("Work Order Scheduling", row.get("target_scheduling")),
 		):
 			if docname:
 				_require_document_access(doctype, docname, ptype="read")
-		if row.get("segment_reference"):
+		for doctype, docname in (
+			("APS Production Campaign", row.get("production_campaign")),
+			("APS Demand Commitment", row.get("demand_commitment")),
+			("APS Schedule Segment", row.get("capacity_owner")),
+		):
+			if docname:
+				_require_scoped_document_access(doctype, docname, ptype="read")
+		segment_reference = str(row.get("segment_reference") or "")
+		if segment_reference and not segment_reference.startswith("cancel::"):
 			_require_scoped_document_access(
 				"APS Schedule Segment",
-				row.get("segment_reference"),
+				segment_reference,
 				ptype="read",
 			)
 			if frappe.db.get_value(
-				"APS Schedule Segment", row.get("segment_reference"), "parent"
+				"APS Schedule Segment", segment_reference, "parent"
 			) != row.get("result_reference"):
 				frappe.throw(
 					_(
 						"A proposal Segment no longer belongs to its APS Result.",
 						context="Injection APS",
 					),
+					frappe.ValidationError,
+				)
+		if segment_reference.startswith("cancel::") and segment_reference.removeprefix("cancel::") != str(
+			row.get("existing_scheduling_item") or ""
+		):
+			frappe.throw(
+				_("A cancellation proposal no longer matches its Scheduling Item."),
+				frappe.ValidationError,
+			)
+		if row.get("existing_scheduling_item"):
+			if not _has_linked_document_access("Scheduling Item", row.get("existing_scheduling_item")):
+				frappe.throw(
+					_("This APS record links to data outside your permitted scope."),
+					frappe.PermissionError,
+				)
+			if row.get("existing_scheduling") and frappe.db.get_value(
+				"Scheduling Item", row.get("existing_scheduling_item"), "parent"
+			) != row.get("existing_scheduling"):
+				frappe.throw(
+					_("A proposal Scheduling Item no longer belongs to its parent schedule."),
 					frappe.ValidationError,
 				)
 		if row.get("sales_order_item"):
@@ -689,6 +1521,32 @@ def _require_schedule_import_reference_access(preview, *, customer, company):
 				sales_order=row.get("sales_order"),
 				item_code=row.get("item_code"),
 			)
+	return preview
+
+
+def _require_active_schedule_scope_visible(*, customer, company, schedule_scope):
+	"""Require full visibility of the normalized active schedule scope."""
+	schedule_scope = planning._normalize_schedule_scope(schedule_scope)
+	_require_all_scoped_documents_visible(
+		"Customer Delivery Schedule",
+		{
+			"company": company,
+			"customer": customer,
+			"schedule_scope": schedule_scope,
+			"status": "Active",
+		},
+	)
+	return schedule_scope
+
+
+def _require_schedule_preview_access(preview, *, customer, company):
+	"""Recheck active scope plus imported references from the same preview."""
+	_require_schedule_import_reference_access(preview, customer=customer, company=company)
+	_require_active_schedule_scope_visible(
+		customer=customer,
+		company=company,
+		schedule_scope=(preview or {}).get("schedule_scope"),
+	)
 	return preview
 
 
@@ -788,6 +1646,7 @@ def _sanitize_schedule_result_detail(detail):
 	value["next_actions"] = _sanitize_planning_run_context(
 		value.get("next_actions"),
 		quantity_summary=_summarize_visible_results([result]),
+		access_cache=access_cache,
 	)
 	return value
 
@@ -1004,14 +1863,15 @@ def _filter_fulfillment_projection(fulfillment, visible_result_names):
 	return projection
 
 
-def _sanitize_planning_run_context(context, *, quantity_summary=None):
+def _sanitize_planning_run_context(context, *, quantity_summary=None, access_cache=None):
 	if not context:
 		return context
+	cache = access_cache if access_cache is not None else {}
 	value = dict(context)
 	visible_floors = [
 		name
 		for name in value.get("selected_plant_floors") or []
-		if _has_document_access("Plant Floor", name, ptype="read")
+		if _has_document_access("Plant Floor", name, ptype="read", access_cache=cache)
 	]
 	value["selected_plant_floors"] = visible_floors
 	value["selected_plant_floor_summary"] = ", ".join(visible_floors)
@@ -1028,7 +1888,8 @@ def _sanitize_planning_run_context(context, *, quantity_summary=None):
 	return value
 
 
-def _build_visible_execution_health(run_name, results):
+def _build_visible_execution_health(run_name, results, access_cache=None):
+	cache = access_cache if access_cache is not None else {}
 	status_counts = defaultdict(int)
 	for row in results or []:
 		status_counts[row.get("actual_status") or "Not Started"] += 1
@@ -1049,11 +1910,12 @@ def _build_visible_execution_health(run_name, results):
 			fields=["source_stock_entry"],
 			limit_page_length=0,
 		)
+	stock_entries = {row.get("source_stock_entry") for row in production_rows if row.get("source_stock_entry")}
+	_prime_document_access("Stock Entry", stock_entries, cache)
 	today_entries = {
-		row.get("source_stock_entry")
-		for row in production_rows
-		if row.get("source_stock_entry")
-		and _has_document_access("Stock Entry", row.get("source_stock_entry"), ptype="read")
+		name
+		for name in stock_entries
+		if _has_document_access("Stock Entry", name, ptype="read", access_cache=cache)
 	}
 	return {
 		"run": run_name,
@@ -1161,6 +2023,23 @@ def _parse_json_object(value):
 	except Exception:
 		return {}
 	return parsed if isinstance(parsed, dict) else {}
+
+
+def _parse_json_list(value, *, label="Rows", max_rows=10_000):
+	if isinstance(value, list):
+		parsed = value
+	elif not value:
+		parsed = []
+	else:
+		try:
+			parsed = frappe.parse_json(value)
+		except Exception:
+			frappe.throw(_("{0} must be a valid JSON array.").format(label), frappe.ValidationError)
+	if not isinstance(parsed, list) or any(not isinstance(row, dict) for row in parsed):
+		frappe.throw(_("{0} must be an array of objects.").format(label), frappe.ValidationError)
+	if len(parsed) > max_rows:
+		frappe.throw(_("{0} is limited to {1} rows.").format(label, max_rows), frappe.ValidationError)
+	return parsed
 
 
 def _compact_change_impact_row(source_row):
@@ -1337,6 +2216,18 @@ def _review_proposal_rows(*, batch_doctype, batch_name, review_status, row_names
 				_("Selected proposal rows no longer exist: {0}.", context="Injection APS").format(", ".join(missing)),
 				frappe.ValidationError,
 			)
+		if selected_names and batch_doctype in {"APS Work Order Proposal Batch", "APS Shift Schedule Proposal Batch"}:
+			selected_campaigns = {
+				rows_by_name[name].get("production_campaign")
+				for name in selected_names
+				if rows_by_name[name].get("production_campaign")
+			}
+			if selected_campaigns:
+				selected_names = sorted(set(selected_names) | {
+					row.name
+					for row in batch.get("items") or []
+					if row.name and row.get("production_campaign") in selected_campaigns
+				})
 		target_rows = (
 			[rows_by_name[name] for name in selected_names]
 			if selected_names
@@ -1423,10 +2314,12 @@ def _format_released_wos_label(row):
 	return " ".join(part for part in parts if part)
 
 
-def _attach_release_wos_details(release_batches):
+def _attach_release_wos_details(release_batches, access_cache=None):
+	cache = access_cache if access_cache is not None else {}
 	release_batches = release_batches or []
 	names = [row.get("name") for row in release_batches if row.get("name")]
 	child_rows_by_parent = defaultdict(list)
+	child_rows = []
 	if names and frappe.db.exists("DocType", "APS Released WOS Item"):
 		child_rows = frappe.get_all(
 			"APS Released WOS Item",
@@ -1442,19 +2335,40 @@ def _attach_release_wos_details(release_batches):
 			],
 			order_by="idx asc",
 		)
-		for child in child_rows:
-			if not child.get("work_order_scheduling") or _has_document_access(
-				"Work Order Scheduling", child.get("work_order_scheduling"), ptype="read"
-			):
-				child_rows_by_parent[child.parent].append(child)
+	wos_names = {
+		row.get("work_order_scheduling")
+		for row in [*release_batches, *child_rows]
+		if row.get("work_order_scheduling")
+	}
+	_prime_document_access("Work Order Scheduling", wos_names, cache)
+	for child in child_rows:
+		if not child.get("work_order_scheduling") or _has_document_access(
+			"Work Order Scheduling",
+			child.get("work_order_scheduling"),
+			ptype="read",
+			access_cache=cache,
+		):
+			child_rows_by_parent[child.parent].append(child)
 
 	for row in release_batches:
+		if row.get("work_order_scheduling") and not _has_document_access(
+			"Work Order Scheduling",
+			row.get("work_order_scheduling"),
+			ptype="read",
+			access_cache=cache,
+		):
+			row["work_order_scheduling"] = ""
 		wos_rows = [dict(child) for child in child_rows_by_parent.get(row.get("name"), [])]
 		if (
 			not wos_rows
 			and row.get("work_order_scheduling")
 			and frappe.db.exists("Work Order Scheduling", row.work_order_scheduling)
-			and _has_document_access("Work Order Scheduling", row.work_order_scheduling, ptype="read")
+			and _has_document_access(
+				"Work Order Scheduling",
+				row.work_order_scheduling,
+				ptype="read",
+				access_cache=cache,
+			)
 		):
 			wos = frappe.db.get_value(
 				"Work Order Scheduling",
@@ -1598,6 +2512,11 @@ def preview_customer_delivery_schedule(
 	company = _require_explicit_company(company, action_label=_("schedule preview", context="Injection APS"))
 	_require_document_access("Customer", customer, ptype="read")
 	_require_scope_access(company=company, customer=customer)
+	schedule_scope = _require_active_schedule_scope_visible(
+		customer=customer,
+		company=company,
+		schedule_scope=schedule_scope or version_no,
+	)
 	preview = planning.preview_customer_delivery_schedule(
 		customer=customer,
 		company=company,
@@ -1610,10 +2529,172 @@ def preview_customer_delivery_schedule(
 		mapping_json=mapping_json,
 		source_type=source_type,
 	)
-	return _require_schedule_import_reference_access(
-		preview,
+	return item_display.attach_item_display_fields(
+		_require_schedule_import_reference_access(
+			preview,
+			customer=customer,
+			company=company,
+		)
+	)
+
+
+@frappe.whitelist()
+def recommend_schedule_revision_mode(
+	customer,
+	company,
+	schedule_scope=None,
+	file_url=None,
+	rows_json=None,
+	mapping_json=None,
+	source_contract=None,
+):
+	_require_demand_access()
+	company = _require_explicit_company(company, action_label=_("revision-mode recommendation", context="Injection APS"))
+	_require_document_access("Customer", customer, ptype="read")
+	_require_scope_access(company=company, customer=customer)
+	schedule_scope = _require_active_schedule_scope_visible(
 		customer=customer,
 		company=company,
+		schedule_scope=schedule_scope,
+	)
+	return schedule_revision.recommend_schedule_revision_mode(
+		customer=customer,
+		company=company,
+		schedule_scope=schedule_scope,
+		file_url=file_url,
+		rows_json=rows_json,
+		mapping_json=mapping_json,
+		source_contract=source_contract,
+	)
+
+
+@frappe.whitelist()
+def preview_schedule_revision(
+	customer,
+	company,
+	version_no,
+	schedule_scope=None,
+	revision_mode=None,
+	duplicate_policy=None,
+	file_url=None,
+	rows_json=None,
+	mapping_json=None,
+	source_type="Customer Delivery Schedule",
+	source_contract=None,
+):
+	_require_demand_access()
+	company = _require_explicit_company(company, action_label=_("schedule revision preview", context="Injection APS"))
+	_require_document_access("Customer", customer, ptype="read")
+	_require_scope_access(company=company, customer=customer)
+	schedule_scope = _require_active_schedule_scope_visible(
+		customer=customer,
+		company=company,
+		schedule_scope=schedule_scope,
+	)
+	preview = schedule_revision.preview_revision(
+		customer=customer,
+		company=company,
+		version_no=version_no,
+		schedule_scope=schedule_scope,
+		revision_mode=revision_mode,
+		duplicate_policy=duplicate_policy,
+		file_url=file_url,
+		rows_json=rows_json,
+		mapping_json=mapping_json,
+		source_type=source_type,
+		source_contract=source_contract,
+	)
+	return item_display.attach_item_display_fields(
+		_require_schedule_import_reference_access(preview, customer=customer, company=company)
+	)
+
+
+@frappe.whitelist(methods=["POST"])
+def apply_schedule_revision(
+	customer,
+	company,
+	version_no,
+	schedule_scope=None,
+	confirmed_revision_mode=None,
+	duplicate_policy=None,
+	file_url=None,
+	rows_json=None,
+	mapping_json=None,
+	source_type="Customer Delivery Schedule",
+	source_contract=None,
+	mode_confirmation_reason=None,
+	expected_active_state_token=None,
+	expected_revision_fingerprint=None,
+	rebuild=0,
+	existing_work_order_policy=None,
+):
+	_require_demand_access()
+	company = _require_explicit_company(company, action_label=_("schedule revision", context="Injection APS"))
+	_require_document_access("Customer", customer, ptype="read")
+	_require_scope_access(company=company, customer=customer)
+	schedule_scope = _require_active_schedule_scope_visible(
+		customer=customer,
+		company=company,
+		schedule_scope=schedule_scope,
+	)
+	if frappe.utils.cint(rebuild):
+		_require_plan_access()
+		_require_company_rebuild_scope(company)
+	result = schedule_revision.apply_revision(
+		customer=customer,
+		company=company,
+		version_no=version_no,
+		schedule_scope=schedule_scope,
+		confirmed_revision_mode=confirmed_revision_mode,
+		duplicate_policy=duplicate_policy,
+		file_url=file_url,
+		rows_json=rows_json,
+		mapping_json=mapping_json,
+		source_type=source_type,
+		source_contract=source_contract,
+		mode_confirmation_reason=mode_confirmation_reason,
+		expected_active_state_token=expected_active_state_token,
+		expected_revision_fingerprint=expected_revision_fingerprint,
+		reference_access_validator=lambda preview: _require_schedule_preview_access(
+			preview,
+			customer=customer,
+			company=company,
+		),
+	)
+	if frappe.utils.cint(rebuild):
+		result["promotion"] = planning.promote_schedule_import_to_net_requirement(
+			import_batch=result.get("import_batch"),
+			schedule=result.get("schedule"),
+			company=company,
+			existing_work_order_policy=existing_work_order_policy,
+		)
+	return result
+
+
+@frappe.whitelist(methods=["POST"])
+def resolve_schedule_identity_ambiguity(
+	company,
+	customer,
+	schedule_scope,
+	demand_identity,
+	reason,
+	schedule_item=None,
+):
+	_require_demand_access()
+	company = _require_explicit_company(company, action_label=_("Demand Identity resolution", context="Injection APS"))
+	_require_document_access("Customer", customer, ptype="read")
+	_require_scope_access(company=company, customer=customer)
+	_require_scoped_document_access("APS Demand Identity", demand_identity, ptype="read")
+	if schedule_item:
+		if not _has_linked_document_access("Customer Delivery Schedule Item", schedule_item):
+			frappe.throw(_("You do not have permission to access this schedule item."), frappe.PermissionError)
+	return schedule_revision.resolve_identity_ambiguity(
+		company=company,
+		customer=customer,
+		schedule_scope=schedule_scope,
+		demand_identity=demand_identity,
+		reason=reason,
+		schedule_item=schedule_item,
 	)
 
 
@@ -1638,8 +2719,14 @@ def import_customer_delivery_schedule(
 	company = _require_explicit_company(company, action_label=_("schedule import", context="Injection APS"))
 	_require_document_access("Customer", customer, ptype="read")
 	_require_scope_access(company=company, customer=customer)
+	schedule_scope = _require_active_schedule_scope_visible(
+		customer=customer,
+		company=company,
+		schedule_scope=schedule_scope or version_no,
+	)
 	if frappe.utils.cint(rebuild):
 		_require_plan_access()
+		_require_company_rebuild_scope(company)
 	return planning.import_customer_delivery_schedule(
 		customer=customer,
 		company=company,
@@ -1655,7 +2742,7 @@ def import_customer_delivery_schedule(
 		existing_work_order_policy=existing_work_order_policy,
 		active_state_token=active_state_token,
 		expected_import_fingerprint=expected_import_fingerprint,
-		reference_access_validator=lambda preview: _require_schedule_import_reference_access(
+		reference_access_validator=lambda preview: _require_schedule_preview_access(
 			preview,
 			customer=customer,
 			company=company,
@@ -1726,6 +2813,8 @@ def run_planning_run(
 		_require_scope_access(company=resolved_company, customer=customer)
 	if run_name and customer:
 		_require_document_access("Customer", customer, ptype="read")
+	if run_name and v2_flags.is_v2_enabled():
+		demand_admission.require_admission_ready(run_name)
 	_require_company_rebuild_scope(resolved_company)
 	_require_planning_reference_access(
 		item_code=item_code,
@@ -1759,6 +2848,8 @@ def recalculate_plan_consistency(run_name):
 def approve_planning_run(run_name):
 	_require_approve_access()
 	_require_complete_run_mutation_scope(run_name, run_ptype="write")
+	if v2_flags.is_v2_enabled():
+		demand_admission.require_admission_ready(run_name, require_planned=True)
 	return planning.approve_planning_run(run_name)
 
 
@@ -1766,6 +2857,8 @@ def approve_planning_run(run_name):
 def sync_planning_run_to_execution(run_name):
 	_require_release_access()
 	_require_complete_run_mutation_scope(run_name, run_ptype="write")
+	if v2_flags.is_v2_enabled():
+		demand_admission.require_admission_ready(run_name, require_planned=True)
 	return planning.sync_planning_run_to_execution(run_name)
 
 
@@ -1773,6 +2866,8 @@ def sync_planning_run_to_execution(run_name):
 def release_planning_run(run_name, release_horizon_days=None):
 	_require_release_access()
 	_require_complete_run_mutation_scope(run_name, run_ptype="write")
+	if v2_flags.is_v2_enabled():
+		demand_admission.require_admission_ready(run_name, require_planned=True)
 	return planning.release_planning_run(run_name, release_horizon_days=release_horizon_days)
 
 
@@ -1787,6 +2882,8 @@ def validate_run_mold_readiness(run_name):
 def generate_work_order_proposals(run_name):
 	_require_release_access()
 	_require_complete_run_mutation_scope(run_name, run_ptype="write")
+	if v2_flags.is_v2_enabled():
+		demand_admission.require_admission_ready(run_name, require_planned=True)
 	return planning.generate_work_order_proposals(run_name)
 
 
@@ -1794,6 +2891,10 @@ def generate_work_order_proposals(run_name):
 def apply_work_order_proposals(batch_name):
 	_require_release_access()
 	_require_complete_proposal_batch_scope("APS Work Order Proposal Batch", batch_name)
+	if v2_flags.is_v2_enabled():
+		run_name = frappe.db.get_value("APS Work Order Proposal Batch", batch_name, "planning_run")
+		if run_name:
+			demand_admission.require_admission_ready(run_name, require_planned=True)
 	return planning.apply_work_order_proposals(batch_name)
 
 
@@ -1820,20 +2921,80 @@ def reject_work_order_proposals(batch_name, reason):
 def preview_shift_schedule_release(run_name=None, work_order_proposal_batch=None, release_horizon_days=None, release_from_date=None, shift_type=None):
 	_require_release_access()
 	if run_name:
-		_require_scoped_document_access("APS Planning Run", run_name, ptype="read")
+		_require_complete_run_mutation_scope(run_name, run_ptype="read")
 	if work_order_proposal_batch:
-		_require_scoped_document_access(
-			"APS Work Order Proposal Batch", work_order_proposal_batch, ptype="read"
+		_require_complete_proposal_batch_scope(
+			"APS Work Order Proposal Batch",
+			work_order_proposal_batch,
+			run_ptype="read",
 		)
 	if not run_name and not work_order_proposal_batch:
 		frappe.throw(_("Provide run_name or work_order_proposal_batch."), frappe.ValidationError)
-	return planning.preview_shift_schedule_release(
+	payload = planning.preview_shift_schedule_release(
 		run_name=run_name,
 		work_order_proposal_batch=work_order_proposal_batch,
 		release_horizon_days=release_horizon_days,
 		release_from_date=release_from_date,
 		shift_type=shift_type,
 	)
+	resolved_batch = payload.get("work_order_proposal_batch")
+	if resolved_batch and resolved_batch != work_order_proposal_batch:
+		_require_complete_proposal_batch_scope(
+			"APS Work Order Proposal Batch",
+			resolved_batch,
+			run_ptype="read",
+			require_run_scope=not bool(run_name),
+		)
+	for batch in payload.get("pending_batches") or []:
+		if batch.get("name"):
+			_require_complete_proposal_batch_scope(
+				"APS Shift Schedule Proposal Batch",
+				batch.get("name"),
+				run_ptype="read",
+				require_run_scope=False,
+			)
+	permission_rows = payload.pop("_permission_rows", None)
+	if permission_rows is None or len(permission_rows) != cint(payload.get("proposal_count")):
+		frappe.throw(
+			_("The shift schedule preview permission scope is incomplete. Refresh and retry."),
+			frappe.ValidationError,
+		)
+	link_rows = [
+		{**row, "segment_reference": None}
+		if str(row.get("segment_reference") or "").startswith("cancel::")
+		else row
+		for row in permission_rows
+	]
+	_require_payload_link_access(
+		link_rows,
+		(
+			("result_reference", "APS Schedule Result", True),
+			("segment_reference", "APS Schedule Segment", True),
+			("production_campaign", "APS Production Campaign", True),
+			("capacity_owner", "APS Schedule Segment", True),
+			("item_code", "Item", False),
+			("work_order", "Work Order", False),
+			("plant_floor", "Plant Floor", False),
+			("workstation", "Workstation", False),
+			("existing_scheduling", "Work Order Scheduling", False),
+		),
+	)
+	linked_cache = {}
+	scheduling_items = {
+		row.get("existing_scheduling_item")
+		for row in permission_rows
+		if row.get("existing_scheduling_item")
+	}
+	_prime_linked_document_access({"Scheduling Item": scheduling_items}, linked_cache)
+	if any(
+		not _has_linked_document_access("Scheduling Item", name, access_cache=linked_cache)
+		for name in sorted(scheduling_items)
+	):
+		frappe.throw(
+			_("This APS payload includes linked records outside your permitted scope."),
+			frappe.PermissionError,
+		)
+	return item_display.attach_item_display_fields(payload)
 
 
 @frappe.whitelist(methods=["POST"])
@@ -1847,6 +3008,8 @@ def generate_shift_schedule_proposals(run_name=None, work_order_proposal_batch=N
 		)
 	if not run_name and not work_order_proposal_batch:
 		frappe.throw(_("Provide run_name or work_order_proposal_batch."), frappe.ValidationError)
+	if run_name and v2_flags.is_v2_enabled():
+		demand_admission.require_admission_ready(run_name, require_planned=True)
 	return planning.generate_shift_schedule_proposals(
 		run_name=run_name,
 		work_order_proposal_batch=work_order_proposal_batch,
@@ -1860,6 +3023,10 @@ def generate_shift_schedule_proposals(run_name=None, work_order_proposal_batch=N
 def apply_shift_schedule_proposals(batch_name):
 	_require_release_access()
 	_require_complete_proposal_batch_scope("APS Shift Schedule Proposal Batch", batch_name)
+	if v2_flags.is_v2_enabled():
+		run_name = frappe.db.get_value("APS Shift Schedule Proposal Batch", batch_name, "planning_run")
+		if run_name:
+			demand_admission.require_admission_ready(run_name, require_planned=True)
 	return planning.apply_shift_schedule_proposals(batch_name)
 
 
@@ -1911,13 +3078,70 @@ def sync_execution_feedback_to_aps(run_name):
 @frappe.whitelist(methods=["POST"])
 def sync_delivery_allocations(company, customer=None, item_codes=None):
 	_require_execution_access()
-	_require_scope_access(company=company, customer=customer)
+	company = _require_explicit_company(
+		company,
+		action_label=_("delivery synchronization", context="Injection APS"),
+	)
+	customer = str(customer or "").strip()
+	if not customer:
+		frappe.throw(
+			_("Select a Customer before synchronizing deliveries.", context="Injection APS"),
+			frappe.ValidationError,
+		)
 	if isinstance(item_codes, str):
 		item_codes = frappe.parse_json(item_codes) if item_codes.strip().startswith("[") else [item_codes]
+	item_codes = sorted({str(item_code).strip() for item_code in (item_codes or []) if str(item_code).strip()})
+	if not item_codes:
+		frappe.throw(
+			_("Select at least one Item before synchronizing deliveries.", context="Injection APS"),
+			frappe.ValidationError,
+		)
+	_require_scope_access(company=company, customer=customer)
+	for item_code in item_codes:
+		_require_document_access("Item", item_code, ptype="read")
+	_require_all_documents_visible(
+		"Customer Delivery Schedule",
+		{"company": company, "customer": customer, "status": "Active"},
+	)
+	delivery_notes = frappe.get_all(
+		"Delivery Note Item",
+		filters={"item_code": ("in", item_codes)},
+		pluck="parent",
+		limit_page_length=0,
+	)
+	if delivery_notes:
+		_require_all_documents_visible(
+			"Delivery Note",
+			{
+				"name": ("in", sorted(set(delivery_notes))),
+				"company": company,
+				"customer": customer,
+				"docstatus": 1,
+			},
+		)
 	return delivery_sync.sync_delivery_allocations(
 		company=company,
 		customer=customer,
-		item_codes=item_codes or [],
+		item_codes=item_codes,
+	)
+
+
+@frappe.whitelist(methods=["POST"])
+def resolve_unallocated_delivery(name, demand_identity, reason):
+	_require_execution_access()
+	_require_scoped_document_access("APS Unallocated Delivery", name, ptype="read")
+	row = frappe.db.get_value(
+		"APS Unallocated Delivery",
+		name,
+		["company", "customer"],
+		as_dict=True,
+	) or {}
+	_require_scope_access(company=row.get("company"), customer=row.get("customer"))
+	_require_scoped_document_access("APS Demand Identity", demand_identity, ptype="read")
+	return delivery_fulfillment.resolve_unallocated_delivery(
+		name=name,
+		demand_identity=demand_identity,
+		reason=reason,
 	)
 
 
@@ -1943,24 +3167,372 @@ def get_fulfillment_projection(run_name=None, result_name=None, as_of=None):
 def analyze_capacity_balance(run_name):
 	_require_plan_access()
 	_require_complete_run_mutation_scope(run_name, run_ptype="write")
+	if v2_flags.is_v2_enabled():
+		demand_admission.require_admission_ready(run_name, require_planned=True)
 	return capacity_balance.analyze_capacity_balance(run_name, persist=True)
 
 
 @frappe.whitelist(methods=["POST"])
 def confirm_capacity_balance(run_name):
-	_require_plan_access()
+	if v2_flags.is_v2_enabled():
+		_require_approve_access()
+	else:
+		_require_plan_access()
 	_require_complete_run_mutation_scope(run_name, run_ptype="write")
+	if v2_flags.is_v2_enabled():
+		demand_admission.require_admission_ready(run_name, require_planned=True)
 	return capacity_balance.confirm_capacity_balance(run_name)
 
 
 @frappe.whitelist(methods=["POST"])
 def apply_capacity_balance(run_name, pmc_confirmed=0):
-	_require_plan_access()
+	if v2_flags.is_v2_enabled():
+		_require_approve_access()
+	else:
+		_require_plan_access()
 	_require_complete_run_mutation_scope(run_name, run_ptype="write")
+	if v2_flags.is_v2_enabled():
+		demand_admission.require_admission_ready(run_name, require_planned=True)
 	return capacity_balance.apply_capacity_balance(
 		run_name,
 		pmc_confirmed=bool(frappe.utils.cint(pmc_confirmed)),
 	)
+
+
+@frappe.whitelist()
+def get_constraint_resolutions(planning_run):
+	_require_read_access()
+	_require_complete_run_mutation_scope(planning_run, run_ptype="read")
+	_require_all_scoped_documents_visible("APS Constraint Resolution", {"planning_run": planning_run})
+	return constraint_resolution.get_constraint_resolutions(planning_run)
+
+
+@frappe.whitelist(methods=["POST"])
+def request_temporary_override(
+	resolution,
+	resolution_type,
+	proposed_value=None,
+	expires_on=None,
+	reason=None,
+	expected_fingerprint=None,
+):
+	_require_plan_access()
+	_require_derived_run_scope(
+		"APS Constraint Resolution", resolution, "planning_run", run_ptype="write"
+	)
+	return constraint_resolution.request_temporary_override(
+		resolution,
+		resolution_type=resolution_type,
+		proposed_value=proposed_value,
+		expires_on=expires_on,
+		reason=reason,
+		expected_fingerprint=expected_fingerprint,
+	)
+
+
+@frappe.whitelist(methods=["POST"])
+def approve_temporary_override(resolution, reason=None, expected_fingerprint=None):
+	_require_approve_access()
+	_require_derived_run_scope(
+		"APS Constraint Resolution", resolution, "planning_run", run_ptype="write"
+	)
+	doc = frappe.get_doc("APS Constraint Resolution", resolution)
+	if doc.resolution_type == "Temporary Compatibility Override":
+		require_any_role(
+			{"System Manager", "Manufacturing Manager"},
+			_("Only a Manufacturing Manager can approve a non-standard compatibility override.", context="Injection APS"),
+		)
+	return constraint_resolution.approve_temporary_override(
+		resolution,
+		reason=reason,
+		expected_fingerprint=expected_fingerprint,
+	)
+
+
+@frappe.whitelist(methods=["POST"])
+def exclude_commitment_from_release(resolution, reason=None, expected_fingerprint=None):
+	_require_approve_access()
+	_require_derived_run_scope(
+		"APS Constraint Resolution", resolution, "planning_run", run_ptype="write"
+	)
+	return constraint_resolution.exclude_commitment_from_release(
+		resolution,
+		reason=reason,
+		expected_fingerprint=expected_fingerprint,
+	)
+
+
+@frappe.whitelist(methods=["POST"])
+def recompute_after_resolution(planning_run, expected_fingerprint=None):
+	_require_plan_access()
+	_require_complete_run_mutation_scope(planning_run, run_ptype="write")
+	if v2_flags.is_v2_enabled():
+		demand_admission.require_admission_ready(planning_run, require_planned=True)
+	return constraint_resolution.recompute_after_resolution(
+		planning_run,
+		expected_fingerprint=expected_fingerprint,
+	)
+
+
+@frappe.whitelist(methods=["POST"])
+def analyze_v2_schedule(run_name, run_in_background=1):
+	_require_plan_access()
+	_require_complete_run_mutation_scope(run_name, run_ptype="write")
+	demand_admission.require_admission_ready(run_name, require_planned=True)
+	return solver_orchestration.analyze_v2_schedule(
+		run_name,
+		run_in_background=bool(frappe.utils.cint(run_in_background)),
+	)
+
+
+@frappe.whitelist()
+def get_solver_job(solver_job):
+	_require_read_access()
+	_require_derived_run_scope("APS Solver Job", solver_job, "planning_run", run_ptype="read")
+	return solver_orchestration.get_solver_job(solver_job)
+
+
+@frappe.whitelist()
+def get_solver_scenarios(planning_run):
+	_require_read_access()
+	_require_complete_run_mutation_scope(planning_run, run_ptype="read")
+	_require_all_scoped_documents_visible("APS Solver Job", {"planning_run": planning_run})
+	payload = solver_orchestration.get_solver_scenarios(planning_run)
+	tasks = [task for scenario in payload.get("scenarios") or [] for task in scenario.get("tasks") or []]
+	_require_payload_link_access(
+		tasks,
+		(
+			("result", "APS Schedule Result", True),
+			("commitment", "APS Demand Commitment", True),
+			("workstation", "Workstation", False),
+			("mold", "Mold", False),
+		),
+	)
+	return payload
+
+
+@frappe.whitelist()
+def get_run_bom_selections(planning_run):
+	_require_read_access()
+	_require_complete_run_mutation_scope(planning_run, run_ptype="read")
+	_require_all_scoped_documents_visible("APS BOM Pegging", {"planning_run": planning_run})
+	payload = bom_planning.get_run_bom_selections(planning_run)
+	_require_payload_link_access(
+		payload.get("selections"),
+		(("item_code", "Item", False), ("bom", "BOM", False)),
+	)
+	_require_payload_link_access(
+		payload.get("options"),
+		(("item", "Item", False), ("name", "BOM", False)),
+	)
+	return item_display.attach_item_display_fields(
+		payload,
+		item_fields=("item_code", "item"),
+	)
+
+
+@frappe.whitelist(methods=["POST"])
+def set_run_bom_selections(planning_run, selections=None, reason=None, expected_run_modified=None):
+	_require_plan_access()
+	_require_complete_run_mutation_scope(planning_run, run_ptype="write")
+	return bom_planning.set_run_bom_selections(
+		planning_run,
+		selections,
+		reason=reason,
+		expected_run_modified=expected_run_modified,
+	)
+
+
+@frappe.whitelist()
+def get_bom_pegging_tree(planning_run, root_demand_key=None):
+	_require_read_access()
+	_require_complete_run_mutation_scope(planning_run, run_ptype="read")
+	_require_all_scoped_documents_visible("APS BOM Pegging", {"planning_run": planning_run})
+	return item_display.attach_item_display_fields(
+		bom_planning.get_bom_pegging_tree(planning_run, root_demand_key=root_demand_key)
+	)
+
+
+@frappe.whitelist(methods=["POST"])
+def select_solver_scenario(planning_run, scenario_key, reason=None, expected_fingerprint=None):
+	_require_plan_access()
+	_require_complete_run_mutation_scope(planning_run, run_ptype="write")
+	if v2_flags.is_v2_enabled():
+		demand_admission.require_admission_ready(planning_run, require_planned=True)
+	return solver_orchestration.select_solver_scenario(
+		planning_run,
+		scenario_key,
+		reason=reason,
+		expected_fingerprint=expected_fingerprint,
+	)
+
+
+@frappe.whitelist(methods=["POST"])
+def acknowledge_schedule_risks(planning_run, reason=None, expected_fingerprint=None):
+	_require_approve_access()
+	_require_complete_run_mutation_scope(planning_run, run_ptype="write")
+	if v2_flags.is_v2_enabled():
+		demand_admission.require_admission_ready(planning_run, require_planned=True)
+	return solver_orchestration.acknowledge_schedule_risks(
+		planning_run,
+		reason=reason,
+		expected_fingerprint=expected_fingerprint,
+	)
+
+
+@frappe.whitelist(methods=["POST"])
+def apply_v2_schedule(planning_run, expected_fingerprint=None):
+	_require_release_access()
+	_require_complete_run_mutation_scope(planning_run, run_ptype="write")
+	demand_admission.require_admission_ready(planning_run, require_planned=True)
+	return solver_orchestration.apply_v2_schedule(
+		planning_run,
+		expected_fingerprint=expected_fingerprint,
+	)
+
+
+@frappe.whitelist(methods=["POST"])
+def cancel_solver_job(solver_job):
+	_require_plan_access()
+	_require_derived_run_scope("APS Solver Job", solver_job, "planning_run", run_ptype="write")
+	return solver_orchestration.cancel_solver_job(solver_job)
+
+
+@frappe.whitelist(methods=["POST"])
+def create_replan_cycle(baseline_run, shift_date, shift_type, execution_cutoff=None, cycle_type="Scheduled Shift", reason=None):
+	_require_plan_access()
+	_require_complete_run_mutation_scope(baseline_run, run_ptype="write")
+	return shift_replan.create_replan_cycle(
+		baseline_run,
+		shift_date=shift_date,
+		shift_type=shift_type,
+		execution_cutoff=execution_cutoff,
+		cycle_type=cycle_type,
+		reason=reason,
+	)
+
+
+@frappe.whitelist(methods=["POST"])
+def create_shift_replan_cycle(baseline_run, shift_date, shift_type, execution_cutoff=None, cycle_type="Scheduled Shift", reason=None):
+	"""Stable public name from the APS V2 API contract.
+
+	Cycle creation and local analysis are atomic in the current domain service;
+	the shorter legacy endpoint remains available for existing clients.
+	"""
+	return create_replan_cycle(
+		baseline_run,
+		shift_date,
+		shift_type,
+		execution_cutoff=execution_cutoff,
+		cycle_type=cycle_type,
+		reason=reason,
+	)
+
+
+@frappe.whitelist(methods=["POST"])
+def analyze_shift_replan(baseline_run, shift_date, shift_type, execution_cutoff=None, cycle_type="Scheduled Shift", reason=None):
+	"""Create the immutable cycle and return its completed local analysis."""
+	return create_shift_replan_cycle(
+		baseline_run,
+		shift_date,
+		shift_type,
+		execution_cutoff=execution_cutoff,
+		cycle_type=cycle_type,
+		reason=reason,
+	)
+
+
+@frappe.whitelist()
+def get_replan_cycle(replan_cycle):
+	_require_read_access()
+	_require_derived_run_scope("APS Replan Cycle", replan_cycle, "baseline_run", run_ptype="read")
+	payload = shift_replan.get_replan_cycle(replan_cycle)
+	_require_payload_link_access(
+		payload.get("diffs"),
+		(
+			("segment", "APS Schedule Segment", True),
+			("result", "APS Schedule Result", True),
+			("workstation", "Workstation", False),
+			("mould_reference", "Mold", False),
+			("linked_work_order", "Work Order", False),
+		),
+	)
+	return payload
+
+
+@frappe.whitelist()
+def get_shift_replan_diff(replan_cycle):
+	"""Return the immutable baseline diff through the stable V2 API name."""
+	payload = get_replan_cycle(replan_cycle)
+	return {
+		"replan_cycle": payload["name"],
+		"status": payload["status"],
+		"input_fingerprint": payload["input_fingerprint"],
+		"solution_fingerprint": payload["solution_fingerprint"],
+		"counts": payload["counts"],
+		"diffs": payload["diffs"],
+	}
+
+
+@frappe.whitelist(methods=["POST"])
+def refresh_shift_actuals(baseline_run):
+	_require_execution_access()
+	_require_complete_run_mutation_scope(baseline_run, run_ptype="write")
+	return shift_replan.refresh_shift_actuals(baseline_run)
+
+
+@frappe.whitelist(methods=["POST"])
+def generate_replan_proposals(replan_cycle, expected_fingerprint=None):
+	_require_plan_access()
+	_require_derived_run_scope("APS Replan Cycle", replan_cycle, "baseline_run", run_ptype="write")
+	return shift_replan.generate_replan_proposals(replan_cycle, expected_fingerprint=expected_fingerprint)
+
+
+@frappe.whitelist(methods=["POST"])
+def generate_shift_replan_proposals(replan_cycle, expected_fingerprint=None):
+	return generate_replan_proposals(replan_cycle, expected_fingerprint=expected_fingerprint)
+
+
+@frappe.whitelist(methods=["POST"])
+def acknowledge_replan_fallback(replan_cycle, reason=None, expected_fingerprint=None):
+	_require_approve_access()
+	_require_derived_run_scope("APS Replan Cycle", replan_cycle, "baseline_run", run_ptype="write")
+	return shift_replan.acknowledge_fallback_rate(replan_cycle, reason=reason, expected_fingerprint=expected_fingerprint)
+
+
+@frappe.whitelist(methods=["POST"])
+def approve_replan_cycle(replan_cycle, reason=None, expected_fingerprint=None):
+	_require_approve_access()
+	_require_derived_run_scope("APS Replan Cycle", replan_cycle, "baseline_run", run_ptype="write")
+	return shift_replan.approve_replan_cycle(replan_cycle, reason=reason, expected_fingerprint=expected_fingerprint)
+
+
+@frappe.whitelist(methods=["POST"])
+def apply_replan_cycle(replan_cycle, expected_fingerprint=None):
+	_require_release_access()
+	_require_derived_run_scope("APS Replan Cycle", replan_cycle, "baseline_run", run_ptype="write")
+	return shift_replan.apply_replan_cycle(replan_cycle, expected_fingerprint=expected_fingerprint)
+
+
+@frappe.whitelist(methods=["POST"])
+def apply_shift_replan_proposal(replan_cycle, expected_fingerprint=None):
+	return apply_replan_cycle(replan_cycle, expected_fingerprint=expected_fingerprint)
+
+
+@frappe.whitelist(methods=["POST"])
+def materialize_production_campaigns(planning_run):
+	_require_plan_access()
+	_require_complete_run_mutation_scope(planning_run, run_ptype="write")
+	return campaign_planning.materialize_campaigns_for_run(planning_run)
+
+
+@frappe.whitelist(methods=["POST"])
+def create_campaign_work_orders(production_campaign):
+	_require_release_access()
+	_require_derived_run_scope(
+		"APS Production Campaign", production_campaign, "planning_run", run_ptype="write"
+	)
+	return campaign_planning.create_campaign_work_orders(production_campaign)
 
 
 @frappe.whitelist(methods=["POST"])
@@ -1974,11 +3546,14 @@ def get_execution_health_for_run(run_name, sync=0):
 	visible_results = frappe.get_list(
 		"APS Schedule Result",
 		filters={"planning_run": run_name},
-		fields=["name", "actual_status"],
+		fields=["name", *APS_SCOPED_DOCUMENT_FIELDS["APS Schedule Result"], "actual_status"],
 		limit_page_length=0,
 	)
-	visible_results = _filter_accessible_documents(visible_results, "APS Schedule Result")
-	return _build_visible_execution_health(run_name, visible_results)
+	access_cache = {}
+	visible_results = _filter_accessible_documents(
+		visible_results, "APS Schedule Result", access_cache
+	)
+	return _build_visible_execution_health(run_name, visible_results, access_cache)
 
 
 @frappe.whitelist(methods=["POST"])
@@ -1991,8 +3566,8 @@ def sync_machine_capabilities_from_workstations():
 def analyze_change_request_impact(change_request):
 	_require_demand_access()
 	_require_change_request_access(change_request, ptype="write")
-	return _require_impact_preview_access(
-		planning.analyze_change_request_impact(change_request)
+	return item_display.attach_item_display_fields(
+		_require_impact_preview_access(planning.analyze_change_request_impact(change_request))
 	)
 
 
@@ -2052,7 +3627,8 @@ def get_change_impact_center_data(
 		order_by="modified desc, name desc",
 		limit_page_length=page_length,
 	)
-	rows = _filter_accessible_documents(rows, "APS Change Request")
+	access_cache = {}
+	rows = _filter_accessible_documents(rows, "APS Change Request", access_cache)
 	visible_names = [row.get("name") for row in rows if row.get("name")]
 	raw_by_name = {
 		row.get("name"): row
@@ -2069,8 +3645,6 @@ def get_change_impact_center_data(
 	}
 	compact_rows = []
 	for row in rows:
-		if not _has_scoped_document_access("APS Change Request", row.get("name")):
-			continue
 		raw = raw_by_name.get(row.get("name")) or {}
 		impact = _parse_json_object(raw.get("impact_json"))
 		proposal = _parse_json_object(raw.get("proposal_json"))
@@ -2079,12 +3653,14 @@ def get_change_impact_center_data(
 		row["impact_json"] = raw.get("impact_json")
 		row["proposal_json"] = raw.get("proposal_json")
 		compact_rows.append(_compact_change_impact_row(row))
-	return {
-		"rows": compact_rows,
-		"summary": _summarize_change_impact_rows(compact_rows),
-		"limit": page_length,
-		"may_have_more": frappe.utils.cint(len(compact_rows) >= page_length),
-	}
+	return item_display.attach_item_display_fields(
+		{
+			"rows": compact_rows,
+			"summary": _summarize_change_impact_rows(compact_rows),
+			"limit": page_length,
+			"may_have_more": frappe.utils.cint(len(compact_rows) >= page_length),
+		}
+	)
 
 
 @frappe.whitelist(methods=["POST"])
@@ -2227,15 +3803,19 @@ def analyze_insert_order_impact(company, plant_floor=None, plant_floors=None, it
 		plant_floor=plant_floor,
 		plant_floors=plant_floors,
 	)
-	return _require_impact_preview_access(planning.analyze_insert_order_impact(
-		company=company,
-		plant_floor=plant_floor,
-		plant_floors=plant_floors,
-		item_code=item_code,
-		qty=qty,
-		required_date=required_date,
-		customer=customer,
-	))
+	return item_display.attach_item_display_fields(
+		_require_impact_preview_access(
+			planning.analyze_insert_order_impact(
+				company=company,
+				plant_floor=plant_floor,
+				plant_floors=plant_floors,
+				item_code=item_code,
+				qty=qty,
+				required_date=required_date,
+				customer=customer,
+			)
+		)
+	)
 
 
 @frappe.whitelist(methods=["POST"])
@@ -2253,11 +3833,21 @@ def get_next_actions_for_context(doctype, docname):
 	_require_scoped_document_access(doctype, docname, ptype="read")
 	context = planning.get_next_actions_for_context(doctype=doctype, docname=docname)
 	if doctype == "APS Planning Run":
+		access_cache = {}
 		visible_results = frappe.get_list(
 			"APS Schedule Result",
 			filters={"planning_run": docname},
 			fields=[
 				"name",
+				"company",
+				"customer",
+				"planning_run",
+				"item_code",
+				"sales_order",
+				"sales_order_item",
+				"plant_floor",
+				"net_requirement",
+				"demand_commitment",
 				"planned_qty",
 				"machine_scheduled_qty",
 				"demand_covered_qty",
@@ -2274,9 +3864,14 @@ def get_next_actions_for_context(doctype, docname):
 			],
 			limit_page_length=0,
 		)
-		visible_results = _filter_accessible_documents(visible_results, "APS Schedule Result")
+		_prime_scoped_document_dependencies(visible_results, "APS Schedule Result", access_cache)
+		visible_results = _filter_accessible_documents(
+			visible_results, "APS Schedule Result", access_cache
+		)
 		context = _sanitize_planning_run_context(
-			context, quantity_summary=_summarize_visible_results(visible_results)
+			context,
+			quantity_summary=_summarize_visible_results(visible_results),
+			access_cache=access_cache,
 		)
 	return context
 
@@ -2360,6 +3955,39 @@ def create_trial_run_from_net_requirement_context(
 	)
 
 
+@frappe.whitelist(methods=["POST"])
+def create_trial_run_for_admission(
+	company=None,
+	plant_floor=None,
+	plant_floors=None,
+	item_code=None,
+	customer=None,
+	horizon_days=None,
+	existing_work_order_policy=None,
+):
+	_require_plan_access()
+	resolved_company = _require_explicit_company(
+		company,
+		action_label=_("demand admission Planning Run", context="Injection APS"),
+	)
+	_require_scope_access(company=resolved_company, customer=customer)
+	_require_company_rebuild_scope(resolved_company)
+	_require_planning_reference_access(
+		item_code=item_code,
+		plant_floor=plant_floor,
+		plant_floors=plant_floors,
+	)
+	return run_preparation.create_trial_run_for_admission(
+		company=resolved_company,
+		plant_floor=plant_floor,
+		plant_floors=plant_floors,
+		item_code=item_code,
+		customer=customer,
+		horizon_days=horizon_days,
+		existing_work_order_policy=existing_work_order_policy,
+	)
+
+
 @frappe.whitelist()
 def preview_manual_schedule_adjustment(
 	segment_name,
@@ -2378,17 +4006,21 @@ def preview_manual_schedule_adjustment(
 		_require_scoped_document_access("APS Schedule Segment", before_segment_name, ptype="read")
 	if target_workstation:
 		_require_document_access("Workstation", target_workstation, ptype="read")
-	return _require_impact_preview_access(planning.preview_manual_schedule_adjustment(
-		segment_name=segment_name,
-		target_workstation=target_workstation,
-		before_segment_name=before_segment_name,
-		target_start_time=target_start_time,
-		target_end_time=target_end_time,
-		target_qty=frappe.utils.flt(target_qty) if target_qty not in (None, "") else None,
-		allow_locked=frappe.utils.cint(allow_locked),
-		allow_risk_override=frappe.utils.cint(allow_risk_override),
-		allow_overproduction=frappe.utils.cint(allow_overproduction),
-	))
+	return item_display.attach_item_display_fields(
+		_require_impact_preview_access(
+			planning.preview_manual_schedule_adjustment(
+				segment_name=segment_name,
+				target_workstation=target_workstation,
+				before_segment_name=before_segment_name,
+				target_start_time=target_start_time,
+				target_end_time=target_end_time,
+				target_qty=frappe.utils.flt(target_qty) if target_qty not in (None, "") else None,
+				allow_locked=frappe.utils.cint(allow_locked),
+				allow_risk_override=frappe.utils.cint(allow_risk_override),
+				allow_overproduction=frappe.utils.cint(allow_overproduction),
+			)
+		)
+	)
 
 
 @frappe.whitelist(methods=["POST"])
@@ -2604,11 +4236,15 @@ def preview_schedule_impact(run_name=None, downtime_window=None, segment_name=No
 		_require_scoped_document_access("APS Schedule Segment", segment_name, ptype="read")
 	if not run_name and not downtime_window and not segment_name:
 		frappe.throw(_("Provide run_name, downtime_window, or segment_name."), frappe.ValidationError)
-	return _require_impact_preview_access(planning.preview_schedule_impact(
-		run_name=run_name,
-		downtime_window=downtime_window,
-		segment_name=segment_name,
-	))
+	return item_display.attach_item_display_fields(
+		_require_impact_preview_access(
+			planning.preview_schedule_impact(
+				run_name=run_name,
+				downtime_window=downtime_window,
+				segment_name=segment_name,
+			)
+		)
+	)
 
 
 @frappe.whitelist(methods=["POST"])
@@ -2653,13 +4289,14 @@ def get_exception_resolution_context(exception_name):
 		name = context.get(fieldname)
 		if name and not _has_document_access(doctype, name, ptype="read"):
 			context[fieldname] = ""
+			context.setdefault("source_snapshot", {})[fieldname] = ""
 			context.setdefault("related_routes", {})[
 				"item" if fieldname == "item_code" else "workstation"
 			] = ""
 			context.setdefault("gantt_focus", {})[
 				"item_code" if fieldname == "item_code" else "workstation"
 			] = ""
-	return context
+	return item_display.attach_item_display_fields(context)
 
 
 @frappe.whitelist(methods=["POST"])
@@ -2728,9 +4365,36 @@ def get_workspace_dashboard_data():
 
 
 @frappe.whitelist()
+def get_v2_capabilities():
+	"""Return fail-closed Phase 0 capability information without writing data."""
+	_require_read_access()
+	return v2_flags.get_v2_capabilities()
+
+
+@frappe.whitelist()
+def capture_legacy_baseline(planning_run):
+	"""Return a read-only Legacy snapshot; callers decide where to archive it."""
+	_require_read_access()
+	_require_complete_run_mutation_scope(planning_run, run_ptype="read")
+	return v2_baseline.capture_legacy_baseline(planning_run)
+
+
+@frappe.whitelist()
+def get_legacy_v2_comparison(planning_run, legacy_fingerprint=None):
+	_require_read_access()
+	_require_complete_run_mutation_scope(planning_run, run_ptype="read")
+	_require_all_scoped_documents_visible("APS Solver Job", {"planning_run": planning_run})
+	return v2_baseline.get_legacy_v2_comparison(
+		planning_run,
+		legacy_fingerprint=legacy_fingerprint,
+	)
+
+
+@frappe.whitelist()
 def get_schedule_console_data(customer=None, company=None):
 	_require_read_access()
 	_require_scope_access(company=company, customer=customer)
+	v2_capabilities = v2_flags.get_v2_capabilities()
 	schedule_filters = planning._strip_none({"customer": customer, "company": company})
 	active_schedules = frappe.get_list(
 		"Customer Delivery Schedule",
@@ -2771,9 +4435,26 @@ def get_schedule_console_data(customer=None, company=None):
 		limit=50,
 	)
 	import_batches = _filter_accessible_documents(import_batches, "APS Schedule Import Batch")
+	unallocated_delivery_count = 0
+	if (
+		v2_capabilities.get("settings", {}).get("enable_aps_v2")
+		and frappe.db.exists("DocType", "APS Unallocated Delivery")
+	):
+		unallocated_filters = planning._strip_none(
+			{"company": company, "customer": customer, "status": "Open"}
+		)
+		unallocated_delivery_count = len(
+			frappe.get_list(
+				"APS Unallocated Delivery",
+				filters=unallocated_filters,
+				fields=["name"],
+				limit_page_length=0,
+			)
+		)
 	return {
 		"active_schedules": active_schedules,
 		"import_batches": import_batches,
+		"v2": v2_capabilities,
 		"next_actions": {
 			row.name: planning.get_next_actions_for_context("APS Schedule Import Batch", row.name)
 			for row in import_batches[:10]
@@ -2782,6 +4463,7 @@ def get_schedule_console_data(customer=None, company=None):
 			"active_versions": len([row for row in active_schedules if row.status == "Active"]),
 			"recent_batches": len(import_batches),
 			"active_qty": sum(frappe.utils.flt(row.schedule_total_qty) for row in active_schedules),
+			"unallocated_delivery_count": unallocated_delivery_count,
 		},
 	}
 
@@ -2820,6 +4502,8 @@ def get_net_requirement_page_data(
 			"company",
 			"customer",
 			"item_code",
+			"sales_order",
+			"sales_order_item",
 			"demand_date",
 			"demand_qty",
 			"available_stock_qty",
@@ -2846,15 +4530,20 @@ def get_net_requirement_page_data(
 			for row in rows
 			if search_lower in str(row.get("item_code") or "").lower()
 		]
-	return {
-		"rows": rows,
-		"summary": {
-			"rows": len(rows),
-			"net_requirement_qty": sum(frappe.utils.flt(row.net_requirement_qty) for row in rows),
-			"planning_qty": sum(frappe.utils.flt(row.planning_qty) for row in rows),
-		},
-		"filters": {"company": company, "item_code": item_code, "customer": customer},
-	}
+	return item_display.attach_item_display_fields(
+		{
+			"rows": rows,
+			"v2_enabled": frappe.utils.cint(v2_flags.is_v2_enabled()),
+			"summary": {
+				"rows": len(rows),
+				"net_requirement_qty": sum(
+					frappe.utils.flt(row.net_requirement_qty) for row in rows
+				),
+				"planning_qty": sum(frappe.utils.flt(row.planning_qty) for row in rows),
+			},
+			"filters": {"company": company, "item_code": item_code, "customer": customer},
+		}
+	)
 
 
 @frappe.whitelist()
@@ -2868,9 +4557,36 @@ def get_customer_schedule_progress_data(
 	status=None,
 	run_name=None,
 	limit=None,
+	progress_view=None,
+	offset=None,
+	page_length=None,
+	column_offset=None,
+	column_limit=None,
 ):
 	_require_read_access()
 	_require_scope_access(company=company, customer=customer, planning_run=run_name)
+	if v2_flags.is_v2_enabled():
+		access_cache = {}
+		access_filters = _progress_projection_access_filters(access_cache)
+		if progress_view == "Date Matrix":
+			return _sanitize_progress_v2_response(
+				progress_v2.get_progress_matrix_data(
+					company=company, customer=customer, item_code=item_code, schedule_scope=schedule_scope,
+					date_from=date_from, date_to=date_to, status=status, run_name=run_name,
+					offset=offset, page_length=page_length, column_offset=column_offset, column_limit=column_limit,
+					**access_filters,
+				),
+				access_cache=access_cache,
+			)
+		return _sanitize_progress_v2_response(
+			progress_v2.get_progress_detail(
+				company=company, customer=customer, item_code=item_code, schedule_scope=schedule_scope,
+				date_from=date_from, date_to=date_to, status=status, run_name=run_name,
+				offset=offset, page_length=page_length,
+				**access_filters,
+			),
+			access_cache=access_cache,
+		)
 	response = planning.get_customer_schedule_progress_data(
 		company=company,
 		customer=customer,
@@ -2928,7 +4644,282 @@ def get_customer_schedule_progress_data(
 	response["rows"] = visible_rows
 	response["summary"] = planning._summarize_customer_schedule_progress_rows(visible_rows)
 	response["truncated"] = bool(response.get("truncated"))
-	return response
+	return item_display.attach_item_display_fields(response)
+
+
+@frappe.whitelist()
+def get_customer_schedule_progress_v2(
+	company=None,
+	customer=None,
+	item_code=None,
+	schedule_scope=None,
+	date_from=None,
+	date_to=None,
+	status=None,
+	run_name=None,
+	offset=None,
+	page_length=None,
+):
+	"""Return the paged, identity-backed Progress V2 detail projection."""
+	_require_read_access()
+	_require_scope_access(company=company, customer=customer, planning_run=run_name)
+	if not v2_flags.is_v2_enabled():
+		return {
+			"enabled": 0,
+			"mode": "Legacy",
+			"disabled_reason": _("APS V2 is disabled. Customer Schedule Progress continues to use the Legacy read-only projection.", context="Injection APS"),
+		}
+	access_cache = {}
+	response = progress_v2.get_progress_detail(
+		company=company,
+		customer=customer,
+		item_code=item_code,
+		schedule_scope=schedule_scope,
+		date_from=date_from,
+		date_to=date_to,
+		status=status,
+		run_name=run_name,
+		offset=offset,
+		page_length=page_length,
+		**_progress_projection_access_filters(access_cache),
+	)
+	return _sanitize_progress_v2_response(response, access_cache=access_cache)
+
+
+@frappe.whitelist()
+def get_progress_matrix(
+	company=None,
+	customer=None,
+	item_code=None,
+	schedule_scope=None,
+	date_from=None,
+	date_to=None,
+	status=None,
+	run_name=None,
+	offset=None,
+	page_length=None,
+	column_offset=None,
+	column_limit=None,
+):
+	"""Return sparse paged cells and a virtualized date-column window."""
+	_require_read_access()
+	_require_scope_access(company=company, customer=customer, planning_run=run_name)
+	if not v2_flags.is_v2_enabled():
+		return {
+			"enabled": 0,
+			"mode": "Legacy",
+			"disabled_reason": _("Enable APS V2 to use the identity-backed date matrix.", context="Injection APS"),
+		}
+	access_cache = {}
+	response = progress_v2.get_progress_matrix_data(
+		company=company,
+		customer=customer,
+		item_code=item_code,
+		schedule_scope=schedule_scope,
+		date_from=date_from,
+		date_to=date_to,
+		status=status,
+		run_name=run_name,
+		offset=offset,
+		page_length=page_length,
+		column_offset=column_offset,
+		column_limit=column_limit,
+		**_progress_projection_access_filters(access_cache),
+	)
+	return _sanitize_progress_v2_response(response, access_cache=access_cache)
+
+
+@frappe.whitelist()
+def get_progress_cell_drilldown(date_value, demand_identity=None, schedule_item=None, run_name=None):
+	"""Return permission-filtered demand/production/delivery lineage for one date cell."""
+	_require_read_access()
+	if run_name:
+		_require_scoped_document_access("APS Planning Run", run_name, ptype="read")
+	if demand_identity:
+		_require_scoped_document_access("APS Demand Identity", demand_identity, ptype="read")
+	if schedule_item:
+		parent = frappe.db.get_value("Customer Delivery Schedule Item", schedule_item, "parent")
+		_require_scoped_document_access("Customer Delivery Schedule", parent, ptype="read")
+	if not v2_flags.is_v2_enabled():
+		frappe.throw(_("Enable APS V2 before opening the Progress date-cell drilldown.", context="Injection APS"), frappe.PermissionError)
+	access_cache = {}
+	response = progress_v2.get_progress_cell(
+		date_value=date_value,
+		demand_identity=demand_identity,
+		schedule_item=schedule_item,
+		run_name=run_name,
+		**_progress_projection_access_filters(access_cache),
+	)
+	_prime_progress_response_access(response, access_cache)
+	response["source_documents"] = _filter_progress_source_documents(
+		response.get("source_documents"), access_cache=access_cache
+	)
+	response["lineage"] = {
+		group: _filter_progress_source_documents(rows, access_cache=access_cache)
+		for group, rows in (response.get("lineage") or {}).items()
+	}
+	cell = response.get("cell") or {}
+	cell["sources"] = _filter_progress_source_documents(cell.get("sources"), access_cache=access_cache)
+	response["cell"] = cell
+	row = response.get("row") or {}
+	row["source_documents"] = _filter_progress_source_documents(
+		row.get("source_documents"), access_cache=access_cache
+	)
+	row["commitment_names"] = [
+		name for name in row.get("commitment_names") or []
+		if _has_scoped_document_access("APS Demand Commitment", name, access_cache=access_cache)
+	]
+	row["result_names"] = [
+		name for name in row.get("result_names") or []
+		if _has_scoped_document_access("APS Schedule Result", name, access_cache=access_cache)
+	]
+	row["run_names"] = [
+		name for name in row.get("run_names") or []
+		if _has_scoped_document_access("APS Planning Run", name, access_cache=access_cache)
+	]
+	response["row"] = row
+	projection = response.get("projection") or {}
+	projection["run_names"] = [
+		name for name in projection.get("run_names") or []
+		if _has_scoped_document_access("APS Planning Run", name, access_cache=access_cache)
+	]
+	if projection.get("selected_run") and not _has_scoped_document_access(
+		"APS Planning Run", projection.get("selected_run"), access_cache=access_cache
+	):
+		projection["selected_run"] = None
+	response["projection"] = projection
+	return item_display.attach_item_display_fields(response)
+
+
+def _prime_progress_response_access(response, access_cache):
+	"""Collect a Progress payload's links once, then batch-prime permission facts."""
+	references = defaultdict(set)
+
+	def add(doctype, name):
+		if doctype and name:
+			references[doctype].add(name)
+
+	def add_sources(sources):
+		for source in sources or []:
+			if isinstance(source, dict):
+				add(source.get("doctype"), source.get("name"))
+
+	rows = list((response or {}).get("rows") or [])
+	if isinstance((response or {}).get("row"), dict):
+		rows.append(response.get("row"))
+	for row in rows:
+		if not isinstance(row, dict):
+			continue
+		add("Company", row.get("company"))
+		add("Customer", row.get("customer"))
+		add("Item", row.get("item_code"))
+		for name in row.get("schedules") or ([row.get("schedule")] if row.get("schedule") else []):
+			add("Customer Delivery Schedule", name)
+		for name in row.get("schedule_items") or ([row.get("schedule_item")] if row.get("schedule_item") else []):
+			add("Customer Delivery Schedule Item", name)
+		for name in row.get("demand_identities") or ([row.get("demand_identity")] if row.get("demand_identity") else []):
+			add("APS Demand Identity", name)
+		for doctype, fieldname in (
+			("APS Demand Commitment", "commitment_names"),
+			("APS Schedule Result", "result_names"),
+			("APS Planning Run", "run_names"),
+		):
+			for name in row.get(fieldname) or []:
+				add(doctype, name)
+		add_sources(row.get("source_documents"))
+		for event in row.get("events") or []:
+			add_sources((event or {}).get("sources"))
+		for cell in (row.get("cells") or {}).values():
+			add_sources((cell or {}).get("sources"))
+
+	projection = (response or {}).get("projection") or {}
+	for name in projection.get("run_names") or []:
+		add("APS Planning Run", name)
+	add("APS Planning Run", projection.get("selected_run"))
+	add_sources((response or {}).get("source_documents"))
+	for sources in ((response or {}).get("lineage") or {}).values():
+		add_sources(sources)
+	add_sources(((response or {}).get("cell") or {}).get("sources"))
+	_prime_linked_document_access(references, access_cache)
+	return access_cache
+
+
+def _sanitize_progress_v2_response(response, *, access_cache=None):
+	visible_rows = []
+	access_cache = access_cache if access_cache is not None else {}
+	_prime_progress_response_access(response, access_cache)
+	for row in response.get("rows") or []:
+		schedules = row.get("schedules") or ([row.get("schedule")] if row.get("schedule") else [])
+		schedule_items = row.get("schedule_items") or ([row.get("schedule_item")] if row.get("schedule_item") else [])
+		demand_identities = row.get("demand_identities") or ([row.get("demand_identity")] if row.get("demand_identity") else [])
+		if not all(
+			_has_linked_document_access(doctype, docname, access_cache=access_cache)
+			for doctype, docname in [
+				("Company", row.get("company")),
+				("Customer", row.get("customer")),
+				("Item", row.get("item_code")),
+				*(("Customer Delivery Schedule", name) for name in schedules),
+				*(("Customer Delivery Schedule Item", name) for name in schedule_items),
+				*(("APS Demand Identity", name) for name in demand_identities),
+			]
+			if docname
+		):
+			continue
+		row["source_documents"] = _filter_progress_source_documents(row.get("source_documents"), access_cache=access_cache)
+		row["commitment_names"] = [
+			name for name in row.get("commitment_names") or []
+			if _has_scoped_document_access("APS Demand Commitment", name, access_cache=access_cache)
+		]
+		row["result_names"] = [
+			name for name in row.get("result_names") or []
+			if _has_scoped_document_access("APS Schedule Result", name, access_cache=access_cache)
+		]
+		row["run_names"] = [
+			name for name in row.get("run_names") or []
+			if _has_scoped_document_access("APS Planning Run", name, access_cache=access_cache)
+		]
+		for event in row.get("events") or []:
+			event["sources"] = _filter_progress_source_documents(event.get("sources"), access_cache=access_cache)
+		for cell in (row.get("cells") or {}).values():
+			cell["sources"] = _filter_progress_source_documents(cell.get("sources"), access_cache=access_cache)
+		visible_rows.append(row)
+	filtered = len(visible_rows) != len(response.get("rows") or [])
+	response["rows"] = visible_rows
+	response["summary"] = progress_v2.summarize_rows(visible_rows)
+	if filtered:
+		response["source_total_schedule_qty"] = response["summary"].get("schedule_qty", 0)
+		response["pagination"] = {
+			**(response.get("pagination") or {}),
+			"returned_rows": len(visible_rows),
+			"total_rows": len(visible_rows),
+			"has_more": False,
+			"permission_filtered": 1,
+		}
+		response["performance"] = {
+			**(response.get("performance") or {}),
+			"projected_rows": len(visible_rows),
+			"source_rows": sum(cint(row.get("schedule_count") or 1) for row in visible_rows),
+		}
+	projection = response.get("projection") or {}
+	projection["run_names"] = [
+		name for name in projection.get("run_names") or []
+		if _has_scoped_document_access("APS Planning Run", name, access_cache=access_cache)
+	]
+	if projection.get("selected_run") and not _has_scoped_document_access(
+		"APS Planning Run", projection.get("selected_run"), access_cache=access_cache
+	):
+		projection["selected_run"] = None
+	response["projection"] = projection
+	return item_display.attach_item_display_fields(response)
+
+
+def _filter_progress_source_documents(rows, *, access_cache=None):
+	cache = access_cache if access_cache is not None else {}
+	return [
+		row
+		for row in rows or []
+		if _has_linked_document_access(row.get("doctype"), row.get("name"), access_cache=cache)
+	]
 
 
 @frappe.whitelist(methods=["POST"])
@@ -3017,41 +5008,135 @@ def delete_net_requirement_row(name=None):
 	return {"deleted": name}
 
 
+@frappe.whitelist(methods=["POST"])
+def prepare_run_demand_baseline(planning_run=None, input_fingerprint=None):
+	_require_plan_access()
+	_require_scoped_document_access(
+		"APS Planning Run", planning_run, ptype="write", linked_run_ptype="write"
+	)
+	run_scope = frappe.db.get_value(
+		"APS Planning Run",
+		planning_run,
+		["company", "planning_customer_filter", "planning_item_filter"],
+		as_dict=True,
+	) or {}
+	_require_company_rebuild_scope(run_scope.get("company"))
+	if run_scope.get("planning_customer_filter"):
+		_require_document_access("Customer", run_scope.get("planning_customer_filter"), ptype="read")
+	if run_scope.get("planning_item_filter"):
+		_require_document_access("Item", run_scope.get("planning_item_filter"), ptype="read")
+	return demand_ledger.prepare_run_demand_baseline(
+		planning_run,
+		expected_fingerprint=str(input_fingerprint or "").strip() or None,
+	)
+
+
 @frappe.whitelist()
-def get_run_console_data(company=None, plant_floor=None):
+def get_demand_admission_candidates(planning_run=None):
 	_require_read_access()
+	_require_complete_run_mutation_scope(planning_run, run_ptype="read")
+	if not v2_flags.is_v2_enabled():
+		return {
+			"planning_run": planning_run,
+			"available": False,
+			"reason": _("APS V2 is disabled; Legacy planning remains unchanged."),
+			"summary": {},
+			"rows": [],
+		}
+	baseline = demand_ledger.get_run_demand_baseline(planning_run)
+	result = baseline["admission"]
+	result["summary"] = {**baseline.get("summary", {}), **result.get("summary", {})}
+	result["source_runs"] = baseline.get("summary", {}).get("source_runs", [])
+	result["terminal_commitments"] = baseline.get("terminal_commitments", [])
+	result["terminal_summary"] = baseline.get("terminal_summary", {})
+	result["validation"] = baseline.get("validation", {})
+	result["available"] = True
+	return item_display.attach_item_display_fields(result)
+
+
+@frappe.whitelist(methods=["POST"])
+def preview_admission_impact(planning_run=None, decisions=None, input_fingerprint=None, strategy=None):
+	_require_plan_access()
+	_require_complete_run_mutation_scope(planning_run, run_ptype="read")
+	return demand_admission.preview_admission_impact(
+		planning_run,
+		_parse_json_list(decisions, label=_("Admission decisions")),
+		expected_fingerprint=str(input_fingerprint or "").strip(),
+		strategy=str(strategy or "").strip(),
+	)
+
+
+@frappe.whitelist(methods=["POST"])
+def save_demand_admission_decisions(
+	planning_run=None,
+	decisions=None,
+	input_fingerprint=None,
+	reason=None,
+	strategy=None,
+):
+	_require_plan_access()
+	_require_complete_run_mutation_scope(planning_run, run_ptype="write")
+	return demand_admission.save_demand_admission_decisions(
+		planning_run,
+		_parse_json_list(decisions, label=_("Admission decisions")),
+		expected_fingerprint=str(input_fingerprint or "").strip(),
+		reason=reason,
+		strategy=str(strategy or "").strip(),
+	)
+
+
+@frappe.whitelist()
+def get_run_console_data(company=None, plant_floor=None, run_name=None):
+	_require_read_access()
+	if run_name:
+		_require_scoped_document_access("APS Planning Run", run_name, ptype="read")
+		company = frappe.db.get_value("APS Planning Run", run_name, "company") or company
 	_require_scope_access(company=company)
-	filters = planning._strip_none({"company": company})
+	filters = planning._strip_none({"company": company, "name": run_name})
+	run_fields = [
+		"name",
+		"company",
+		"plant_floor",
+		"selected_plant_floor_summary",
+		"planning_date",
+		"status",
+		"approval_state",
+		"existing_work_order_policy",
+		"total_net_requirement_qty",
+		"total_machine_scheduled_qty",
+		"total_demand_covered_qty",
+		"total_overproduction_qty",
+		"total_scheduled_qty",
+		"total_unscheduled_qty",
+		"total_produced_qty",
+		"total_delivered_qty",
+		"consistency_status",
+		"consistency_checked_on",
+		"exception_count",
+		"result_count",
+		"notes",
+	]
+	v2_enabled = v2_flags.is_v2_enabled()
+	if v2_enabled:
+		run_fields.extend(
+			[
+				"baseline_run", "demand_baseline_fingerprint", "admission_fingerprint",
+				"admission_confirmed_fingerprint", "admission_confirmed_by", "admission_confirmed_on",
+				"admission_strategy", "admission_decision_reason", "planned_admission_fingerprint",
+				"total_p0_qty", "total_stock_covered_qty", "total_carried_qty", "total_new_plan_qty",
+				"total_selected_p1_qty", "total_selected_p2_qty", "carried_commitment_count", "source_run_count",
+			]
+		)
 	runs = frappe.get_list(
 		"APS Planning Run",
 		filters=filters,
-		fields=[
-			"name",
-			"company",
-			"plant_floor",
-			"selected_plant_floor_summary",
-			"planning_date",
-			"status",
-			"approval_state",
-			"existing_work_order_policy",
-			"total_net_requirement_qty",
-			"total_machine_scheduled_qty",
-			"total_demand_covered_qty",
-			"total_overproduction_qty",
-			"total_scheduled_qty",
-			"total_unscheduled_qty",
-			"total_produced_qty",
-			"total_delivered_qty",
-			"consistency_status",
-			"consistency_checked_on",
-			"exception_count",
-			"result_count",
-			"notes",
-		],
+		fields=run_fields,
 		order_by="modified desc",
 		limit=50,
 	)
-	runs = _filter_accessible_documents(runs, "APS Planning Run")
+	access_cache = {}
+	_prime_scoped_document_dependencies(runs, "APS Planning Run", access_cache)
+	runs = _filter_accessible_documents(runs, "APS Planning Run", access_cache)
 	if plant_floor:
 		runs = [
 			row
@@ -3066,7 +5151,14 @@ def get_run_console_data(company=None, plant_floor=None):
 		filters={"planning_run": ("in", [row.name for row in runs] or [""])},
 		fields=[
 			"name",
+			"company",
+			"customer",
 			"planning_run",
+			"item_code",
+			"sales_order",
+			"sales_order_item",
+			"plant_floor",
+			"net_requirement",
 			"actual_status",
 			"planned_qty",
 			"machine_scheduled_qty",
@@ -3078,7 +5170,8 @@ def get_run_console_data(company=None, plant_floor=None):
 		],
 		limit_page_length=0,
 	)
-	visible_result_rows = _filter_accessible_documents(visible_result_rows, "APS Schedule Result")
+	_prime_scoped_document_dependencies(visible_result_rows, "APS Schedule Result", access_cache)
+	visible_result_rows = _filter_accessible_documents(visible_result_rows, "APS Schedule Result", access_cache)
 	execution_by_run = defaultdict(lambda: {"running": 0, "delayed": 0, "no_recent_update": 0})
 	results_by_run = defaultdict(list)
 	for result in visible_result_rows:
@@ -3095,13 +5188,20 @@ def get_run_console_data(company=None, plant_floor=None):
 			"planning_run": ("in", [row.name for row in runs] or [""]),
 			"status": "Open",
 		},
-		fields=["name", "planning_run", "source_doctype", "source_name"],
+		fields=[
+			"name", "customer", "planning_run", "item_code", "workstation",
+			"source_doctype", "source_name",
+		],
 		limit_page_length=0,
 	)
-	exception_access_cache = {}
+	_prime_scoped_document_dependencies(visible_exceptions, "APS Exception Log", access_cache)
+	visible_exceptions = _filter_accessible_documents(
+		visible_exceptions, "APS Exception Log", access_cache
+	)
+	_prime_exception_source_access(visible_exceptions, access_cache)
 	exception_count_by_run = defaultdict(int)
-	for row in _filter_accessible_documents(visible_exceptions, "APS Exception Log", exception_access_cache):
-		if _has_exception_source_access(row, exception_access_cache):
+	for row in visible_exceptions:
+		if _has_exception_source_access(row, access_cache):
 			exception_count_by_run[row.get("planning_run")] += 1
 	for row in runs:
 		summary = _summarize_visible_results(results_by_run[row.name])
@@ -3115,14 +5215,18 @@ def get_run_console_data(company=None, plant_floor=None):
 		row.total_delivered_qty = summary["delivered_qty"]
 		row.result_count = len(results_by_run[row.name])
 		row.exception_count = exception_count_by_run[row.name]
+		if v2_enabled:
+			row.v2_admission_available = frappe.utils.cint(bool(row.demand_baseline_fingerprint))
 	run_contexts = {
 		row.name: _sanitize_planning_run_context(
 			planning.get_next_actions_for_context("APS Planning Run", row.name),
 			quantity_summary=_summarize_visible_results(results_by_run[row.name]),
+			access_cache=access_cache,
 		)
 		for row in runs
 	}
 	return {
+		"v2_enabled": frappe.utils.cint(v2_enabled),
 		"runs": [
 			{
 				**row,
@@ -3138,11 +5242,15 @@ def get_run_console_data(company=None, plant_floor=None):
 def get_schedule_gantt_data(run_name):
 	_require_read_access()
 	_require_scoped_document_access("APS Planning Run", run_name, ptype="read")
+	access_cache = {}
 	settings = planning.get_settings_dict()
 	run_doc = frappe.get_doc("APS Planning Run", run_name)
 	selected_plant_floors = planning._get_run_selected_plant_floors(run_doc)
+	_prime_document_access("Plant Floor", selected_plant_floors, access_cache)
 	selected_plant_floors = [
-		name for name in selected_plant_floors if _has_document_access("Plant Floor", name, ptype="read")
+		name
+		for name in selected_plant_floors
+		if _has_document_access("Plant Floor", name, ptype="read", access_cache=access_cache)
 	]
 	lanes = planning._get_machine_capability_rows(selected_plant_floors)
 	downtime_windows = planning._get_active_downtime_windows(
@@ -3152,27 +5260,61 @@ def get_schedule_gantt_data(run_name):
 		horizon_end=run_doc.horizon_end,
 		run_name=run_name,
 	)
+	downtime_scope_rows = _get_scoped_rows_for_priming(
+		"APS Downtime Window",
+		{row.get("name") for row in downtime_windows if row.get("name")},
+		access_cache,
+	)
+	_prime_scoped_document_dependencies(downtime_scope_rows, "APS Downtime Window", access_cache)
 	downtime_windows = [
 		row
 		for row in downtime_windows
-		if not row.get("name") or _has_scoped_document_access("APS Downtime Window", row.get("name"))
+		if not row.get("name")
+		or _has_scoped_document_access(
+			"APS Downtime Window", row.get("name"), access_cache=access_cache
+		)
 	]
+	_prime_document_access(
+		"Workstation", {row.get("workstation") for row in lanes if row.get("workstation")}, access_cache
+	)
+	_prime_document_access(
+		"Plant Floor", {row.get("plant_floor") for row in lanes if row.get("plant_floor")}, access_cache
+	)
 	lanes = [
 		row
 		for row in lanes
-		if (not row.get("workstation") or _has_document_access("Workstation", row.get("workstation")))
-		and (not row.get("plant_floor") or _has_document_access("Plant Floor", row.get("plant_floor")))
+		if (
+			not row.get("workstation")
+			or _has_document_access("Workstation", row.get("workstation"), access_cache=access_cache)
+		)
+		and (
+			not row.get("plant_floor")
+			or _has_document_access("Plant Floor", row.get("plant_floor"), access_cache=access_cache)
+		)
 	]
 	results = frappe.get_list(
 		"APS Schedule Result",
 		filters={"planning_run": run_name},
 		fields=[
 			"name",
+			"company",
+			"planning_run",
 			"net_requirement",
+			"demand_commitment",
+			"root_commitment",
+			"parent_commitment",
 			"item_code",
 			"customer",
+			"sales_order",
+			"sales_order_item",
+			"plant_floor",
 			"requested_date",
 			"demand_source",
+			"production_campaign",
+			"campaign_group_key",
+			"campaign_output_role",
+			"selected_bom",
+			"bom_selection_source",
 			"production_strategy",
 			"planned_qty",
 			"machine_scheduled_qty",
@@ -3215,14 +5357,18 @@ def get_schedule_gantt_data(run_name):
 		],
 		order_by="modified asc",
 	)
-	results = _filter_accessible_documents(results, "APS Schedule Result")
+	_prime_scoped_document_dependencies(results, "APS Schedule Result", access_cache)
+	results = _filter_accessible_documents(results, "APS Schedule Result", access_cache)
+	results = _filter_visible_gantt_results(results, access_cache)
 	if not results:
 		run_context = _sanitize_planning_run_context(
 			planning.get_next_actions_for_context("APS Planning Run", run_name),
 			quantity_summary=_summarize_visible_results([]),
+			access_cache=access_cache,
 		)
 		return {
 			"tasks": [],
+			"dependencies": [],
 			"rows": [],
 			"lanes": lanes,
 			"downtime_windows": downtime_windows,
@@ -3232,10 +5378,10 @@ def get_schedule_gantt_data(run_name):
 			"run_context": run_context,
 			"quantity_summary": _summarize_visible_results([]),
 		}
+	item_detail_keys = {(row.item_code, row.customer) for row in results if row.item_code}
 	item_detail_map = {
-		row.item_code: planning._get_item_detail_snapshot(row.item_code, row.customer, settings)
-		for row in results
-		if row.item_code
+		key: planning._get_item_detail_snapshot(key[0], key[1], settings)
+		for key in item_detail_keys
 	}
 
 	segments = frappe.get_all(
@@ -3248,11 +5394,21 @@ def get_schedule_gantt_data(run_name):
 			"workstation",
 			"start_time",
 			"end_time",
+			"baseline_start_time",
+			"baseline_end_time",
+			"solver_start_time",
+			"solver_end_time",
+			"current_start_time",
+			"current_end_time",
+			"forecast_start_time",
+			"forecast_end_time",
 			"planned_qty",
 			"lane_key",
 			"parallel_group",
 			"family_group",
 			"segment_kind",
+			"production_campaign",
+			"capacity_owner",
 			"primary_item_code",
 			"co_product_item_code",
 			"mould_reference",
@@ -3293,33 +5449,45 @@ def get_schedule_gantt_data(run_name):
 		],
 		order_by="start_time asc",
 	)
-	segments = [
-		row
-		for row in segments
-		if (not row.get("workstation") or _has_document_access("Workstation", row.get("workstation")))
-		and (not row.get("plant_floor") or _has_document_access("Plant Floor", row.get("plant_floor")))
-	]
+	segments = _filter_visible_schedule_segments(segments, access_cache)
+	stock_entries = {
+		name
+		for row in [*results, *segments]
+		for name in str(row.get("execution_source_documents") or "").splitlines()
+		if name
+	}
+	_prime_document_access("Stock Entry", stock_entries, access_cache)
 	for row in results:
-		row.execution_source_documents = _filter_link_list(row.get("execution_source_documents"), "Stock Entry")
+		row.execution_source_documents = _filter_link_list(
+			row.get("execution_source_documents"), "Stock Entry", access_cache
+		)
 	for row in segments:
 		if row.get("linked_work_order") and not _has_document_access(
-			"Work Order", row.get("linked_work_order"), ptype="read"
+			"Work Order", row.get("linked_work_order"), ptype="read", access_cache=access_cache
 		):
 			row.linked_work_order = ""
 		if row.get("linked_work_order_scheduling") and not _has_document_access(
-			"Work Order Scheduling", row.get("linked_work_order_scheduling"), ptype="read"
+			"Work Order Scheduling",
+			row.get("linked_work_order_scheduling"),
+			ptype="read",
+			access_cache=access_cache,
 		):
 			row.linked_work_order_scheduling = ""
-		if row.get("linked_scheduling_item") and not _has_document_access(
-			"Scheduling Item", row.get("linked_scheduling_item"), ptype="read"
+		if row.get("linked_scheduling_item") and not _has_linked_document_access(
+			"Scheduling Item", row.get("linked_scheduling_item"), access_cache=access_cache
 		):
 			row.linked_scheduling_item = ""
-		row.execution_source_documents = _filter_link_list(row.get("execution_source_documents"), "Stock Entry")
+		row.execution_source_documents = _filter_link_list(
+			row.get("execution_source_documents"), "Stock Entry", access_cache
+		)
 	exceptions = frappe.get_list(
 		"APS Exception Log",
 		filters={"planning_run": run_name, "status": "Open"},
 		fields=[
 			"name",
+			"customer",
+			"planning_run",
+			"item_code",
 			"severity",
 			"exception_type",
 			"message",
@@ -3332,18 +5500,15 @@ def get_schedule_gantt_data(run_name):
 		],
 		order_by="modified desc",
 	)
-	exception_access_cache = {}
-	exceptions = [
-		row
-		for row in _filter_accessible_documents(exceptions, "APS Exception Log", exception_access_cache)
-		if _has_exception_source_access(row, exception_access_cache)
-	]
+	_prime_scoped_document_dependencies(exceptions, "APS Exception Log", access_cache)
+	exceptions = _filter_accessible_documents(exceptions, "APS Exception Log", access_cache)
+	_prime_exception_source_access(exceptions, access_cache)
+	exceptions = [row for row in exceptions if _has_exception_source_access(row, access_cache)]
 	result_map = {row.name: row for row in results}
 	fulfillment = _filter_fulfillment_projection(
 		availability.get_run_fulfillment_projection(run_name, persist=False),
 		[row.name for row in results],
 	)
-	fulfillment_map = {row["result"]: row for row in fulfillment.get("results") or []}
 	exception_map = {}
 	for row in exceptions:
 		exception_map.setdefault(row.source_name, []).append(row)
@@ -3358,17 +5523,18 @@ def get_schedule_gantt_data(run_name):
 		parent = result_map.get(row.parent)
 		if not parent:
 			continue
+		task_start = row.current_start_time or row.start_time
+		task_end = row.current_end_time or row.end_time
 		if (
 			row.segment_status == "Cancelled"
 			or not row.planned_qty
 			or not row.workstation
-			or not row.start_time
-			or not row.end_time
-			or get_datetime(row.end_time) <= get_datetime(row.start_time)
+			or not task_start
+			or not task_end
+			or get_datetime(task_end) <= get_datetime(task_start)
 		):
 			continue
-		item_detail = item_detail_map.get(parent.item_code) or {}
-		fulfillment_row = fulfillment_map.get(parent.name) or {}
+		item_detail = item_detail_map.get((parent.item_code, parent.customer)) or {}
 		risk_rows = (
 			(exception_map.get(parent.name) or [])
 			+ (exception_map.get(parent.net_requirement) or [])
@@ -3395,8 +5561,8 @@ def get_schedule_gantt_data(run_name):
 			{
 				"id": row.name,
 				"name": f"{parent.item_code} / {item_detail.get('item_name') or row.workstation}",
-				"start": row.start_time,
-				"end": row.end_time,
+				"start": task_start,
+				"end": task_end,
 				"progress": min(
 					max((flt(row.actual_completed_qty) / flt(row.planned_qty) * 100) if flt(row.planned_qty) else 0, 0),
 					100,
@@ -3405,8 +5571,10 @@ def get_schedule_gantt_data(run_name):
 				"details": {
 					"segment_name": row.name,
 					"result_name": row.parent,
+					"demand_commitment": parent.demand_commitment,
 					"item_code": parent.item_code,
 					"item_name": item_detail.get("item_name"),
+					"customer_code": item_detail.get("customer_code"),
 					"customer_reference": item_detail.get("customer_reference"),
 					"food_grade": item_detail.get("food_grade"),
 					"customer": parent.customer,
@@ -3433,7 +5601,6 @@ def get_schedule_gantt_data(run_name):
 					"cancellation_inventory_risk_qty": parent.cancellation_inventory_risk_qty,
 					"last_actual_report_time": parent.last_actual_report_time,
 					"execution_source_documents": parent.execution_source_documents,
-					"fulfillment_timeline": fulfillment_row.get("timeline") or [],
 					"projected_completion_time": parent.projected_completion_time,
 					"result_risk_status": parent.risk_status,
 					"risk_status": task_risk,
@@ -3445,6 +5612,11 @@ def get_schedule_gantt_data(run_name):
 					"parallel_group": row.parallel_group,
 					"family_group": row.family_group,
 					"segment_kind": row.segment_kind,
+					"production_campaign": row.production_campaign or parent.production_campaign,
+					"capacity_owner": row.capacity_owner,
+					"campaign_output_role": parent.campaign_output_role,
+					"selected_bom": parent.selected_bom,
+					"bom_selection_source": parent.bom_selection_source,
 					"primary_item_code": row.primary_item_code,
 					"co_product_item_code": row.co_product_item_code,
 					"mould_reference": row.mould_reference,
@@ -3473,6 +5645,12 @@ def get_schedule_gantt_data(run_name):
 					"actual_scrap_qty": row.actual_scrap_qty,
 					"actual_start_time": row.actual_start_time or parent.actual_start_time,
 					"actual_end_time": row.actual_end_time or parent.actual_end_time,
+					"original_start_time": row.baseline_start_time or row.solver_start_time or row.start_time,
+					"original_end_time": row.baseline_end_time or row.solver_end_time or row.end_time,
+					"current_start_time": task_start,
+					"current_end_time": task_end,
+					"forecast_start_time": row.forecast_start_time or task_start,
+					"forecast_end_time": row.forecast_end_time or task_end,
 					"schedule_delay_minutes": row.schedule_delay_minutes or parent.schedule_delay_minutes,
 					"delay_minutes": row.delay_minutes or parent.delay_minutes,
 					"linked_work_order": row.linked_work_order,
@@ -3495,9 +5673,89 @@ def get_schedule_gantt_data(run_name):
 				},
 			}
 		)
+	campaign_names = sorted(
+		{
+			(task.get("details") or {}).get("production_campaign")
+			for task in tasks
+			if (task.get("details") or {}).get("production_campaign")
+		}
+	)
+	campaign_summary = []
+	if campaign_names:
+		campaigns = frappe.get_all(
+			"APS Production Campaign",
+			filters={"name": ("in", campaign_names)},
+			fields=["name", "capacity_owner_segment", "planned_cycles", "actual_cycles", "status", "machine", "mold", "start_time", "end_time", "linked_work_order_scheduling"],
+			limit_page_length=0,
+		)
+		campaigns = [row for row in campaigns if _has_scoped_document_access("APS Production Campaign", row.name)]
+		visible_campaign_names = {row.name for row in campaigns}
+		outputs = frappe.get_all(
+			"APS Campaign Output",
+			filters={"parent": ("in", list(visible_campaign_names))},
+			fields=["name", "parent", "item_code", "output_role", "output_per_cycle", "planned_qty", "demand_covered_qty", "excess_qty", "demand_commitment", "work_order", "schedule_result", "actual_good_qty", "actual_scrap_qty", "output_note"],
+			order_by="parent asc, idx asc",
+			limit_page_length=0,
+		) if visible_campaign_names else []
+		_require_payload_link_access(
+			outputs,
+			(
+				("item_code", "Item", False),
+				("demand_commitment", "APS Demand Commitment", True),
+				("work_order", "Work Order", False),
+				("schedule_result", "APS Schedule Result", True),
+			),
+		)
+		outputs_by_campaign = defaultdict(list)
+		for output in outputs:
+			if output.schedule_result and output.schedule_result not in result_map:
+				continue
+			if output.work_order and not _has_document_access("Work Order", output.work_order):
+				output.work_order = ""
+			outputs_by_campaign[output.parent].append(dict(output))
+		task_by_segment = {task["id"]: task for task in tasks}
+		for campaign in campaigns:
+			owner_task = task_by_segment.get(campaign.capacity_owner_segment)
+			if not owner_task:
+				owner_task = next(
+					(
+						task for task in tasks
+						if (task.get("details") or {}).get("production_campaign") == campaign.name
+						and (task.get("details") or {}).get("segment_kind") != "Family Co-Product"
+					),
+					None,
+				)
+			if not owner_task:
+				continue
+			campaign_outputs = outputs_by_campaign.get(campaign.name) or []
+			owner_task["name"] = "Campaign / " + " + ".join(output.get("item_code") or "" for output in campaign_outputs)
+			owner_task["details"].update(
+				{
+					"is_campaign_owner": 1,
+					"campaign_owner_segment": owner_task["id"],
+					"campaign_outputs": campaign_outputs,
+					"campaign_output_count": len(campaign_outputs),
+					"campaign_planned_cycles": campaign.planned_cycles,
+					"campaign_actual_cycles": campaign.actual_cycles,
+					"campaign_status": campaign.status,
+				}
+			)
+			for task in tasks:
+				if (task.get("details") or {}).get("production_campaign") != campaign.name or task["id"] == owner_task["id"]:
+					continue
+				task["details"]["is_campaign_derived"] = 1
+				task["details"]["campaign_owner_segment"] = owner_task["id"]
+			campaign_summary.append(
+				{
+					"name": campaign.name,
+					"capacity_owner_segment": owner_task["id"],
+					"output_count": len(campaign_outputs),
+					"outputs": campaign_outputs,
+				}
+			)
 	blocked_results = []
 	for row in results:
-		item_detail = item_detail_map.get(row.item_code) or {}
+		item_detail = item_detail_map.get((row.item_code, row.customer)) or {}
 		risk_rows = (exception_map.get(row.name) or []) + (exception_map.get(row.net_requirement) or [])
 		for segment_name in segment_names_by_result.get(row.name) or []:
 			risk_rows.extend(exception_map.get(segment_name) or [])
@@ -3513,6 +5771,7 @@ def get_schedule_gantt_data(run_name):
 				"name": row.name,
 				"item_code": row.item_code,
 				"item_name": item_detail.get("item_name"),
+				"customer_code": item_detail.get("customer_code"),
 				"customer": row.customer,
 				"requested_date": row.requested_date,
 				"demand_source": row.demand_source,
@@ -3546,25 +5805,69 @@ def get_schedule_gantt_data(run_name):
 			}
 		)
 	quantity_summary = _summarize_visible_results(results)
+	dependencies = []
+	if v2_flags.get_v2_settings().get("enable_multilevel_bom_planning") and frappe.db.exists("DocType", "APS BOM Pegging"):
+		peggings = frappe.get_all(
+			"APS BOM Pegging",
+			filters={
+				"planning_run": run_name, "status": ("not in", ["Cancelled", "Informational", "Covered"]),
+				"parent_result": ("is", "set"), "child_result": ("is", "set"),
+			},
+			fields=["name", "root_demand_key", "parent_result", "child_result", "parent_item", "component_item", "status"],
+			limit_page_length=0,
+		)
+		tasks_by_result = defaultdict(list)
+		task_by_id = {task["id"]: task for task in tasks}
+		for task in tasks:
+			tasks_by_result[(task.get("details") or {}).get("result_name")].append(task)
+		for row in peggings:
+			parent_tasks = sorted(tasks_by_result.get(row.parent_result) or [], key=lambda task: get_datetime(task["start"]))
+			child_tasks = sorted(tasks_by_result.get(row.child_result) or [], key=lambda task: get_datetime(task["end"]))
+			parent_tasks = [
+				task_by_id.get((task.get("details") or {}).get("campaign_owner_segment")) or task
+				for task in parent_tasks
+			]
+			child_tasks = [
+				task_by_id.get((task.get("details") or {}).get("campaign_owner_segment")) or task
+				for task in child_tasks
+			]
+			if not parent_tasks or not child_tasks:
+				continue
+			dependencies.append({
+				"from_segment": child_tasks[-1]["id"], "to_segment": parent_tasks[0]["id"],
+				"root_demand_key": row.root_demand_key, "parent_item": row.parent_item,
+				"component_item": row.component_item, "status": row.status,
+			})
+		predecessor_count = defaultdict(int); successor_count = defaultdict(int)
+		for dependency in dependencies:
+			predecessor_count[dependency["to_segment"]] += 1
+			successor_count[dependency["from_segment"]] += 1
+		for task in tasks:
+			task["details"]["bom_predecessor_count"] = predecessor_count[task["id"]]
+			task["details"]["bom_successor_count"] = successor_count[task["id"]]
 	run_context = _sanitize_planning_run_context(
 		planning.get_next_actions_for_context("APS Planning Run", run_name),
 		quantity_summary=quantity_summary,
+		access_cache=access_cache,
 	)
-	return {
-		"tasks": tasks,
-		"rows": segments,
-		"lanes": lanes,
-		"downtime_windows": downtime_windows,
-		"selected_plant_floors": selected_plant_floors,
-		"blocked_results": blocked_results,
-		"run": run_context,
-		"run_context": run_context,
-		"quantity_summary": quantity_summary,
-		"fulfillment_summary": fulfillment.get("summary") or {},
-		"fulfillment_results": fulfillment.get("results") or [],
-		"fulfillment_warning_count": len(fulfillment.get("warnings") or []),
-		"fulfillment_warnings": fulfillment.get("warnings") or [],
-	}
+	return item_display.attach_item_display_fields(
+		{
+			"tasks": tasks,
+			"dependencies": dependencies,
+			"campaigns": campaign_summary,
+			"rows": segments,
+			"lanes": lanes,
+			"downtime_windows": downtime_windows,
+			"selected_plant_floors": selected_plant_floors,
+			"blocked_results": blocked_results,
+			"run": run_context,
+			"run_context": run_context,
+			"quantity_summary": quantity_summary,
+			"fulfillment_summary": fulfillment.get("summary") or {},
+			"fulfillment_warning_count": len(fulfillment.get("warnings") or []),
+			"fulfillment_warnings": fulfillment.get("warnings") or [],
+		}
+	)
 
 
 @frappe.whitelist()
@@ -3572,13 +5875,16 @@ def get_release_center_data(run_name=None):
 	_require_read_access()
 	if run_name:
 		_require_scoped_document_access("APS Planning Run", run_name, ptype="read")
+	access_cache = {}
 	batch_filters = planning._strip_none({"planning_run": run_name})
 	work_order_proposal_batches = frappe.get_list(
 		"APS Work Order Proposal Batch",
 		filters=batch_filters,
 		fields=[
 			"name",
+			"company",
 			"planning_run",
+			"plant_floor",
 			"status",
 			"approval_state",
 			"proposal_date",
@@ -3589,7 +5895,7 @@ def get_release_center_data(run_name=None):
 		limit=50,
 	)
 	work_order_proposal_batches = _filter_accessible_documents(
-		work_order_proposal_batches, "APS Work Order Proposal Batch"
+		work_order_proposal_batches, "APS Work Order Proposal Batch", access_cache
 	)
 	_attach_review_counts(work_order_proposal_batches, "APS Work Order Proposal Item")
 	shift_schedule_proposal_batches = frappe.get_list(
@@ -3597,7 +5903,9 @@ def get_release_center_data(run_name=None):
 		filters=batch_filters,
 		fields=[
 			"name",
+			"company",
 			"planning_run",
+			"plant_floor",
 			"status",
 			"approval_state",
 			"proposal_date",
@@ -3609,7 +5917,7 @@ def get_release_center_data(run_name=None):
 		limit=50,
 	)
 	shift_schedule_proposal_batches = _filter_accessible_documents(
-		shift_schedule_proposal_batches, "APS Shift Schedule Proposal Batch"
+		shift_schedule_proposal_batches, "APS Shift Schedule Proposal Batch", access_cache
 	)
 	_attach_review_counts(shift_schedule_proposal_batches, "APS Shift Schedule Proposal Item")
 	release_batches = frappe.get_list(
@@ -3617,6 +5925,7 @@ def get_release_center_data(run_name=None):
 		filters=batch_filters,
 		fields=[
 			"name",
+			"company",
 			"planning_run",
 			"status",
 			"release_from_date",
@@ -3627,8 +5936,10 @@ def get_release_center_data(run_name=None):
 		order_by="modified desc",
 		limit=50,
 	)
-	release_batches = _filter_accessible_documents(release_batches, "APS Release Batch")
-	_attach_release_wos_details(release_batches)
+	release_batches = _filter_accessible_documents(
+		release_batches, "APS Release Batch", access_cache
+	)
+	_attach_release_wos_details(release_batches, access_cache)
 	exception_filters = {"status": "Open"}
 	if run_name:
 		exception_filters["planning_run"] = run_name
@@ -3653,18 +5964,15 @@ def get_release_center_data(run_name=None):
 		order_by="modified desc",
 		limit=100,
 	)
-	exception_access_cache = {}
-	exceptions = [
-		row
-		for row in _filter_accessible_documents(exceptions, "APS Exception Log", exception_access_cache)
-		if _has_exception_source_access(row, exception_access_cache)
-	]
+	exceptions = _filter_accessible_documents(exceptions, "APS Exception Log", access_cache)
+	_prime_exception_source_access(exceptions, access_cache)
+	exceptions = [row for row in exceptions if _has_exception_source_access(row, access_cache)]
 	for row in exceptions:
-		diagnostic = planning._parse_diagnostic_json(row.get("diagnostic_json"))
-		row["diagnostic"] = diagnostic
-		row["root_cause_codes"] = diagnostic.get("root_cause_codes") or []
-		row["root_cause_text"] = diagnostic.get("root_cause_text") or row.get("resolution_hint") or row.get("message")
-		row["suggested_actions"] = diagnostic.get("suggested_actions") or []
+		resolution_context = planning._build_exception_resolution_context(row)
+		row["diagnostic"] = resolution_context.get("diagnostic") or {}
+		row["root_cause_codes"] = resolution_context.get("root_cause_codes") or []
+		row["root_cause_text"] = resolution_context.get("root_cause_text") or row.get("message")
+		row["suggested_actions"] = resolution_context.get("suggested_actions") or []
 		row["has_resolution_context"] = 1
 		row.update(_build_exception_routes(row))
 		exception_run_name = row.get("planning_run") or run_name
@@ -3677,6 +5985,15 @@ def get_release_center_data(run_name=None):
 			filters={"planning_run": run_name},
 			fields=[
 				"name",
+				"company",
+				"customer",
+				"planning_run",
+				"item_code",
+				"sales_order",
+				"sales_order_item",
+				"plant_floor",
+				"net_requirement",
+				"demand_commitment",
 				"actual_status",
 				"planned_qty",
 				"machine_scheduled_qty",
@@ -3697,13 +6014,20 @@ def get_release_center_data(run_name=None):
 		if run_name
 		else []
 	)
-	visible_results = _filter_accessible_documents(visible_results, "APS Schedule Result")
+	visible_results = _filter_accessible_documents(
+		visible_results, "APS Schedule Result", access_cache
+	)
 	quantity_summary = _summarize_visible_results(visible_results) if run_name else None
-	execution_health = _build_visible_execution_health(run_name, visible_results) if run_name else None
+	execution_health = (
+		_build_visible_execution_health(run_name, visible_results, access_cache)
+		if run_name
+		else None
+	)
 	run_context = (
 		_sanitize_planning_run_context(
 			planning.get_next_actions_for_context("APS Planning Run", run_name),
 			quantity_summary=quantity_summary,
+			access_cache=access_cache,
 		)
 		if run_name
 		else None
@@ -3716,27 +6040,26 @@ def get_release_center_data(run_name=None):
 		if run_name
 		else None
 	)
-	recent_runs = []
-	for row in planning.get_recent_run_contexts(limit=8):
-		if not _has_scoped_document_access("APS Planning Run", row.get("name"), ptype="read"):
-			continue
-		row = dict(row)
-		row["selected_plant_floors"] = [
-			name
-			for name in row.get("selected_plant_floors") or []
-			if _has_document_access("Plant Floor", name, ptype="read")
-		]
-		recent_runs.append(row)
-	return {
-		"work_order_proposal_batches": work_order_proposal_batches,
-		"shift_schedule_proposal_batches": shift_schedule_proposal_batches,
-		"release_batches": release_batches,
-		"exceptions": exceptions,
-		"run_context": run_context,
-		"quantity_summary": quantity_summary,
-		"execution_health": execution_health,
-		"fulfillment_summary": (fulfillment or {}).get("summary"),
-		"fulfillment_warning_count": len((fulfillment or {}).get("warnings") or []),
-		"fulfillment_warnings": (fulfillment or {}).get("warnings") or [],
-		"recent_runs": recent_runs,
-	}
+	recent_runs = [
+		_sanitize_planning_run_context(row, access_cache=access_cache)
+		for row in _filter_accessible_documents(
+			planning.get_recent_run_contexts(limit=8),
+			"APS Planning Run",
+			access_cache,
+		)
+	]
+	return item_display.attach_item_display_fields(
+		{
+			"work_order_proposal_batches": work_order_proposal_batches,
+			"shift_schedule_proposal_batches": shift_schedule_proposal_batches,
+			"release_batches": release_batches,
+			"exceptions": exceptions,
+			"run_context": run_context,
+			"quantity_summary": quantity_summary,
+			"execution_health": execution_health,
+			"fulfillment_summary": (fulfillment or {}).get("summary"),
+			"fulfillment_warning_count": len((fulfillment or {}).get("warnings") or []),
+			"fulfillment_warnings": (fulfillment or {}).get("warnings") or [],
+			"recent_runs": recent_runs,
+		}
+	)

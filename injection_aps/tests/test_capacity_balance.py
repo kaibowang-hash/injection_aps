@@ -1019,6 +1019,7 @@ class TestCapacityBalanceEngine(unittest.TestCase):
 		with (
 			patch.object(capacity_balance.frappe.db, "set_value") as set_value,
 			patch.object(capacity_balance.frappe.db, "sql") as sql,
+			patch.object(capacity_balance.frappe.db, "exists", return_value=True),
 		):
 			capacity_balance.invalidate_capacity_balance("RUN-1")
 
@@ -1028,6 +1029,7 @@ class TestCapacityBalanceEngine(unittest.TestCase):
 		self.assertIsNone(values["capacity_balance_confirmed_by"])
 		self.assertIsNone(values["capacity_balance_applied_on"])
 		self.assertIn("capacity_balance_status = 'Not Analyzed'", sql.call_args.args[0])
+		self.assertTrue(any("APS Constraint Resolution" in call.args[0] for call in sql.call_args_list))
 
 	def test_cross_run_finished_goods_stock_claim_is_not_silently_reused(self):
 		current_results = {
@@ -2764,7 +2766,9 @@ class TestCapacityBalanceTransactions(FrappeTestCase):
 				"targets": [
 					{
 						"customer_schedule_item": schedule_item,
+						"schedule_date": str(due_date),
 						"opening_required_qty": 100.0,
+						"opening_delivered_qty": 0.0,
 					}
 				],
 			},

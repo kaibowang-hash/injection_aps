@@ -6,6 +6,7 @@
  "engine": "InnoDB",
  "field_order": [
   "planning_run",
+  "replan_cycle",
   "company",
   "plant_floor",
   "work_order_proposal_batch",
@@ -30,6 +31,14 @@
    "options": "APS Planning Run",
    "read_only": 1,
    "reqd": 1
+  },
+  {
+   "fieldname": "replan_cycle",
+   "fieldtype": "Link",
+   "label": "Replan Cycle",
+   "options": "APS Replan Cycle",
+   "read_only": 1,
+   "search_index": 1
   },
   {
    "fieldname": "company",

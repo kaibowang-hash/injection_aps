@@ -5,12 +5,20 @@ from frappe import _
 from frappe.model.document import Document
 from frappe.utils import flt
 
+from injection_aps.services.v2_flags import is_v2_enabled
+
 
 class CustomerDeliverySchedule(Document):
 	def validate(self):
 		self.status = self.status or "Draft"
 		self.source_type = self.source_type or "Customer Delivery Schedule"
 		self.import_strategy = self.import_strategy or "Replace Scope"
+		if is_v2_enabled():
+			self.revision_mode = self.revision_mode or {
+				"Replace Scope": "Full Replacement",
+				"Partial Update": "Partial Revision",
+				"Append": "Incremental Demand",
+			}.get(self.import_strategy)
 		self.schedule_scope = (self.schedule_scope or self.version_no or "").strip()
 		self.schedule_total_qty = sum(flt(row.qty) for row in self.get("items") or [])
 		self._protect_import_managed_schedule()

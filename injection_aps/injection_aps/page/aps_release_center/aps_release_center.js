@@ -1,5 +1,5 @@
 frappe.pages["aps-release-center"].on_page_load = function (wrapper) {
-	frappe.require("/assets/injection_aps/js/injection_aps_shared.js", () => {
+	injection_aps.ui_loader.start("20260902.1", () => {
 		if (!wrapper.injection_aps_controller) {
 			wrapper.injection_aps_controller = new InjectionAPSReleaseCenter(wrapper);
 		}
@@ -61,15 +61,13 @@ class InjectionAPSReleaseCenter {
 						<div class="ia-shift-proposal-table" style="margin-top: 8px;"></div>
 					</div>
 				</div>
-				<div class="ia-grid-2">
-					<div class="ia-panel">
-						<h4>${__("Formal Apply Logs")}</h4>
-						<div class="ia-release-table" style="margin-top: 8px;"></div>
-					</div>
-					<div class="ia-panel">
-						<h4>${__("Open Exceptions")}</h4>
-						<div class="ia-exception-table" style="margin-top: 8px;"></div>
-					</div>
+				<div class="ia-panel">
+					<h4>${__("Formal Apply Logs")}</h4>
+					<div class="ia-release-table" style="margin-top: 8px;"></div>
+				</div>
+				<div class="ia-panel">
+					<h4>${__("Open Exceptions")}</h4>
+					<div class="ia-exception-table" style="margin-top: 8px;"></div>
 				</div>
 				<div class="ia-panel">
 					<h4>${__("Insert Order Impact Analysis")}</h4>
@@ -334,7 +332,7 @@ class InjectionAPSReleaseCenter {
 		injection_aps.ui.render_cards(summaryTarget, [
 			{ label: __("Rows"), value: preview.proposal_count || 0 },
 			{ label: __("New", null, "Injection APS Execution"), value: actionCounts.New || 0 },
-			{ label: __("Update"), value: (actionCounts["Update Existing"] || 0) + (actionCounts["Move Existing"] || 0) },
+			{ label: __("Update", null, "Injection APS"), value: (actionCounts["Update Existing"] || 0) + (actionCounts["Move Existing"] || 0) },
 			{ label: __("Cancel"), value: actionCounts["Cancel Existing"] || 0 },
 			{ label: __("Qty"), value: injection_aps.ui.format_number(preview.total_planned_qty || 0) },
 			{ label: __("Shift Type", null, "Injection APS"), value: preview.shift_type || "All" },
@@ -776,9 +774,8 @@ class InjectionAPSReleaseCenter {
 			[
 				{ label: __("Severity", null, "Injection APS"), fieldname: "severity" },
 				{ label: __("Type", null, "Injection APS"), fieldname: "exception_type" },
-				{ label: __("Item", null, "Injection APS"), fieldname: "item_code" },
-				{ label: __("Machine", null, "Injection APS"), fieldname: "workstation" },
-				{ label: __("Message", null, "Injection APS"), fieldname: "message" },
+				{ label: __("Affected Object", null, "Injection APS"), fieldname: "item_code" },
+				{ label: __("Diagnosis / Recommendation", null, "Injection APS"), fieldname: "message" },
 				{ label: __("Actions", null, "Injection APS"), fieldname: "actions_html" },
 			],
 			rows,
@@ -790,9 +787,25 @@ class InjectionAPSReleaseCenter {
 				if (column.fieldname === "exception_type") {
 					return injection_aps.ui.escape(injection_aps.ui.translate(value || ""));
 				}
+				if (column.fieldname === "item_code") {
+					const source = [row.source_doctype, row.source_name].filter(Boolean).join(" / ");
+					return `
+						<div class="ia-exception-subject">
+							${row.item_code ? injection_aps.ui.item_identity(row) : ""}
+							<div class="ia-muted">${[row.customer, row.workstation].filter(Boolean).map((item) => injection_aps.ui.escape(item)).join(" · ") || "-"}</div>
+							${source ? `<div class="ia-muted">${injection_aps.ui.escape(source)}</div>` : ""}
+						</div>
+					`;
+				}
 				if (column.fieldname === "message") {
-					const text = row.root_cause_text || row.resolution_hint || value || "";
-					return injection_aps.ui.escape(injection_aps.ui.translate(text));
+					const text = row.root_cause_text || value || row.resolution_hint || "";
+					const firstAction = this.getExceptionSuggestedActions(row)[0] || "";
+					return `
+						<div class="ia-exception-diagnosis">
+							<div>${injection_aps.ui.escape(injection_aps.ui.translate(text))}</div>
+							${firstAction && firstAction !== text ? `<div class="ia-exception-advice">${injection_aps.ui.escape(injection_aps.ui.translate(firstAction))}</div>` : ""}
+						</div>
+					`;
 				}
 				if (column.fieldname === "actions_html") {
 					return `
@@ -810,6 +823,18 @@ class InjectionAPSReleaseCenter {
 				export_sheet_name: __("Exceptions", null, "Injection APS"),
 				export_file_name: "aps_exceptions",
 				export_subtitle: __("Blocking and warning exceptions waiting for manual review."),
+				export_columns: [
+					{ label: __("Severity", null, "Injection APS"), fieldname: "severity" },
+					{ label: __("Type", null, "Injection APS"), fieldname: "exception_type" },
+					{ label: __("Item", null, "Injection APS"), fieldname: "item_code" },
+					{ label: __("Customer", null, "Injection APS"), fieldname: "customer" },
+					{ label: __("Machine", null, "Injection APS"), fieldname: "workstation" },
+					{ label: __("Message", null, "Injection APS"), fieldname: "message" },
+					{ label: __("Root Cause", null, "Injection APS"), fieldname: "root_cause_text" },
+					{ label: __("Resolution Guidance"), fieldname: "suggested_actions" },
+					{ label: __("Source Doctype", null, "Injection APS"), fieldname: "source_doctype" },
+					{ label: __("Source Name", null, "Injection APS"), fieldname: "source_name" },
+				],
 			}
 		);
 
@@ -834,20 +859,215 @@ class InjectionAPSReleaseCenter {
 			});
 	}
 
+	formatDiagnosticValue(value) {
+		if (value == null || value === "") {
+			return "";
+		}
+		if (Array.isArray(value)) {
+			return value
+				.slice(0, 12)
+				.map((entry) => (entry && typeof entry === "object" ? JSON.stringify(entry) : String(entry)))
+				.join("; ");
+		}
+		if (typeof value === "object") {
+			return JSON.stringify(value);
+		}
+		return String(value);
+	}
+
+	getDefaultExceptionActions(detail) {
+		const searchText = `${detail.exception_type || ""} ${detail.message || ""}`.toLowerCase();
+		if (["mold", "mould", "模具"].some((token) => searchText.includes(token))) {
+			return [
+				__("Check the linked Mold and Mold Product records for status, cycle time, cavity output, and machine-tonnage compatibility."),
+				__("Correct the mold assignment or move the segment to a compatible machine, then recalculate and confirm that the exception is cleared."),
+			];
+		}
+		if (["delivery delay", "late delivery", "delivery", "late", "交期", "交付", "延期"].some((token) => searchText.includes(token))) {
+			return [
+				__("Compare the requested delivery date with the segment end time and the displayed delay minutes."),
+				__("If a feasible earlier window exists, move, resize, or split the segment on the Board and run validation again."),
+				__("If capacity cannot meet the date, adjust machine capacity or downtime first; otherwise confirm the revised customer delivery date in the source demand and recalculate APS."),
+			];
+		}
+		if (["machine", "workstation", "capacity", "机台", "产能"].some((token) => searchText.includes(token))) {
+			return [
+				__("Check APS Machine Capability, the machine calendar, and active downtime for the affected workstation."),
+				__("Restore capacity or move/resize the affected segment in the Board, then rerun validation."),
+			];
+		}
+		if (["material", "stock", "bom", "warehouse", "原料", "库存"].some((token) => searchText.includes(token))) {
+			return [
+				__("Verify the BOM, source warehouse, available stock, and expected supply date for the affected item."),
+				__("Correct the material or supply data, then recalculate APS and confirm that the shortage no longer blocks the plan."),
+			];
+		}
+		return [
+			__("Open the source record and correct the condition described in the exception message."),
+			__("Recalculate or rebuild exceptions for this APS run, then confirm that the exception no longer appears before release."),
+		];
+	}
+
+	getExceptionSuggestedActions(detail) {
+		const diagnosticActions = injection_aps.ui.get_value(detail, "diagnostic.suggested_actions", []) || [];
+		const actions = diagnosticActions.length
+			? diagnosticActions
+			: [detail.resolution_hint, ...(detail.suggested_actions || []), ...this.getDefaultExceptionActions(detail)];
+		return Array.from(new Set(actions.map((row) => String(row || "").trim()).filter(Boolean)));
+	}
+
+	renderExceptionSourceFacts(detail) {
+		const snapshot = detail.source_snapshot || {};
+		const definitions = [
+			["segment_name", __("Segment", null, "Injection APS"), (value) => injection_aps.ui.escape(value)],
+			["result_name", __("Schedule Result", null, "Injection APS"), (value) => injection_aps.ui.escape(value)],
+			["requested_date", __("Requested Delivery", null, "Injection APS"), (value) => injection_aps.ui.escape(injection_aps.ui.format_date(value))],
+			["start_time", __("Segment Start", null, "Injection APS"), (value) => injection_aps.ui.escape(injection_aps.ui.format_datetime(value))],
+			["end_time", __("Segment End", null, "Injection APS"), (value) => injection_aps.ui.escape(injection_aps.ui.format_datetime(value))],
+			["projected_completion_time", __("Projected Completion", null, "Injection APS"), (value) => injection_aps.ui.escape(injection_aps.ui.format_datetime(value))],
+			["delay_minutes", __("Delay Minutes", null, "Injection APS"), (value) => injection_aps.ui.escape(injection_aps.ui.format_number(value, 1))],
+			["segment_planned_qty", __("Segment Qty", null, "Injection APS"), (value) => injection_aps.ui.escape(injection_aps.ui.format_number(value))],
+			["result_planned_qty", __("Plan Qty", null, "Injection APS"), (value) => injection_aps.ui.escape(injection_aps.ui.format_number(value))],
+			["machine_scheduled_qty", __("Machine Scheduled", null, "Injection APS"), (value) => injection_aps.ui.escape(injection_aps.ui.format_number(value))],
+			["unscheduled_qty", __("Unscheduled", null, "Injection APS"), (value) => injection_aps.ui.escape(injection_aps.ui.format_number(value))],
+			["plant_floor", __("Plant Floor", null, "Injection APS"), (value) => injection_aps.ui.escape(value)],
+			["mould_reference", __("Mold", null, "Injection APS"), (value) => injection_aps.ui.escape(value)],
+			["segment_status", __("Segment Status", null, "Injection APS"), (value) => injection_aps.ui.escape(injection_aps.ui.translate(value))],
+		];
+		const rows = definitions
+			.filter(([fieldname]) => snapshot[fieldname] !== null && snapshot[fieldname] !== undefined && snapshot[fieldname] !== "")
+			.map(([fieldname, label, formatter]) => `<div class="ia-kv-row"><div class="ia-kv-key">${injection_aps.ui.escape(label)}</div><div class="ia-kv-value">${formatter(snapshot[fieldname])}</div></div>`)
+			.join("");
+		return rows ? `<section class="ia-panel"><div class="ia-panel-head"><h4>${__("Operational Facts", null, "Injection APS")}</h4></div><div class="ia-kv">${rows}</div></section>` : "";
+	}
+
+	renderExceptionResolution(detail, loadError) {
+		const routes = detail.related_routes || {};
+		const translatedExceptionType = injection_aps.ui.translate(detail.exception_type || "");
+		const translatedMessage = injection_aps.ui.translate(detail.message || "");
+		const translatedRootCause = injection_aps.ui.translate(detail.root_cause_text || detail.resolution_hint || detail.message || "-");
+		const suggestedActions = this.getExceptionSuggestedActions(detail)
+			.map((row) => `<li>${injection_aps.ui.escape(injection_aps.ui.translate(row))}</li>`)
+			.join("");
+		const candidateMoldList = injection_aps.ui.get_value(detail, "diagnostic.candidate_molds", []) || [];
+		const candidateWorkstationList = injection_aps.ui.get_value(detail, "diagnostic.candidate_workstations", []) || [];
+		const candidateMolds = this.renderCollapsedChipList(candidateMoldList, { previewCount: 4 });
+		const candidateWorkstations = this.renderCollapsedChipList(candidateWorkstationList, { previewCount: 5 });
+		const selectedPlantFloorList = injection_aps.ui.get_value(detail, "diagnostic.selected_plant_floors", []) || [];
+		const selectedPlantFloors = injection_aps.ui.escape(selectedPlantFloorList.join(", ") || "-");
+		const hasResourceScope = Boolean(selectedPlantFloorList.length || candidateMoldList.length || candidateWorkstationList.length);
+		const diagnosticKeysToSkip = new Set(["root_cause_codes", "root_cause_text", "suggested_actions", "candidate_molds", "candidate_workstations", "selected_plant_floors"]);
+		const diagnosticRows = Object.entries(detail.diagnostic || {})
+			.filter(([key, value]) => !diagnosticKeysToSkip.has(key) && value != null && value !== "")
+			.slice(0, 12)
+			.map(([key, value]) => `<div class="ia-kv-row"><div class="ia-kv-key">${injection_aps.ui.escape(injection_aps.ui.translate(key.replaceAll("_", " ")))}</div><div class="ia-kv-value">${injection_aps.ui.escape(this.formatDiagnosticValue(value))}</div></div>`)
+			.join("");
+		const sourceLabel = [detail.source_doctype, detail.source_name].filter(Boolean).join(" / ") || "-";
+		const rootCauseCodes = (detail.root_cause_codes || []).map((code) => `<span class="ia-chip">${injection_aps.ui.escape(code)}</span>`).join("");
+		return {
+			title: translatedExceptionType || __("Resolution Guidance"),
+			subtitle: detail.name || "",
+			html: `
+				<div class="ia-page ia-drawer-stack ia-exception-drawer">
+					${loadError ? `<div class="ia-alert warning"><strong>${__("Latest details could not be loaded.", null, "Injection APS")}</strong><div>${__("The list summary is shown below. Refresh the page and try again.", null, "Injection APS")}</div></div>` : ""}
+					<div class="ia-status-line">
+						<div class="ia-status-cell"><span class="ia-status-label">${__("Severity", null, "Injection APS")}</span><div class="ia-status-value">${injection_aps.ui.pill(injection_aps.ui.translate(detail.severity || "-"), detail.is_blocking ? "red" : detail.severity === "Critical" ? "orange" : "blue")}</div></div>
+						<div class="ia-status-cell"><span class="ia-status-label">${__("Blocking")}</span><div class="ia-status-value">${detail.is_blocking ? __("Yes", null, "Injection APS") : __("No", null, "Injection APS")}</div></div>
+						<div class="ia-status-cell"><span class="ia-status-label">${__("Exception ID", null, "Injection APS")}</span><div class="ia-status-value">${injection_aps.ui.escape(detail.name || "-")}</div></div>
+					</div>
+					<section class="ia-panel">
+						<div class="ia-panel-head"><h4>${__("Affected Context", null, "Injection APS")}</h4></div>
+						<div class="ia-kv">
+							<div class="ia-kv-row"><div class="ia-kv-key">${__("APS Run", null, "Injection APS")}</div><div class="ia-kv-value">${injection_aps.ui.escape(detail.planning_run || "-")}</div></div>
+							<div class="ia-kv-row"><div class="ia-kv-key">${__("Item", null, "Injection APS")}</div><div class="ia-kv-value">${detail.item_code ? injection_aps.ui.item_identity(detail) : "-"}</div></div>
+							<div class="ia-kv-row"><div class="ia-kv-key">${__("Customer", null, "Injection APS")}</div><div class="ia-kv-value">${injection_aps.ui.escape(detail.customer || "-")}</div></div>
+							<div class="ia-kv-row"><div class="ia-kv-key">${__("Machine", null, "Injection APS")}</div><div class="ia-kv-value">${injection_aps.ui.escape(detail.workstation || "-")}</div></div>
+							<div class="ia-kv-row"><div class="ia-kv-key">${__("Source", null, "Injection APS")}</div><div class="ia-kv-value">${injection_aps.ui.escape(sourceLabel)}</div></div>
+						</div>
+					</section>
+					<section class="ia-panel">
+						<div class="ia-panel-head"><h4>${__("Exception Message", null, "Injection APS")}</h4></div>
+						<div class="ia-exception-message">${injection_aps.ui.escape(translatedMessage || "-")}</div>
+					</section>
+					${this.renderExceptionSourceFacts(detail)}
+					<div class="${hasResourceScope ? "ia-mini-grid" : ""}">
+						<section class="ia-panel">
+							<div class="ia-panel-head"><h4>${__("Root Cause", null, "Injection APS")}</h4></div>
+							<div class="ia-exception-message">${injection_aps.ui.escape(translatedRootCause)}</div>
+							${rootCauseCodes ? `<div class="ia-chip-row ia-exception-code-row">${rootCauseCodes}</div>` : ""}
+						</section>
+						${hasResourceScope ? `<section class="ia-panel">
+							<div class="ia-panel-head"><h4>${__("Resource Scope")}</h4></div>
+							<div class="ia-kv">
+								<div class="ia-kv-row"><div class="ia-kv-key">${__("Plant Floors")}</div><div class="ia-kv-value">${selectedPlantFloors}</div></div>
+								<div class="ia-kv-row"><div class="ia-kv-key">${__("Candidate Molds")}</div><div class="ia-kv-value">${candidateMolds.html}</div></div>
+								<div class="ia-kv-row"><div class="ia-kv-key">${__("Candidate Machines")}</div><div class="ia-kv-value">${candidateWorkstations.html}</div></div>
+							</div>
+						</section>` : ""}
+					</div>
+					${diagnosticRows ? `<section class="ia-panel"><div class="ia-panel-head"><h4>${__("Diagnostic Details", null, "Injection APS")}</h4></div><div class="ia-kv">${diagnosticRows}</div></section>` : ""}
+					<section class="ia-panel ia-resolution-panel">
+						<div class="ia-panel-head"><h4>${__("Resolution Guidance")}</h4></div>
+						${suggestedActions ? `<ol class="ia-resolution-list">${suggestedActions}</ol>` : `<div class="ia-muted">${__("No explicit resolution guidance is available.")}</div>`}
+					</section>
+					<div class="ia-toolbar">
+						${routes.source ? `<button type="button" class="btn btn-xs btn-default" data-exception-route="${injection_aps.ui.escape(routes.source)}">${__("Open Source")}</button>` : ""}
+						${routes.gantt ? `<button type="button" class="btn btn-xs btn-default" data-exception-route="${injection_aps.ui.escape(routes.gantt)}">${__("Board")}</button>` : ""}
+						${routes.item ? `<button type="button" class="btn btn-xs btn-default" data-exception-route="${injection_aps.ui.escape(routes.item)}">${__("Open Item")}</button>` : ""}
+						${routes.workstation ? `<button type="button" class="btn btn-xs btn-default" data-exception-route="${injection_aps.ui.escape(routes.workstation)}">${__("Open Machine")}</button>` : ""}
+					</div>
+				</div>
+			`,
+			bind: () => {
+				if (candidateMolds.bind) {
+					candidateMolds.bind();
+				}
+				if (candidateWorkstations.bind) {
+					candidateWorkstations.bind();
+				}
+				const drawer = injection_aps.ui.ensure_drawer();
+				drawer.querySelectorAll("[data-exception-route]").forEach((node) => {
+					node.addEventListener("click", () => {
+						const route = node.dataset.exceptionRoute || "";
+						injection_aps.ui.close_drawer();
+						if (route.startsWith("Form/")) {
+							const [, doctype, ...nameParts] = route.split("/");
+							frappe.set_route("Form", doctype, nameParts.join("/"));
+						} else if (route) {
+							injection_aps.ui.go_to(route);
+						}
+					});
+				});
+			},
+		};
+	}
+
 	async openExceptionResolution(row) {
 		if (!row) {
 			return;
 		}
+		const requestKey = `${row.name || "exception"}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+		const initialTitle = injection_aps.ui.translate(row.exception_type || "") || __("Resolution Guidance");
+		injection_aps.ui.open_drawer(
+			initialTitle,
+			row.name || "",
+			`<div class="ia-page" data-exception-request="${injection_aps.ui.escape(requestKey)}"><div class="ia-panel"><div class="ia-muted">${__("Loading exception diagnosis and resolution guidance...", null, "Injection APS")}</div></div></div>`
+		);
 		let detail = {
 			name: row.name,
 			planning_run: row.planning_run,
 			severity: row.severity,
 			exception_type: row.exception_type,
 			item_code: row.item_code,
+			customer_code: row.customer_code,
+			item_name: row.item_name,
 			customer: row.customer,
 			workstation: row.workstation,
 			message: row.message,
 			resolution_hint: row.resolution_hint,
+			is_blocking: row.is_blocking,
+			source_doctype: row.source_doctype,
+			source_name: row.source_name,
 			diagnostic: row.diagnostic || {},
 			root_cause_codes: row.root_cause_codes || [],
 			root_cause_text: row.root_cause_text,
@@ -860,58 +1080,34 @@ class InjectionAPSReleaseCenter {
 				execution: row.execution_route || "",
 			},
 		};
-		const routes = detail.related_routes || {};
-		const translatedExceptionType = injection_aps.ui.translate(detail.exception_type || "");
-		const translatedMessage = injection_aps.ui.translate(detail.message || "");
-		const translatedRootCause = injection_aps.ui.translate(detail.root_cause_text || detail.resolution_hint || detail.message || "-");
-		const suggestedActions = (detail.suggested_actions || [])
-			.map((row) => `<li>${injection_aps.ui.escape(injection_aps.ui.translate(row))}</li>`)
-			.join("");
-		const candidateMoldList = injection_aps.ui.get_value(detail, "diagnostic.candidate_molds", []) || [];
-		const candidateWorkstationList = injection_aps.ui.get_value(detail, "diagnostic.candidate_workstations", []) || [];
-		const candidateMolds = this.renderCollapsedChipList(candidateMoldList, { previewCount: 4 });
-		const candidateWorkstations = this.renderCollapsedChipList(candidateWorkstationList, { previewCount: 5 });
-		const selectedPlantFloors = injection_aps.ui.escape((injection_aps.ui.get_value(detail, "diagnostic.selected_plant_floors", []) || []).join(", ") || "-");
-		const html = `
-			<div class="ia-page">
-				<div class="ia-status-line">
-					<div class="ia-status-cell"><span class="ia-status-label">${__("Severity", null, "Injection APS")}</span><div class="ia-status-value">${injection_aps.ui.escape(detail.severity || "-")}</div></div>
-					<div class="ia-status-cell"><span class="ia-status-label">${__("Type", null, "Injection APS")}</span><div class="ia-status-value">${injection_aps.ui.escape(translatedExceptionType || "-")}</div></div>
-					<div class="ia-status-cell ia-status-cell-wide"><span class="ia-status-label">${__("Message", null, "Injection APS")}</span><div class="ia-status-value">${injection_aps.ui.escape(translatedMessage || "-")}</div></div>
-				</div>
-				<div class="ia-mini-grid">
-					<div class="ia-panel">
-						<h4>${__("Root Cause", null, "Injection APS")}</h4>
-						<div class="ia-muted">${injection_aps.ui.escape(translatedRootCause)}</div>
-					</div>
-					<div class="ia-panel">
-						<h4>${__("Resource Scope")}</h4>
-						<div class="ia-kv">
-							<div class="ia-kv-row"><div class="ia-kv-key">${__("Plant Floors")}</div><div class="ia-kv-value">${selectedPlantFloors}</div></div>
-							<div class="ia-kv-row"><div class="ia-kv-key">${__("Candidate Molds")}</div><div class="ia-kv-value">${candidateMolds.html}</div></div>
-							<div class="ia-kv-row"><div class="ia-kv-key">${__("Candidate Machines")}</div><div class="ia-kv-value">${candidateWorkstations.html}</div></div>
-						</div>
-					</div>
-				</div>
-				<div class="ia-panel">
-					<h4>${__("Resolution Guidance")}</h4>
-					${suggestedActions ? `<ul style="margin:0; padding-left:18px;">${suggestedActions}</ul>` : `<div class="ia-muted">${__("No explicit resolution guidance is available.")}</div>`}
-				</div>
-				<div class="ia-chip-row">
-					${routes.source ? `<a class="btn btn-xs btn-default" href="/app/${injection_aps.ui.escape(routes.source)}">${__("Open Source")}</a>` : ""}
-					${routes.gantt ? `<a class="btn btn-xs btn-default" href="/app/${injection_aps.ui.escape(routes.gantt)}">${__("Board")}</a>` : ""}
-					${routes.item ? `<a class="btn btn-xs btn-default" href="/app/${injection_aps.ui.escape(routes.item)}">${__("Open Item")}</a>` : ""}
-					${routes.workstation ? `<a class="btn btn-xs btn-default" href="/app/${injection_aps.ui.escape(routes.workstation)}">${__("Open Machine")}</a>` : ""}
-				</div>
-			</div>
-		`;
-		injection_aps.ui.open_drawer(translatedExceptionType || __("Resolution Guidance"), detail.item_code || detail.name || "", html);
-		if (candidateMolds.bind) {
-			candidateMolds.bind();
+		let loadError = null;
+		try {
+			const loadedDetail = await injection_aps.ui.xcall(
+				{
+					message: __("Loading exception details...", null, "Injection APS"),
+					busy_key: `exception-resolution:${row.name || "unknown"}`,
+					feedback_target: this.feedback,
+					success_feedback: __("Exception details loaded.", null, "Injection APS"),
+				},
+				"injection_aps.api.app.get_exception_resolution_context",
+				{ exception_name: row.name }
+			);
+			if (loadedDetail) {
+				detail = loadedDetail;
+			}
+		} catch (error) {
+			console.error(error);
+			loadError = error;
 		}
-		if (candidateWorkstations.bind) {
-			candidateWorkstations.bind();
+		const drawer = injection_aps.ui.ensure_drawer();
+		if (!drawer.querySelector(`[data-exception-request="${requestKey}"]`)) {
+			return;
 		}
+		const rendered = this.renderExceptionResolution(detail, loadError);
+		drawer.querySelector(".ia-drawer-title").textContent = rendered.title;
+		drawer.querySelector(".ia-drawer-subtitle").textContent = rendered.subtitle;
+		drawer.querySelector(".ia-drawer-body").innerHTML = rendered.html;
+		rendered.bind();
 	}
 
 	renderImpact() {

@@ -6,8 +6,21 @@
   "sales_order",
   "item_code",
   "customer_part_no",
+  "external_line_reference",
+  "demand_identity",
+  "previous_schedule_item",
+  "identity_match_method",
+  "identity_resolution_reason",
+  "identity_resolved_by",
+  "identity_resolved_on",
   "schedule_date",
+  "original_schedule_date",
+  "effective_schedule_date",
   "qty",
+  "effective_qty",
+  "executed_floor_qty",
+  "excess_qty",
+  "open_revised_qty",
   "production_strategy",
   "demand_confidence",
   "cancellation_risk_percent",
@@ -23,6 +36,8 @@
   "delivered_qty",
   "balance_qty",
   "change_type",
+  "revision_action",
+  "delivery_match_status",
   "status",
   "remark"
  ],
@@ -47,6 +62,53 @@
    "label": "Customer Part No"
   },
   {
+   "fieldname": "external_line_reference",
+   "fieldtype": "Data",
+   "label": "External Line Reference",
+   "read_only": 1
+  },
+  {
+   "fieldname": "demand_identity",
+   "fieldtype": "Link",
+   "label": "Demand Identity",
+   "options": "APS Demand Identity",
+   "read_only": 1,
+   "search_index": 1
+  },
+  {
+   "fieldname": "previous_schedule_item",
+   "fieldtype": "Link",
+   "label": "Previous Schedule Item",
+   "options": "Customer Delivery Schedule Item",
+   "read_only": 1
+  },
+  {
+   "fieldname": "identity_match_method",
+   "fieldtype": "Select",
+   "label": "Identity Match Method",
+   "options": "\nExternal Line\nPrevious Schedule Item\nExplicit Previous Date\nUnique Business Candidate\nNew Identity\nIncremental Identity\nManual Resolution\nLegacy Backfill",
+   "read_only": 1
+  },
+  {
+   "fieldname": "identity_resolution_reason",
+   "fieldtype": "Small Text",
+   "label": "Identity Resolution Reason",
+   "read_only": 1
+  },
+  {
+   "fieldname": "identity_resolved_by",
+   "fieldtype": "Link",
+   "label": "Identity Resolved By",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "fieldname": "identity_resolved_on",
+   "fieldtype": "Datetime",
+   "label": "Identity Resolved On",
+   "read_only": 1
+  },
+  {
    "fieldname": "schedule_date",
    "fieldtype": "Date",
    "in_list_view": 1,
@@ -59,6 +121,42 @@
    "in_list_view": 1,
    "label": "Qty",
    "reqd": 1
+  },
+  {
+   "fieldname": "original_schedule_date",
+   "fieldtype": "Date",
+   "label": "Original Schedule Date",
+   "read_only": 1
+  },
+  {
+   "fieldname": "effective_schedule_date",
+   "fieldtype": "Date",
+   "label": "Effective Schedule Date",
+   "read_only": 1
+  },
+  {
+   "fieldname": "effective_qty",
+   "fieldtype": "Float",
+   "label": "Effective Qty",
+   "read_only": 1
+  },
+  {
+   "fieldname": "executed_floor_qty",
+   "fieldtype": "Float",
+   "label": "Executed Floor Qty",
+   "read_only": 1
+  },
+  {
+   "fieldname": "excess_qty",
+   "fieldtype": "Float",
+   "label": "Excess Qty",
+   "read_only": 1
+  },
+  {
+   "fieldname": "open_revised_qty",
+   "fieldtype": "Float",
+   "label": "Open Revised Qty",
+   "read_only": 1
   },
   {
    "default": "Auto Balance",
@@ -151,6 +249,21 @@
    "fieldtype": "Select",
    "label": "Change Type",
    "options": "\nUnchanged\nAdded\nAppended\nIncreased\nReduced\nAdvanced\nDelayed\nCancelled",
+   "read_only": 1
+  },
+  {
+   "fieldname": "revision_action",
+   "fieldtype": "Select",
+   "label": "Revision Action",
+   "options": "\nAdded\nChanged\nUnchanged\nRetained\nCancelled\nDate Moved\nIncremental\nExcess",
+   "read_only": 1
+  },
+  {
+   "default": "Not Delivered",
+   "fieldname": "delivery_match_status",
+   "fieldtype": "Select",
+   "label": "Delivery Match Status",
+   "options": "\nNot Delivered\nExplicit Identity\nDelivery Plan\nLegacy Controlled Match\nUnallocated",
    "read_only": 1
   },
   {

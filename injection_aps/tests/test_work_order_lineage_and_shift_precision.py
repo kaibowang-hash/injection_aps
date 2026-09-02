@@ -13,16 +13,17 @@ def _raise_validation(message, *_args, **_kwargs):
 
 
 class TestWorkOrderLineageAndShiftPrecision(unittest.TestCase):
-	def test_customer_demand_without_sales_order_never_becomes_stock_production(self):
-		lineage = planning._get_result_sales_order_lineage(
-			frappe._dict(
-				name="RESULT-NO-SO",
-				item_code="FG-1",
-				customer="CUSTOMER-1",
-				demand_source="Customer Delivery Schedule",
-				demand_source_snapshot_json=[],
+	def test_legacy_customer_demand_without_sales_order_never_becomes_stock_production(self):
+		with patch("injection_aps.services.v2_flags.is_v2_enabled", return_value=False):
+			lineage = planning._get_result_sales_order_lineage(
+				frappe._dict(
+					name="RESULT-NO-SO",
+					item_code="FG-1",
+					customer="CUSTOMER-1",
+					demand_source="Customer Delivery Schedule",
+					demand_source_snapshot_json=[],
+				)
 			)
-		)
 		self.assertIn("no exact Sales Order", lineage["blocking_reason"])
 		self.assertIsNone(
 			planning._get_aps_work_order_stock_pool(

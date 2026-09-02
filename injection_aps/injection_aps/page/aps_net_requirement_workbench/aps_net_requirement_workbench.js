@@ -1,5 +1,5 @@
 frappe.pages["aps-net-requirement-workbench"].on_page_load = function (wrapper) {
-	frappe.require("/assets/injection_aps/js/injection_aps_shared.js", () => {
+	injection_aps.ui_loader.start("20260902.1", () => {
 		if (!wrapper.injection_aps_controller) {
 			wrapper.injection_aps_controller = new InjectionAPSNetRequirementWorkbench(wrapper);
 		}
@@ -21,6 +21,7 @@ class InjectionAPSNetRequirementWorkbench {
 		this.tableFilterState = {
 			search_text: "",
 		};
+		this.v2Enabled = false;
 		this.page = frappe.ui.make_app_page({
 			parent: wrapper,
 			title: __("Net Requirement Workbench"),
@@ -56,6 +57,7 @@ class InjectionAPSNetRequirementWorkbench {
 		});
 		this.page.main.html(`
 			<div class="ia-page">
+				<div class="ia-workflow-host"></div>
 				<div class="ia-banner">
 					<h3>${__("Net Requirement Workbench")}</h3>
 					<p>${__("This page concentrates the demand pool, stock, WIP, safety stock, and minimum batch uplift results. Rebuild first, then push the filtered context directly into recalculation.")}</p>
@@ -69,6 +71,7 @@ class InjectionAPSNetRequirementWorkbench {
 				</div>
 			</div>
 		`);
+		this.workflowHost = this.page.main.find(".ia-workflow-host")[0];
 		this.summary = this.page.main.find(".ia-summary")[0];
 		this.feedback = this.page.main.find(".ia-feedback")[0];
 		this.statusHost = this.page.main.find(".ia-status-host")[0];
@@ -83,14 +86,21 @@ class InjectionAPSNetRequirementWorkbench {
 		try {
 			const filters = this.getFilters();
 			const data = await frappe.xcall("injection_aps.api.app.get_net_requirement_page_data", filters);
+			this.v2Enabled = Number(data.v2_enabled || 0) === 1;
+			injection_aps.ui.render_workflow_steps(this.workflowHost, [
+				{ label: __("Demand baseline", null, "Injection APS"), status: "current" },
+				{ label: __("Batch admission", null, "Injection APS"), status: "upcoming" },
+				{ label: __("Impact confirmation", null, "Injection APS"), status: "upcoming" },
+				{ label: __("APS calculation", null, "Injection APS"), status: "upcoming" },
+			]);
 			injection_aps.ui.render_status_line(this.statusHost, {
 				current_step: __("Net Requirements Ready"),
-				next_step: __("Recalculate"),
+				next_step: this.v2Enabled ? __("Create admission draft", null, "Injection APS") : __("Recalculate"),
 				blocking_reason: "",
 			});
 			injection_aps.ui.render_actions(this.actionHost, [
 				{ label: __("Rebuild Demand"), action_key: "rebuild", enabled: 1 },
-				{ label: __("Recalculate"), action_key: "trial", enabled: 1 },
+				{ label: this.v2Enabled ? __("Continue to demand admission", null, "Injection APS") : __("Recalculate"), action_key: "trial", enabled: 1 },
 				{ label: __("Recalc Console"), action_key: "run_console", enabled: 1, route: "aps-run-console" },
 			], async (action) => {
 				if (action.action_key === "rebuild") {
@@ -388,7 +398,7 @@ class InjectionAPSNetRequirementWorkbench {
 				{ fieldname: "horizon_days", fieldtype: "Int", label: __("Horizon Days", null, "Injection APS"), default: 14, reqd: 1 },
 				injection_aps.ui.get_existing_work_order_policy_field(),
 			],
-			primary_action_label: __("Recalculate"),
+			primary_action_label: this.v2Enabled ? __("Create admission draft", null, "Injection APS") : __("Recalculate"),
 			primary_action: async (values) => {
 				const plantFloors = [];
 				(values.plant_floor_rows || []).forEach((row) => {
@@ -404,7 +414,7 @@ class InjectionAPSNetRequirementWorkbench {
 				const confirmed = await injection_aps.ui.confirm_action(
 					{ action_key: "run_trial", confirm_required: 1 },
 					{
-						title: __("Confirm Recalculate"),
+						title: this.v2Enabled ? __("Confirm admission draft", null, "Injection APS") : __("Confirm Recalculate"),
 						summary_lines: [
 							__("Company: {0}").replace("{0}", this.companyField.get_value() || "-"),
 							__("Plant Floors: {0}").replace("{0}", plantFloors.join(", ") || "-"),
@@ -415,6 +425,7 @@ class InjectionAPSNetRequirementWorkbench {
 								"{0}",
 								injection_aps.ui.get_existing_work_order_policy_label(values.existing_work_order_policy)
 							),
+							...(this.v2Enabled ? [__("This creates the demand baseline without running APS. Optional demand is confirmed in the next step.", null, "Injection APS")] : []),
 						],
 					}
 				);
@@ -423,13 +434,15 @@ class InjectionAPSNetRequirementWorkbench {
 				}
 				const response = await injection_aps.ui.xcall(
 					{
-						message: __("Creating recalculation..."),
-						success_message: __("Recalculation created."),
+						message: this.v2Enabled ? __("Preparing demand baseline...", null, "Injection APS") : __("Creating recalculation..."),
+						success_message: this.v2Enabled ? __("Admission draft created.", null, "Injection APS") : __("Recalculation created."),
 						busy_key: `net-trial:${this.companyField.get_value() || "all"}:${plantFloors.join("|") || "all"}`,
 						feedback_target: this.feedback,
-						success_feedback: __("Recalculation created. Redirecting to the APS run..."),
+						success_feedback: this.v2Enabled ? __("Demand baseline is ready. Opening the next step.", null, "Injection APS") : __("Recalculation created. Redirecting to the APS run..."),
 					},
-					"injection_aps.api.app.create_trial_run_from_net_requirement_context",
+					this.v2Enabled
+						? "injection_aps.api.app.create_trial_run_for_admission"
+						: "injection_aps.api.app.create_trial_run_from_net_requirement_context",
 					{
 						company: this.companyField.get_value() || undefined,
 						plant_floor: plantFloors[0],
@@ -445,7 +458,11 @@ class InjectionAPSNetRequirementWorkbench {
 				}
 				injection_aps.ui.show_warnings(response, __("Planning Precheck Warnings"), "preflight_warning_count");
 				dialog.hide();
-				injection_aps.ui.go_to(`aps-planning-run/${encodeURIComponent(response.run)}`);
+				injection_aps.ui.go_to(
+					this.v2Enabled
+						? response.next_route
+						: `aps-planning-run/${encodeURIComponent(response.run)}`
+				);
 			},
 		});
 		dialog.show();

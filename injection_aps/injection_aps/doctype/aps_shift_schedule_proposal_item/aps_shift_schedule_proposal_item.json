@@ -5,6 +5,9 @@
  "field_order": [
   "result_reference",
   "segment_reference",
+  "production_campaign",
+  "output_role",
+  "capacity_owner",
   "action",
   "item_code",
   "work_order",
@@ -41,6 +44,27 @@
    "label": "APS Segment",
    "read_only": 1,
    "reqd": 1
+  },
+  {
+   "fieldname": "production_campaign",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Production Campaign",
+   "options": "APS Production Campaign",
+   "read_only": 1
+  },
+  {
+   "fieldname": "output_role",
+   "fieldtype": "Select",
+   "label": "Output Role",
+   "options": "\nPrimary\nCo-product",
+   "read_only": 1
+  },
+  {
+   "fieldname": "capacity_owner",
+   "fieldtype": "Data",
+   "label": "Capacity Owner",
+   "read_only": 1
   },
   {
    "fieldname": "action",

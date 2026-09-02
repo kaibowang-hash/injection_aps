@@ -37,6 +37,24 @@ class TestManualQuantityAdjustment(TestCase):
 		self.assertEqual(planning._estimate_run_hours(250, {}, settings), 2.5)
 		self.assertEqual(planning._estimate_run_hours(10, {}, settings), 0.25)
 
+	def test_manual_timing_updates_current_layer_without_overwriting_comparison_layers(self):
+		start = datetime(2026, 8, 15, 8, 0, 0)
+		end = datetime(2026, 8, 16, 12, 0, 0)
+		values = planning._build_manual_timing_values(start, end)
+
+		self.assertEqual(
+			values,
+			{
+				"start_time": start,
+				"end_time": end,
+				"current_start_time": start,
+				"current_end_time": end,
+			},
+		)
+		for prefix in ("baseline", "solver", "forecast"):
+			self.assertNotIn(f"{prefix}_start_time", values)
+			self.assertNotIn(f"{prefix}_end_time", values)
+
 	def test_whole_number_uom_rejects_fractional_target(self):
 		def get_value(doctype, name, fieldname):
 			if doctype == "Item":
@@ -93,6 +111,18 @@ class TestManualQuantityAdjustment(TestCase):
 				0,
 			)
 
+	def test_resize_duration_recalculates_quantity_with_item_precision(self):
+		with (
+			patch("injection_aps.services.planning._item_quantity_requires_integer", return_value=True),
+			patch("injection_aps.services.planning.frappe.get_precision", return_value=2),
+		):
+			self.assertEqual(planning._manual_duration_capacity_qty("ITEM-1", 2.5, 80), 200)
+		with (
+			patch("injection_aps.services.planning._item_quantity_requires_integer", return_value=False),
+			patch("injection_aps.services.planning.frappe.get_precision", return_value=2),
+		):
+			self.assertEqual(planning._manual_duration_capacity_qty("ITEM-2", 1.333, 10), 13.33)
+
 	def test_quantity_and_end_time_are_mutually_exclusive_before_lookup(self):
 		with patch("injection_aps.services.planning.frappe.get_all") as get_all:
 			with self.assertRaises(frappe.ValidationError):
@@ -117,6 +147,10 @@ class TestManualQuantityAdjustment(TestCase):
 		planning._validate_manual_overproduction_confirmation(
 			{"quantity_mode": 0, "overproduction_qty": 10},
 		)
+		with self.assertRaises(frappe.ValidationError):
+			planning._validate_manual_overproduction_confirmation(
+				{"quantity_mode": 0, "quantity_change_mode": 1, "overproduction_qty": 10},
+			)
 
 	def test_released_and_started_segments_are_execution_protected(self):
 		self.assertTrue(planning._is_segment_execution_protected({"linked_work_order": "WO-1"}))

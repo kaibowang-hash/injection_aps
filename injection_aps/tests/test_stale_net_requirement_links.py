@@ -144,9 +144,14 @@ class TestStaleNetRequirementLinks(unittest.TestCase):
 		with (
 			patch.object(app, "_require_read_access"),
 			patch.object(app, "_require_scope_access"),
+			patch.object(app.frappe, "session", frappe._dict(user="planner@example.com")),
 			patch.object(app.frappe, "db", database),
 			patch.object(app.frappe, "get_list", side_effect=get_list),
+			patch.object(app, "_has_document_permission_hook", return_value=False),
+			patch.object(app, "_prime_scoped_document_dependencies"),
+			patch.object(app, "_prime_exception_source_access"),
 			patch.object(app, "_has_scoped_document_access", return_value=True),
+			patch.object(app.v2_flags, "is_v2_enabled", return_value=False),
 			patch.object(app.planning, "get_next_actions_for_context", return_value={}),
 			patch.object(app, "_sanitize_planning_run_context", side_effect=lambda context, **_kwargs: context),
 		):

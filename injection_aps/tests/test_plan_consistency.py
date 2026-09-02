@@ -151,7 +151,8 @@ class TestPlanConsistency(TestCase):
 			"planned_qty": 10,
 		}
 		message = consistency._family_co_product_allocation_error(segment)
-		self.assertIn("exact Sales Order Item", message)
+		self.assertIn("exact V2 Campaign output", message)
+		self.assertIn("capacity-owner lineage", message)
 		self.assertIsNone(
 			consistency._family_co_product_allocation_error(
 				{**segment, "segment_status": "Cancelled"}

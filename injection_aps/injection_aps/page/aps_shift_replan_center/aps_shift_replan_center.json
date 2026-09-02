@@ -1,0 +1,19 @@
+{
+ "content": null,
+ "doctype": "Page",
+ "icon": "calendar",
+ "idx": 0,
+ "modified": "1970-01-01 00:00:00.000000",
+ "module": "Injection APS",
+ "name": "aps-shift-replan-center",
+ "page_name": "aps-shift-replan-center",
+ "roles": [
+  {"role":"System Manager"}, {"role":"Manufacturing Manager"}, {"role":"Manufacturing User"},
+  {"role":"GMC"}, {"role":"PMC"}
+ ],
+ "script": null,
+ "standard": "Yes",
+ "style": null,
+ "system_page": 0,
+ "title": "APS Shift Replan Center"
+}

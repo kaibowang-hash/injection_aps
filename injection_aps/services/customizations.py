@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 import frappe
 from frappe import _
 from frappe.custom.doctype.custom_field.custom_field import create_custom_fields
@@ -22,19 +24,76 @@ APS_TRANSACTION_DOCTYPES = (
 	"APS Change Application Log",
 	"APS Production Allocation",
 	"APS Delivery Allocation",
+	"APS Demand Identity",
+	"APS Unallocated Delivery",
 	"APS Downtime Window",
 	"APS Segment Adjustment",
 	"APS Release Batch",
 	"APS Exception Log",
+	"APS Replan Cycle",
+	"APS Production Campaign",
+	"APS BOM Pegging",
 )
 
 
-def ensure_standard_customizations():
-	create_custom_fields(STANDARD_CUSTOM_FIELDS, update=True)
-	frappe.clear_cache()
+def ensure_standard_customizations(*, update_existing: bool = False, reorder_item_fields: bool = False):
+	"""Create APS custom fields while preserving site-managed metadata by default.
+
+	Existing Custom Field rows and the Item ``field_order`` Property Setter are
+	user customizations.  A caller must explicitly opt in to either mutation.
+	"""
+	create_custom_fields(STANDARD_CUSTOM_FIELDS, update=update_existing)
+	if reorder_item_fields:
+		_ensure_item_aps_field_order()
+
+
+def _ensure_item_aps_field_order():
+	"""Keep APS fields together in Item's Manufacturing tab.
+
+	Customize Form can create a DocType-level field_order Property Setter. When
+	that exists, it takes precedence over every Custom Field's insert_after value,
+	so update only the APS slice while preserving the site's remaining layout.
+	"""
+	if not frappe.db.exists("DocType", "Item"):
+		return
+
+	property_setter = frappe.db.get_value(
+		"Property Setter",
+		{
+			"doc_type": "Item",
+			"doctype_or_field": "DocType",
+			"property": "field_order",
+		},
+		["name", "value"],
+		as_dict=True,
+	)
+	if not property_setter or not property_setter.value:
+		return
+
+	try:
+		field_order = json.loads(property_setter.value)
+	except (TypeError, ValueError):
+		return
+	if not isinstance(field_order, list) or "manufacturing" not in field_order:
+		return
+
+	aps_fields = [row["fieldname"] for row in STANDARD_CUSTOM_FIELDS.get("Item", [])]
+	fields_to_move = set(aps_fields) | {"custom_aps_food_grade"}
+	field_order = [fieldname for fieldname in field_order if fieldname not in fields_to_move]
+	insert_at = field_order.index("manufacturing") + 1
+	field_order[insert_at:insert_at] = aps_fields
+	frappe.db.set_value(
+		"Property Setter",
+		property_setter.name,
+		"value",
+		json.dumps(field_order),
+		update_modified=False,
+	)
 
 
 def ensure_default_settings():
+	from injection_aps.services.v2_flags import DEFAULTS as V2_DEFAULTS
+
 	settings = frappe.get_single("APS Settings")
 	settings.default_company = settings.default_company or frappe.defaults.get_user_default("Company")
 	settings.planning_horizon_days = settings.planning_horizon_days or 14
@@ -51,8 +110,8 @@ def ensure_default_settings():
 	settings.mold_change_penalty_minutes = settings.mold_change_penalty_minutes or 30
 	settings.missing_cycle_fallback_seconds = settings.missing_cycle_fallback_seconds or 60
 	settings.default_hourly_capacity_qty = settings.default_hourly_capacity_qty or 120
-	if not settings.item_food_grade_field or settings.item_food_grade_field == "custom_food_grade":
-		settings.item_food_grade_field = "custom_aps_food_grade"
+	if not settings.item_food_grade_field or settings.item_food_grade_field == "custom_aps_food_grade":
+		settings.item_food_grade_field = "custom_food_grade"
 	settings.item_first_article_field = settings.item_first_article_field or "custom_is_first_article"
 	settings.item_color_field = settings.item_color_field or "color"
 	settings.item_material_field = settings.item_material_field or "material"
@@ -75,6 +134,11 @@ def ensure_default_settings():
 	settings.plant_floor_scrap_warehouse_field = (
 		settings.plant_floor_scrap_warehouse_field or "custom_default_scrap_warehouse"
 	)
+	settings.aps_producible_item_groups = settings.aps_producible_item_groups or "Plastic Part\nSub-assemblies"
+	settings.aps_bom_policy = settings.aps_bom_policy or "Default BOM Only"
+	for fieldname, default in V2_DEFAULTS.items():
+		if getattr(settings, fieldname, None) in (None, ""):
+			setattr(settings, fieldname, default)
 	settings.flags.ignore_mandatory = True
 	settings.save(ignore_permissions=True)
 
@@ -112,6 +176,8 @@ def ensure_safe_to_uninstall():
 		if not frappe.db.exists("DocType", doctype):
 			continue
 		for field in fields:
+			if field.get("fieldtype") in {"Section Break", "Column Break", "Tab Break"}:
+				continue
 			fieldname = field.get("fieldname")
 			if not fieldname or not frappe.get_meta(doctype).has_field(fieldname):
 				continue

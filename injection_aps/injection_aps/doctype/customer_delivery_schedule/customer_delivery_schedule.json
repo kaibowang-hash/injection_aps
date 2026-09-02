@@ -11,6 +11,17 @@
   "schedule_scope",
   "version_no",
   "import_strategy",
+  "revision_mode",
+  "recommended_revision_mode",
+  "recommendation_reason",
+  "supersedes_schedule",
+  "effective_from",
+  "effective_to",
+  "mode_confirmed_by",
+  "mode_confirmed_on",
+  "mode_confirmation_reason",
+  "source_contract",
+  "revision_fingerprint",
   "import_batch",
   "source_type",
   "status",
@@ -56,6 +67,77 @@
    "label": "Import Strategy",
    "options": "\nReplace Scope\nPartial Update\nAppend",
    "read_only": 1
+  },
+  {
+   "fieldname": "revision_mode",
+   "fieldtype": "Select",
+   "label": "Revision Mode",
+   "options": "\nFull Replacement\nPartial Revision\nIncremental Demand",
+   "read_only": 1
+  },
+  {
+   "fieldname": "recommended_revision_mode",
+   "fieldtype": "Select",
+   "label": "Recommended Revision Mode",
+   "options": "\nFull Replacement\nPartial Revision\nIncremental Demand",
+   "read_only": 1
+  },
+  {
+   "fieldname": "recommendation_reason",
+   "fieldtype": "Small Text",
+   "label": "Recommendation Reason",
+   "read_only": 1
+  },
+  {
+   "fieldname": "supersedes_schedule",
+   "fieldtype": "Link",
+   "label": "Supersedes Schedule",
+   "options": "Customer Delivery Schedule",
+   "read_only": 1
+  },
+  {
+   "fieldname": "effective_from",
+   "fieldtype": "Date",
+   "label": "Effective From",
+   "read_only": 1
+  },
+  {
+   "fieldname": "effective_to",
+   "fieldtype": "Date",
+   "label": "Effective To",
+   "read_only": 1
+  },
+  {
+   "fieldname": "mode_confirmed_by",
+   "fieldtype": "Link",
+   "label": "Mode Confirmed By",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "fieldname": "mode_confirmed_on",
+   "fieldtype": "Datetime",
+   "label": "Mode Confirmed On",
+   "read_only": 1
+  },
+  {
+   "fieldname": "mode_confirmation_reason",
+   "fieldtype": "Small Text",
+   "label": "Mode Confirmation Reason",
+   "read_only": 1
+  },
+  {
+   "fieldname": "source_contract",
+   "fieldtype": "Data",
+   "label": "Source Contract",
+   "read_only": 1
+  },
+  {
+   "fieldname": "revision_fingerprint",
+   "fieldtype": "Data",
+   "label": "Revision Fingerprint",
+   "read_only": 1,
+   "search_index": 1
   },
   {
    "fieldname": "import_batch",

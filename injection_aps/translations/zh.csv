@@ -10,6 +10,21 @@ Released Batches,已释放批次
 Synced Schedules,已同步排程
 Machines Configured,已配置机台
 APS workspace refreshed.,APS 工作台已刷新。
+"demand admission Planning Run","需求准入计划运算","Injection APS"
+"Automatically confirmed because the baseline contains only mandatory P0 demand.","需求基线仅包含必须执行的 P0 需求，系统已自动确认。","Injection APS"
+"Demand admission can only be changed on an unapproved Draft or Planned run.","只有未批准的草稿或已计算运算可以变更需求准入。","Injection APS"
+"Confirm this Run's demand admission before recalculation or capacity analysis.","重新计算或分析产能前，请先确认本次运算的需求准入。","Injection APS"
+"Demand admission changed after the last calculation. Recalculate this Run before continuing.","需求准入在上次计算后发生变化，请先重新计算本次运算。","Injection APS"
+"Confirmed {0} optional admission quantity.","已确认 {0} 可选准入数量。","Injection APS"
+"APS V2 is disabled; use the existing recalculation flow.","APS V2 未启用，请使用现有重新计算流程。","Injection APS"
+"Planning Customer Filter","计划客户筛选","APS Planning Run"
+"Planning Item Filter","计划物料筛选","APS Planning Run"
+"Admission Confirmed Fingerprint","准入确认指纹","APS Planning Run"
+"Admission Confirmed By","准入确认人","APS Planning Run"
+"Admission Confirmed On","准入确认时间","APS Planning Run"
+"Admission Strategy","准入策略","APS Planning Run"
+"Admission Decision Reason","准入决策原因","APS Planning Run"
+"Planned Admission Fingerprint","排产采用的准入指纹","APS Planning Run"
 Failed to load Injection APS workspace summary.,注塑 APS 工作台汇总加载失败。
 APS Console,APS 控制台
 Schedule Import & Diff,排期导入与版本对比
@@ -18,6 +33,18 @@ Machine Schedule Gantt,机台排程看板
 Release & Exception Center,释放与异常中心
 Customer Delivery Schedule Item,客户交付排期明细
 APS Schedule Import Batch,APS 排期导入批次
+APS V2 (Controlled Rollout),APS V2（受控灰度）,APS Settings
+Enable APS V2,启用 APS V2,APS Settings
+Solver Engine,求解器引擎,APS Settings
+Legacy,旧版,APS Settings
+CP-SAT,CP-SAT,APS Settings
+Enable Shift Replan,启用班次重排,APS Settings
+Enable Co-product Campaign,启用联产品批次,APS Settings
+Enable Multilevel BOM Planning,启用多层 BOM 排产,APS Settings
+Delivery Legacy Match Tolerance Days,旧版交付匹配容差天数,APS Settings
+Max Execution Staleness Minutes,执行数据最大陈旧分钟数,APS Settings
+Solver Time Limit Seconds,求解器时限（秒）,APS Settings
+Shift Solver Time Limit Seconds,班次求解器时限（秒）,APS Settings
 APS Demand Delta,APS 需求差异
 APS Demand Pool,APS 需求池
 APS Net Requirement,APS 净需求
@@ -127,6 +154,14 @@ APS Schedule Reference,APS 排程引用
 APS Source,APS 来源
 APS Urgent,APS 紧急件
 APS Version,APS 版本
+APS Planning Parameters,APS 排产参数
+APS Prebuild Allowed,APS 允许提前生产
+APS Max Prebuild Days,APS 最大提前生产天数
+APS Cancellation Risk Percent,APS 取消风险百分比
+APS Max Stock Qty,APS 最大库存数量
+Allows finished-goods production before the JIT window.,允许在 JIT 窗口前生产成品。
+Zero uses the APS Settings default.,填 0 时使用 APS 设置中的默认值。
+Maximum finished-goods quantity for this item. Zero means no item-specific limit.,此物料的成品最大库存数量；填 0 表示不设置物料级上限。
 Schedule Total Qty,排期总数量
 Schedule Items,排期明细
 Allocated Qty,已分配数量
@@ -353,7 +388,6 @@ Increased,增加
 Item Color Field,物料颜色字段
 Item First Article Field,物料首件字段
 Item Food Grade Field,物料食品级字段
-APS Food Grade,APS 食品级,Item
 Unsupported APS proposal child DocType: {0}.,不支持的 APS 建议明细类型：{0}。
 Create Delta result {0} must retain both the existing and delta Work Orders.,差额建单结果 {0} 必须同时保留原工单和差额工单。
 "APS segment {0} has {1} unscheduled quantity after applying the exact Work Order boundaries. Regenerate the Work Order proposal.","APS 排程段 {0} 按工单数量边界分配后仍有 {1} 未排数量。请重新生成工单建议。",Injection APS
@@ -499,6 +533,7 @@ Monitor Execution Drift,关注执行偏差
 Shift Proposals,班次建议
 Review Work Order Proposals,工单建议审核
 Review Day/Night Shift Proposals,白/夜班建议审核
+Analyze and Apply Capacity,分析并应用产能方案
 There are still {0} APS exceptions waiting for review.,当前仍有 {0} 条 APS 异常待处理。
 Recalculation Completed,已完成重算
 Handle Exceptions,处理异常
@@ -1036,7 +1071,6 @@ Generate Proposal Batch,生成建议批次
 Previewing WOS release...,正在预览 WOS 下发...
 WOS release preview is ready.,WOS 下发预览已生成。
 Rows,行数
-Update,更新
 Cancel,取消
 Qty,数量
 WOS Date,WOS 日期
@@ -1283,6 +1317,7 @@ Scheduled,已排数量,Injection APS
 Scheduling,排产单,Injection APS
 Setup,准备中,Injection APS
 Source Name,来源单据号,Injection APS
+Source Doctype,来源单据类型,Injection APS
 Start,开始时间,Injection APS
 To,结束,Injection APS
 Unscheduled,未排数量,Injection APS
@@ -1583,6 +1618,7 @@ Execution Impact,执行影响,Injection APS
 Actual Good / Scrap,实际良品 / 报废,Injection APS
 Return,退货,Injection APS
 Delivery,交付,Injection APS
+Coverage,覆盖情况,Injection APS
 Detail,明细,Injection APS
 Method,分配方式,Injection APS
 Time,时间,Injection APS
@@ -3245,8 +3281,12 @@ Scope / Policy,范围 / 策略,Injection APS
 Status / Approval,状态 / 审批,Injection APS
 Scheduling Summary,排产概况,Injection APS
 Variance / Fulfillment,差异 / 履约,Injection APS
+Run / Scope,运算 / 范围,Injection APS
+Planning / Fulfillment,排产 / 履约,Injection APS
 Risk / Execution,风险 / 执行,Injection APS
 Next Step / Actions,下一步 / 操作,Injection APS
+Fulfillment,履约,Injection APS
+Related Views,相关页面,Injection APS
 Running,运行中,Injection APS
 Late Delivery,交期延误,Injection APS
 Unscheduled Quantity,未排数量,Injection APS
@@ -3306,3 +3346,1395 @@ There are still {0} APS exceptions waiting for review.,当前仍有 {0} 条 APS 
 Plan consistency is {0}. Recalculate and resolve consistency errors before release.,计划一致性当前为“{0}”。正式下发前请重新计算并处理一致性错误。,Injection APS
 There is still unscheduled quantity: {0}.,仍有未排数量：{0}。,Injection APS
 Plan consistency: {0},计划一致性：{0},Injection APS
+Unallocated Deliveries,未分配出货,Injection APS
+Review unresolved delivery lineage without blocking shipment.,在不阻塞出货的情况下处理尚未明确的交付血缘。,Injection APS
+Confirmed Revision Mode,已确认的修订模式,Injection APS
+APS Recommendation,APS 建议,Injection APS
+Analyzing schedule revision intent...,正在分析排期修订意图...,Injection APS
+Revision preview was cancelled before mode confirmation.,修订预览已在模式确认前取消。,Injection APS
+Confirm Schedule Revision Mode,确认排期修订模式,Injection APS
+Confidence,置信度,Injection APS
+Revision Mode,修订模式,Injection APS
+Required because your selection differs from the APS recommendation.,由于您的选择不同于 APS 建议，因此必须填写。,Injection APS
+Optional note for the audit trail.,可选填写，用于审计记录。,Injection APS
+Confirmation Reason,确认原因,Injection APS
+Confirm Mode and Preview,确认模式并预览,Injection APS
+Explain why the selected revision mode differs from the APS recommendation.,请说明所选修订模式为何不同于 APS 建议。,Injection APS
+Revision Mode: {0},修订模式：{0},Injection APS
+Resolve Delivery Lineage,处理交付血缘,Injection APS
+Resolve Unallocated Delivery,处理未分配出货,Injection APS
+Delivery Note,送货单,Injection APS
+Unallocated Qty,未分配数量,Injection APS
+Resolution Reason,处理原因,Injection APS
+Apply Resolution,应用处理结果,Injection APS
+Delivery lineage resolved.,交付血缘已处理。,Injection APS
+revision-mode recommendation,修订模式建议,Injection APS
+schedule revision preview,排期修订预览,Injection APS
+schedule revision,排期修订,Injection APS
+Demand Identity resolution,需求标识消歧,Injection APS
+You do not have permission to access this schedule item.,您无权访问此排期明细。
+Demand Identity business keys are immutable: {0}.,需求标识的业务键不可修改：{0}。
+APS delivery-plan lineage suggestion failed,APS 出货计划血缘建议失败
+APS V2 is disabled.,APS V2 已停用。
+A resolution reason is required.,必须填写处理原因。
+The selected Demand Identity does not match this delivery row.,所选需求标识与此出货明细不匹配。
+The selected Demand Identity has no current schedule row.,所选需求标识没有当前排期明细。
+No unambiguous open APS demand is available.,没有可明确归属的开放 APS 需求。
+The return has no unique original APS delivery lineage or exceeds its reversible quantity.,退货没有唯一的原始 APS 交付血缘，或数量超过可冲回数量。
+No active demand falls in the controlled date window.,受控日期窗口内没有有效需求。
+More than one schedule scope is eligible; APS will not guess.,存在多个可用排期范围；APS 不会猜测。
+"Revision mode must be Full Replacement, Partial Revision, or Incremental Demand.",修订模式必须是全量替换、部分修订或增量需求。
+The configured source contract explicitly declares this revision mode.,已配置的来源契约明确指定了此修订模式。
+"No active demand exists in this customer/company/scope, so the first version is a full baseline.",此客户、公司和范围内没有有效需求，因此首个版本按全量基线处理。
+Every active demand identity is represented by the incoming rows; a full replacement is the most likely intent.,导入行覆盖了全部有效需求标识，因此最可能的意图是全量替换。
+The file overlaps only part of the active demand identities; omitted identities should normally remain active.,文件只覆盖部分有效需求标识；未出现的标识通常应继续有效。
+"No stable identity match was found. APS recommends independent incremental demand, but the source cannot prove this intent.",未找到稳定标识匹配。APS 建议作为独立增量需求，但来源数据本身无法证明该业务意图。
+Version No is required.,必须填写版本号。
+Idempotent replay,幂等重放
+This confirmed revision has already been applied.,此已确认修订已经应用。
+The active schedule changed after preview. Refresh and confirm the latest revision.,预览后有效排期已发生变化，请刷新并确认最新修订。
+The revision input changed after preview. Refresh and confirm the latest rows.,预览后修订输入已发生变化，请刷新并确认最新明细。
+Revision checks failed:<br>{0},修订检查失败：<br>{0}
+Explain why the confirmed revision mode differs from the APS recommendation.,请说明已确认的修订模式为何不同于 APS 建议。
+Schedule item {0} does not exist.,排期明细 {0} 不存在。
+The selected Demand Identity does not match the schedule-item scope.,所选需求标识与排期明细范围不匹配。
+The selected Demand Identity already has another current schedule row.,所选需求标识已经指向另一条当前排期明细。
+Phase 1 migration found ambiguous active demand lineage and did not guess or merge it.,第一阶段迁移发现有效需求血缘存在歧义，因此没有猜测或合并。
+Review the listed active schedule rows and resolve their Demand Identity explicitly.,请检查列出的有效排期明细，并明确处理其需求标识。
+Customer and Company are required.,必须填写客户和公司。
+APS V2 is disabled. The current Legacy import and delivery workflow remains active.,APS V2 已停用，当前旧版导入和交付流程继续生效。
+Incremental demand must use a new stable identity and a distinct external line reference.,增量需求必须使用新的稳定标识及不同的外部行引用。
+The selected Demand Identity is not part of the current active revision scope.,所选需求标识不属于当前有效修订范围。
+A reason is required when a Demand Identity is selected manually.,手工选择需求标识时必须填写原因。
+More than one active demand identity matches this row; APS will not guess.,此明细匹配到多个有效需求标识；APS 不会猜测。
+The matched active row has not been assigned a Demand Identity.,匹配到的有效明细尚未分配需求标识。
+Two incoming rows resolve to the same Demand Identity.,两条导入明细解析到了同一个需求标识。
+Source validation,来源校验
+One or more source rows are invalid.,一条或多条来源明细无效。
+"Customer, company, item, date, quantity, and Sales Order references are valid.",客户、公司、物料、日期、数量及销售订单引用均有效。
+Duplicate rows,重复明细
+Duplicate business/date rows are blocked until an explicit policy is selected.,在明确选择处理策略前，将阻止业务键和日期重复的明细。
+Duplicate rows will be summed because the user explicitly selected Sum.,用户已明确选择汇总，因此重复明细将合并求和。
+Demand Identity,需求标识
+One or more rows have ambiguous or invalid identity lineage; APS will not guess.,一条或多条明细的标识血缘有歧义或无效；APS 不会猜测。
+Every incoming row has a unique inherited identity or a controlled new-identity action.,每条导入明细均继承了唯一标识，或采用了受控的新建标识操作。
+Mode recommendation,模式建议
+Recommended: {0},建议：{0}
+Selected: {0},已选：{0}
+Full replacement cancellations,全量替换取消项
+Omitted active identities will be recorded as zero-quantity cancellations; executed quantities become Excess.,未出现的有效标识将记录为零数量取消项；已执行数量转为超额。
+Incremental overlap,增量重合
+"Every row creates independent demand and adds to the active quantity, even when item and dates overlap.",每条明细都会创建独立需求并加入有效数量，即使物料和日期重合也是如此。
+Company {0} does not exist.,公司 {0} 不存在。
+Demand Identity {0} does not exist.,需求标识 {0} 不存在。
+"The selected Demand Identity belongs to another company, customer, or schedule scope.",所选需求标识属于其他公司、客户或排期范围。
+The selected Demand Identity belongs to another item.,所选需求标识属于其他物料。
+APS Demand Identity,APS 需求标识
+Active,有效,APS Demand Identity
+Cancelled,已取消,APS Demand Identity
+Closed,已关闭,APS Demand Identity
+Company,公司,APS Demand Identity
+Customer,客户,APS Demand Identity
+Schedule Scope,排期范围,APS Demand Identity
+Item Code,物料编码,APS Demand Identity
+Customer Part No,客户料号,APS Demand Identity
+External Line Reference,外部行引用,APS Demand Identity
+External Identity Key,外部标识键,APS Demand Identity
+Current Schedule,当前排期,APS Demand Identity
+Current Schedule Item,当前排期明细,APS Demand Identity
+Status,状态,APS Demand Identity
+First Seen On,首次出现时间,APS Demand Identity
+Last Revised On,最后修订时间,APS Demand Identity
+Last Resolution Method,最后处理方式,APS Demand Identity
+Last Resolution Reason,最后处理原因,APS Demand Identity
+Last Resolved By,最后处理人,APS Demand Identity
+Last Resolved On,最后处理时间,APS Demand Identity
+APS Unallocated Delivery,APS 未分配出货
+Status,状态,APS Unallocated Delivery
+Open,待处理,APS Unallocated Delivery
+Resolved,已处理,APS Unallocated Delivery
+Ignored,已忽略,APS Unallocated Delivery
+Source Cancelled,来源已取消,APS Unallocated Delivery
+Company,公司,APS Unallocated Delivery
+Customer,客户,APS Unallocated Delivery
+Item Code,物料编码,APS Unallocated Delivery
+Stock UOM,库存单位,APS Unallocated Delivery
+Source Delivery Note,来源送货单,APS Unallocated Delivery
+Source Delivery Note Item,来源送货单明细,APS Unallocated Delivery
+Source Qty,来源数量,APS Unallocated Delivery
+Matched Qty,已匹配数量,APS Unallocated Delivery
+Unallocated Qty,未分配数量,APS Unallocated Delivery
+Return,退货,APS Unallocated Delivery
+Posting Date,过账日期,APS Unallocated Delivery
+Reason Code,原因代码,APS Unallocated Delivery
+Reason,原因,APS Unallocated Delivery
+Match Method,匹配方式,APS Unallocated Delivery
+Candidates,候选项,APS Unallocated Delivery
+Source Fingerprint,来源指纹,APS Unallocated Delivery
+Resolved Demand Identity,已处理需求标识,APS Unallocated Delivery
+Resolved Schedule Item,已处理排期明细,APS Unallocated Delivery
+Resolution Reason,处理原因,APS Unallocated Delivery
+Resolved By,处理人,APS Unallocated Delivery
+Resolved On,处理时间,APS Unallocated Delivery
+Revision Mode,修订模式,Customer Delivery Schedule
+Full Replacement,全量替换,Customer Delivery Schedule
+Partial Revision,部分修订,Customer Delivery Schedule
+Incremental Demand,增量需求,Customer Delivery Schedule
+Recommended Revision Mode,建议修订模式,Customer Delivery Schedule
+Recommendation Reason,建议原因,Customer Delivery Schedule
+Supersedes Schedule,替代排期,Customer Delivery Schedule
+Effective From,生效起始日,Customer Delivery Schedule
+Effective To,生效截止日,Customer Delivery Schedule
+Mode Confirmed By,模式确认人,Customer Delivery Schedule
+Mode Confirmed On,模式确认时间,Customer Delivery Schedule
+Mode Confirmation Reason,模式确认原因,Customer Delivery Schedule
+Source Contract,来源契约,Customer Delivery Schedule
+Revision Fingerprint,修订指纹,Customer Delivery Schedule
+External Line Reference,外部行引用,Customer Delivery Schedule Item
+Demand Identity,需求标识,Customer Delivery Schedule Item
+Previous Schedule Item,上一排期明细,Customer Delivery Schedule Item
+Identity Match Method,标识匹配方式,Customer Delivery Schedule Item
+External Line,外部行,Customer Delivery Schedule Item
+Explicit Previous Date,明确上一日期,Customer Delivery Schedule Item
+Unique Business Candidate,唯一业务候选,Customer Delivery Schedule Item
+Manual Resolution,人工消歧,Customer Delivery Schedule Item
+Legacy Backfill,旧版数据回填,Customer Delivery Schedule Item
+New Identity,新建标识,Customer Delivery Schedule Item
+Incremental Identity,增量标识,Customer Delivery Schedule Item
+Identity Resolution Reason,标识处理原因,Customer Delivery Schedule Item
+Identity Resolved By,标识处理人,Customer Delivery Schedule Item
+Identity Resolved On,标识处理时间,Customer Delivery Schedule Item
+Original Schedule Date,原始排期日期,Customer Delivery Schedule Item
+Effective Schedule Date,有效排期日期,Customer Delivery Schedule Item
+Effective Qty,有效数量,Customer Delivery Schedule Item
+Executed Floor Qty,已执行下限数量,Customer Delivery Schedule Item
+Excess Qty,超额数量,Customer Delivery Schedule Item
+Open Revised Qty,修订后未完成数量,Customer Delivery Schedule Item
+Revision Action,修订操作,Customer Delivery Schedule Item
+Changed,已变更,Customer Delivery Schedule Item
+Retained,已保留,Customer Delivery Schedule Item
+Date Moved,日期已移动,Customer Delivery Schedule Item
+Incremental,增量,Customer Delivery Schedule Item
+Delivery Match Status,交付匹配状态,Customer Delivery Schedule Item
+Not Delivered,未交付,Customer Delivery Schedule Item
+Explicit Identity,明确标识,Customer Delivery Schedule Item
+Delivery Plan,出货计划,Customer Delivery Schedule Item
+Legacy Controlled Match,旧版受控匹配,Customer Delivery Schedule Item
+Unallocated,未分配,Customer Delivery Schedule Item
+Excess,超额,Customer Delivery Schedule Item
+Demand Identity,需求标识,APS Delivery Allocation
+Delivery Plan Detail,出货计划明细,APS Delivery Allocation
+Match Status,匹配状态,APS Delivery Allocation
+Match Reason,匹配原因,APS Delivery Allocation
+Explicit Identity,明确标识,APS Delivery Allocation
+Delivery Plan,出货计划,APS Delivery Allocation
+Legacy Controlled Match,旧版受控匹配,APS Delivery Allocation
+Replacement FIFO,替换先进先出,APS Delivery Allocation
+A decision reason is required when changing P1/P2 admission.,变更 P1/P2 准入时必须填写决策理由。
+APS Demand Admission,APS 需求准入
+APS Demand Commitment,APS 需求承诺
+APS Stock Coverage Allocation,APS 成品库存覆盖分配
+APS V2 is disabled; Legacy planning remains unchanged.,APS V2 未启用；现有旧版排产流程保持不变。
+APS V2 is disabled; admission decisions cannot be changed.,APS V2 未启用；不能变更准入决策。
+APS V2 is disabled; the V2 demand baseline is unavailable.,APS V2 未启用；V2 需求基线不可用。
+Admission candidates changed. Refresh before saving decisions.,准入候选已变化，请刷新后再保存决策。
+Admission decision contains an unknown or duplicate row.,准入决策包含未知或重复的明细。
+Admission decisions,准入决策
+Admission decisions saved; prior capacity analysis was invalidated.,准入决策已保存；之前的产能分析已失效。
+Admission fingerprint,准入指纹
+Baseline fingerprint,基线指纹
+Candidate Qty,候选数量
+Carried Supply,承接供应量
+Commitment quantity {0} cannot be negative.,承诺数量 {0} 不能为负数。
+Commitment scope does not match its Demand Identity.,承诺范围与其需求标识不一致。
+Commitment transfer scope is invalid.,承诺转移范围无效。
+Confirm P1/P2 Admission,确认 P1/P2 准入
+Confirmed customer schedule demand is mandatory P0.,已确认的客户排期需求为必须准入的 P0。
+Consumed and released stock coverage cannot exceed its allocation.,已消耗与已释放的库存覆盖量不能超过分配量。
+Decision Reason,决策理由
+Demand Admission,需求准入
+Demand Admission Workbench,需求准入工作台
+Demand Admissions are maintained by the controlled APS admission service.,需求准入由受控的 APS 准入服务维护。
+Demand Baseline / Admission,需求基线 / 准入
+Demand Commitments are maintained by the controlled APS demand ledger.,需求承诺由受控的 APS 需求台账维护。
+Demand Identity {0} has multiple active Formal owners and requires manual resolution.,需求标识 {0} 同时归属于多个生效的正式运算，需要人工处理。
+Demand admission could not be loaded. Review the error and refresh.,无法加载需求准入，请检查错误后刷新。
+Demand admission loaded. Disabled actions show that a baseline or role is still required.,需求准入已加载；不可用的操作表示仍缺少基线或相应角色权限。
+Demand baseline failed quantity conservation: {0},需求基线未通过数量守恒校验：{0}
+Demand baseline prepared.,需求基线已准备完成。
+Enable APS V2 in a controlled rollout,请在受控灰度中启用 APS V2
+Explain why the optional demand is selected or left out.,请说明选择或不选择可选需求的原因。
+Formal V2 ownership writes are disabled.,V2 正式归属写入尚未启用。
+Formal V2 ownership writes are not enabled in this phase. Use a Trial run.,本阶段尚未启用 V2 正式归属写入，请使用试算运算。
+Framework SO remainder after open customer schedules and active P1 commitments.,框架销售订单在扣除未完成客户排期和生效 P1 承诺后的剩余量。
+Frozen execution remains owned by its source Run and can only be referenced.,已冻结执行任务仍归来源运算所有，只能被引用。
+Info,信息
+Legacy Planning Active,当前为旧版排产
+Loading demand admission...,正在加载需求准入...
+New Plan Qty,新增计划数量
+Not prepared,尚未准备
+Only P0 Admission can be mandatory.,只有 P0 准入可以设为必选。
+Ownership transfer requires a reason.,变更归属必须填写理由。
+P0 Admission is mandatory and its full candidate quantity must remain selected.,P0 为必选准入，必须保持全部候选数量已选择。
+P0 Admission requires a Demand Identity.,P0 准入必须关联需求标识。
+P0 Commitment requires a Demand Identity.,P0 承诺必须关联需求标识。
+P0 Mandatory,P0 必排
+P0 customer commitments are mandatory. P1 framework demand and P2 safety-stock demand remain unselected until PMC explicitly saves a decision.,P0 客户承诺必须排产；P1 框架需求和 P2 安全库存需求在 PMC 明确保存决策前默认不选择。
+P0 demand is mandatory and cannot be deselected.,P0 需求为必排需求，不能取消选择。
+P0 is locked. P1/P2 changes invalidate any prior capacity analysis and require recalculation.,P0 已锁定；变更 P1/P2 会使之前的产能分析失效并要求重新计算。
+P0 is mandatory and locked.,P0 为必排需求且已锁定。
+P1 Candidate,P1 候选
+P2 Candidate,P2 候选
+Planning Run {0} is not open for demand preparation.,计划运算 {0} 当前不允许准备需求。
+"Prepare Baseline, then confirm P1/P2",先准备基线，再确认 P1/P2,Injection APS
+Prepare Demand Baseline,准备需求基线
+Preparing demand ownership and stock coverage...,正在准备需求归属和库存覆盖...
+Recommendation,建议说明
+Admission,准入,Injection APS
+Carry Forward,承接数量,Injection APS
+Class,分类,Injection APS
+Recommended Qty,建议数量,Injection APS
+Recommended and selected admission quantities cannot exceed the candidate quantity.,建议数量和已选数量不能超过候选数量。
+Run Demand Ownership,运算需求归属
+Safety target gap after projected unallocated finished-goods stock.,扣除预计未分配成品库存后的安全库存目标缺口。
+Save P1/P2 Selection,保存 P1/P2 选择
+Save Selection,保存选择
+Saving admission decisions...,正在保存准入决策...
+Select a Planning Run first.,请先选择计划运算。
+Select a Planning Run to prepare and review its demand baseline.,请选择计划运算，以准备并复核其需求基线。
+Select a Run,选择运算
+Selected Qty,已选数量
+Selected admission quantity cannot exceed its candidate quantity.,已选准入数量不能超过候选数量。
+Source Runs,来源运算数
+Stock Coverage Allocations are maintained by the controlled APS demand ledger.,库存覆盖分配由受控的 APS 需求台账维护。
+Stock coverage quantities cannot be negative.,库存覆盖数量不能为负数。
+The run demand baseline changed. Refresh before preparing it again.,运算需求基线已变化，请刷新后重新准备。
+{0} active schedule rows have no Demand Identity. Resolve the Phase 1 migration exceptions first: {1},{0} 条生效排期明细缺少需求标识，请先处理第一阶段迁移异常：{1}
+{0} is limited to {1} rows.,{0} 最多允许 {1} 行。
+{0} must be a valid JSON array.,{0} 必须是有效的 JSON 数组。
+{0} must be an array of objects.,{0} 必须是对象数组。
+Admission Class,准入分类,APS Demand Admission
+Candidate,候选,APS Demand Admission
+Candidate Qty,候选数量,APS Demand Admission
+Changeover Reduction Minutes,减少换模分钟数,APS Demand Admission
+Company,公司,APS Demand Admission
+Continuity Benefit,连续生产收益,APS Demand Admission
+Customer,客户,APS Demand Admission
+Decided By,决策人,APS Demand Admission
+Decided On,决策时间,APS Demand Admission
+Decision Fingerprint,决策指纹,APS Demand Admission
+Decision Reason,决策理由,APS Demand Admission
+Demand Identity,需求标识,APS Demand Admission
+Excluded,未选择,APS Demand Admission
+Idempotency Key,幂等键,APS Demand Admission
+Input Fingerprint,输入指纹,APS Demand Admission
+Inventory Days,库存天数,APS Demand Admission
+Item Code,物料编码,APS Demand Admission
+Mandatory,必选,APS Demand Admission
+P0,P0,APS Demand Admission
+P1,P1,APS Demand Admission
+P2,P2,APS Demand Admission
+Planning Run,计划运算,APS Demand Admission
+Recommendation Reason,建议理由,APS Demand Admission
+Recommended Qty,建议数量,APS Demand Admission
+Selected,已选择,APS Demand Admission
+Selected Qty,已选数量,APS Demand Admission
+Source DocType,来源单据类型,APS Demand Admission
+Source Name,来源单据,APS Demand Admission
+Status,状态,APS Demand Admission
+Superseded,已取代,APS Demand Admission
+Utilization Benefit Percent,利用率收益百分比,APS Demand Admission
+Active Owner Key,生效归属键,APS Demand Commitment
+Admission Class,准入分类,APS Demand Commitment
+Approved,已批准,APS Demand Commitment
+Cancelled,已取消,APS Demand Commitment
+Carried,已承接,APS Demand Commitment
+Carried Qty,承接数量,APS Demand Commitment
+Company,公司,APS Demand Commitment
+Completed,已完成,APS Demand Commitment
+Conflict,冲突,APS Demand Commitment
+Customer,客户,APS Demand Commitment
+Delivered Qty,已出货数量,APS Demand Commitment
+Demand Admission,需求准入,APS Demand Commitment
+Demand Identity,需求标识,APS Demand Commitment
+Draft,草稿,APS Demand Commitment
+Effective Due Time,有效交期时间,APS Demand Commitment
+Excess,超额,APS Demand Commitment
+Excess Qty,超额数量,APS Demand Commitment
+Executed Floor Qty,已执行下限数量,APS Demand Commitment
+Execution State,执行状态,APS Demand Commitment
+Formal Owner,正式运算归属,APS Demand Commitment
+Frozen,已冻结,APS Demand Commitment
+Idempotency Key,幂等键,APS Demand Commitment
+In Progress,执行中,APS Demand Commitment
+Input Fingerprint,输入指纹,APS Demand Commitment
+Item Code,物料编码,APS Demand Commitment
+Late Qty,延期数量,APS Demand Commitment
+Newly Planned Qty,新增计划数量,APS Demand Commitment
+On Time Qty,准时数量,APS Demand Commitment
+Original Due Date,原始交期,APS Demand Commitment
+Owned,持有,APS Demand Commitment
+Owner State,归属状态,APS Demand Commitment
+Ownership Fingerprint,归属指纹,APS Demand Commitment
+P0,P0,APS Demand Commitment
+P1,P1,APS Demand Commitment
+P2,P2,APS Demand Commitment
+Planning Run,计划运算,APS Demand Commitment
+Produced Qty,已生产数量,APS Demand Commitment
+Proposed,建议中,APS Demand Commitment
+Referenced,已引用,APS Demand Commitment
+Released,已释放,APS Demand Commitment
+Remaining Qty,剩余数量,APS Demand Commitment
+Requested Qty,需求数量,APS Demand Commitment
+Reschedulable,可重排,APS Demand Commitment
+Schedule Item,排期明细,APS Demand Commitment
+Service Priority,服务优先级,APS Demand Commitment
+Source Run,来源运算,APS Demand Commitment
+Source Snapshot JSON,来源快照 JSON,APS Demand Commitment
+Source Work Orders JSON,来源工单 JSON,APS Demand Commitment
+Status,状态,APS Demand Commitment
+Stock Covered Qty,库存覆盖数量,APS Demand Commitment
+Superseded,已取代,APS Demand Commitment
+Transition Reason,转换理由,APS Demand Commitment
+Transitioned By,转换人,APS Demand Commitment
+Transitioned On,转换时间,APS Demand Commitment
+Unscheduled Qty,未排数量,APS Demand Commitment
+Admission Fingerprint,准入指纹,APS Planning Run
+Baseline Prepared By,基线准备人,APS Planning Run
+Baseline Prepared On,基线准备时间,APS Planning Run
+Baseline Run,基线运算,APS Planning Run
+Carried Commitment Count,承接承诺数,APS Planning Run
+Demand Baseline Fingerprint,需求基线指纹,APS Planning Run
+Source Run Count,来源运算数,APS Planning Run
+Total Carried Qty,承接总数量,APS Planning Run
+Total New Plan Qty,新增计划总数量,APS Planning Run
+Total P0 Qty,P0 总数量,APS Planning Run
+Total Selected P1 Qty,已选 P1 总数量,APS Planning Run
+Total Selected P2 Qty,已选 P2 总数量,APS Planning Run
+Total Stock Covered Qty,库存覆盖总数量,APS Planning Run
+Active,生效,APS Stock Coverage Allocation
+Allocated Qty,已分配数量,APS Stock Coverage Allocation
+Company,公司,APS Stock Coverage Allocation
+Consumed,已消耗,APS Stock Coverage Allocation
+Consumed Qty,已消耗数量,APS Stock Coverage Allocation
+Demand Commitment,需求承诺,APS Stock Coverage Allocation
+Demand Identity,需求标识,APS Stock Coverage Allocation
+Fingerprint,指纹,APS Stock Coverage Allocation
+Idempotency Key,幂等键,APS Stock Coverage Allocation
+Item Code,物料编码,APS Stock Coverage Allocation
+Owner Run,归属运算,APS Stock Coverage Allocation
+Released,已释放,APS Stock Coverage Allocation
+Released Qty,已释放数量,APS Stock Coverage Allocation
+Remaining Qty,剩余数量,APS Stock Coverage Allocation
+Source Snapshot JSON,来源快照 JSON,APS Stock Coverage Allocation
+Source Snapshot Time,来源快照时间,APS Stock Coverage Allocation
+Status,状态,APS Stock Coverage Allocation
+Superseded,已取代,APS Stock Coverage Allocation
+Warehouse,仓库,APS Stock Coverage Allocation
+Constraint Resolution Center,约束处理中心
+Constraint Resolution Center,约束处理中心,Injection APS
+APS V2 Horizons,APS V2 时间视窗,Injection APS
+Demand Horizon Start Date,需求视窗开始日期,APS Planning Run
+Demand Horizon End Date,需求视窗结束日期,APS Planning Run
+Freeze Horizon Days,冻结视窗天数,APS Planning Run
+Freeze Horizon End Date,冻结视窗结束日期,APS Planning Run
+Restricted Horizon Days,受限视窗天数,APS Planning Run
+Restricted Horizon End Date,受限视窗结束日期,APS Planning Run
+Recovery Horizon Days,恢复视窗天数,APS Planning Run
+Recovery Horizon Start Date,恢复视窗开始日期,APS Planning Run
+Recovery Horizon End Date,恢复视窗结束日期,APS Planning Run
+Due Time Policy,交期时间规则,APS Planning Run
+Ready,可应用,Injection APS
+Acknowledgment Required,需要风险确认,Injection APS
+Hard Blocked,硬阻塞,Injection APS
+Applied with Exceptions,带例外已应用,Injection APS
+Open Resolution Center,打开约束处理中心,Injection APS
+Review and Acknowledge,查看并确认风险,Injection APS
+Exclude From Release,从本次释放排除,Injection APS
+Exclude Commitment From This Release,从本次释放排除此需求,Injection APS
+Blocker Policy,阻塞策略,APS Constraint Resolution
+Never Override,不可覆盖,APS Constraint Resolution
+Temporary Override,临时覆盖,APS Constraint Resolution
+Exclude Only,仅可排除,APS Constraint Resolution
+Affected Qty,影响数量,APS Constraint Resolution
+Suggested Action,建议动作,APS Constraint Resolution
+Resolution Type,处理类型,APS Constraint Resolution
+Proposed Value JSON,建议值 JSON,APS Constraint Resolution
+Expires On,到期时间,APS Constraint Resolution
+Recompute,重新计算,Injection APS
+Select a Planning Run.,请选择计划运算。,Injection APS
+Must Fix,必须修复,Injection APS
+Temporary Override,临时覆盖,Injection APS
+Exclude For Partial Release,排除后部分释放,Injection APS
+Acknowledgment,风险确认,Injection APS
+Readiness,就绪状态,Injection APS
+There is no Force Apply All. Resolve each illegal input or exclude only the affected commitment.,不提供“全部强制应用”。请逐项修复非法输入，或仅排除受影响的需求承诺。,Injection APS
+Details,详情,Injection APS
+Overdue,已逾期,Injection APS
+and earlier open P0,以及更早仍未结的 P0,Injection APS
+Freeze,冻结区,Injection APS
+Restricted,受限区,Injection APS
+Recovery,恢复区,Injection APS
+Acknowledge APS Schedule Risks,确认 APS 排程风险,Injection APS
+Recording risk acknowledgment...,正在记录风险确认...,Injection APS
+Schedule risks acknowledged.,排程风险已确认。,Injection APS
+An approved temporary override requires a future expiry time.,已批准的临时覆盖必须设置未来的到期时间。,Injection APS
+This blocker does not allow a temporary override.,此阻塞项不允许临时覆盖。,Injection APS
+Constraint Resolutions are maintained by the controlled APS resolution service.,约束处理记录由受控的 APS 约束服务维护。,Injection APS
+Only a Manufacturing Manager can approve a non-standard compatibility override.,只有制造经理可以批准非标准兼容性覆盖。,Injection APS
+Excluded from this release by an approved APS resolution.,已按批准的 APS 约束处理从本次释放中排除。,Injection APS
+Unresolved APS constraint.,尚未解决的 APS 约束。,Injection APS
+This constraint cannot be temporarily overridden.,此约束不能临时覆盖。,Injection APS
+"Only an open, rejected, or expired resolution can be requested.",只有处于打开、已拒绝或已过期状态的处理项可以发起申请。,Injection APS
+Temporary override expiry must be in the future.,临时覆盖的到期时间必须在未来。,Injection APS
+Select a supported temporary override type.,请选择受支持的临时覆盖类型。,Injection APS
+Only a requested temporary override can be approved.,只有已申请的临时覆盖可以被批准。,Injection APS
+The temporary override is already expired.,该临时覆盖已经过期。,Injection APS
+A high-risk compatibility override cannot be self-approved.,高风险兼容性覆盖不能由申请人自行批准。,Injection APS
+The affected demand cannot be identified for exclusion.,无法识别需要排除的受影响需求。,Injection APS
+The run fingerprint changed. Refresh before recomputing.,运算指纹已变化，请刷新后再重新计算。,Injection APS
+Approved temporary override {0}: {1},已批准临时覆盖 {0}：{1},Injection APS
+Temporary override(s) expired or were withdrawn: {0}. Analyze again.,以下临时覆盖已过期或撤回：{0}。请重新分析。,Injection APS
+Constraint Resolution {0} was not found.,未找到约束处理记录 {0}。,Injection APS
+The analysis fingerprint changed. Refresh and analyze again.,分析指纹已变化，请刷新并重新分析。,Injection APS
+A reason is required for this controlled decision.,此受控决策必须填写原因。,Injection APS
+Proposed override value must be valid JSON.,建议的覆盖值必须是有效 JSON。,Injection APS
+Correct master data or request a time-limited override.,请修正主数据，或申请有时限的临时覆盖。,Injection APS
+Correct the source or exclude this commitment from this release.,请修正来源数据，或从本次释放中排除此需求承诺。,Injection APS
+Review the delivery impact and acknowledge the risk.,请检查交付影响并确认风险。,Injection APS
+Correct the source data; this constraint cannot be overridden.,请修正来源数据；此约束不能被覆盖。,Injection APS
+APS Constraint Resolution,APS 约束处理
+Input Fingerprint,输入指纹,APS Constraint Resolution
+Idempotency Key,幂等键,APS Constraint Resolution
+Planning Run,计划运算,APS Constraint Resolution
+Resolved By,处理人,APS Constraint Resolution
+Critical,严重,APS Constraint Resolution
+Rejected,已拒绝,APS Constraint Resolution
+Reason,原因,APS Constraint Resolution
+Excluded,已排除,APS Constraint Resolution
+Company,公司,APS Constraint Resolution
+Superseded,已取代,APS Constraint Resolution
+Resolved,已处理,APS Constraint Resolution
+Acknowledgment,风险确认,APS Constraint Resolution
+Affected Item,受影响物料,APS Constraint Resolution
+Plant Floor,车间,APS Constraint Resolution
+Master Data Fix,主数据修复,APS Constraint Resolution
+Status,状态,APS Constraint Resolution
+Schedule Segment,排程分段,APS Constraint Resolution
+Blocker Key,阻塞键,APS Constraint Resolution
+Approved On,批准时间,APS Constraint Resolution
+Approved,已批准,APS Constraint Resolution
+Exclude From Release,从本次释放排除,APS Constraint Resolution
+Output Fingerprint,输出指纹,APS Constraint Resolution
+Requested By,申请人,APS Constraint Resolution
+Open,打开,APS Constraint Resolution
+Blocking,阻塞,APS Constraint Resolution
+Approved By,批准人,APS Constraint Resolution
+Requested On,申请时间,APS Constraint Resolution
+Requested,已申请,APS Constraint Resolution
+Schedule Result,排程结果,APS Constraint Resolution
+Warning,警告,APS Constraint Resolution
+Expired,已过期,APS Constraint Resolution
+Severity,严重程度,APS Constraint Resolution
+Message,消息,APS Constraint Resolution
+Temporary Capacity Override,临时产能覆盖,APS Constraint Resolution
+Temporary Compatibility Override,临时兼容性覆盖,APS Constraint Resolution
+Resolved On,处理时间,APS Constraint Resolution
+Demand Commitment,需求承诺,APS Constraint Resolution
+Temporary Cycle Override,临时周期覆盖,APS Constraint Resolution
+Affected Customer,受影响客户,APS Constraint Resolution
+Ready,可应用,APS Planning Run
+Acknowledgment Required,需要风险确认,APS Planning Run
+Constraint Resolution Count,约束处理数量,APS Planning Run
+Applied with Exceptions,带例外已应用,APS Planning Run
+Hard Blocked,硬阻塞,APS Planning Run
+Excluded Commitment Count,已排除需求承诺数量,APS Planning Run
+Delivery Date Last Production Shift End,交期日最后生产班次结束,APS Planning Run
+Delivery Date End Of Day,交期日结束,APS Planning Run
+Delivery Date Last Production Shift End,交期日最后生产班次结束,APS Settings
+Default Recovery Horizon Days,默认恢复区天数,APS Settings
+Delivery Date End Of Day,交期日结束,APS Settings
+Default Freeze Horizon Days,默认冻结区天数,APS Settings
+Due Time Policy,交期时间策略,APS Settings
+Default Restricted Horizon Days,默认受限区天数,APS Settings
+Overdue,已逾期,APS Demand Commitment
+Freeze,冻结区,APS Demand Commitment
+Exclusion Reason,排除原因,APS Demand Commitment
+Overdue At Run Start,运算开始时已逾期,APS Demand Commitment
+Horizon Zone,时间区域,APS Demand Commitment
+Demand,需求区,APS Demand Commitment
+Recovery,恢复区,APS Demand Commitment
+Restricted,受限区,APS Demand Commitment
+Excluded By,排除人,APS Demand Commitment
+Excluded On,排除时间,APS Demand Commitment
+Exclude From Release,从本次释放排除,APS Demand Commitment
+Restricted,受限区,APS Schedule Result
+Exclude From Release,从本次释放排除,APS Schedule Result
+Overdue,已逾期,APS Schedule Result
+Freeze,冻结区,APS Schedule Result
+Exclusion Reason,排除原因,APS Schedule Result
+Overdue At Run Start,运算开始时已逾期,APS Schedule Result
+Horizon Zone,时间区域,APS Schedule Result
+Demand,需求区,APS Schedule Result
+Recovery,恢复区,APS Schedule Result
+Demand Commitment,需求承诺,APS Schedule Result
+Freeze,冻结区,APS Schedule Segment
+Restricted Window,受限区标记,APS Schedule Segment
+Horizon Zone,时间区域,APS Schedule Segment
+Frozen Window,冻结区标记,APS Schedule Segment
+Restricted,受限区,APS Schedule Segment
+Recovery,恢复区,APS Schedule Segment
+Demand,需求区,APS Schedule Segment
+APS BOM Pegging,APS BOM 追溯
+APS Campaign Output,APS 联产品活动输出
+APS Production Campaign,APS 联产品生产活动
+APS Replan Cycle,APS 班次重排周期
+APS Shift Replan Center,APS 班次重排中心
+APS Solver Job,APS 求解任务
+APS Solver Scenario Comparison,APS 求解方案比较
+Calculating forecast and shift differences...,正在计算预测与班次差异...
+Create Replan Proposal,创建重排建议
+"Create a proposal to compare Current Plan, Forecast, and the next-shift recommendation.",创建建议以比较当前计划、预测和下一班次推荐方案。
+Current End,当前结束
+Current Start,当前开始
+Forecast End,预测结束
+Freshness,数据新鲜度
+Proposed End,建议结束
+Proposed Start,建议开始
+Shift Date,班次日期
+Status,状态
+BOM,BOM,APS BOM Pegging
+BOM Fingerprint,BOM 指纹,APS BOM Pegging
+BOM Output Qty,BOM 产出数量,APS BOM Pegging
+Cancelled,已取消,APS BOM Pegging
+Child Commitment,子级需求承诺,APS BOM Pegging
+Child Demand Key,子级需求键,APS BOM Pegging
+Company,公司,APS BOM Pegging
+Completed,已完成,APS BOM Pegging
+Component Item,组件物料,APS BOM Pegging
+Informational,仅供参考,APS BOM Pegging
+Late,延期,APS BOM Pegging
+Level,层级,APS BOM Pegging
+Loss Percent,损耗百分比,APS BOM Pegging
+Parent Commitment,父级需求承诺,APS BOM Pegging
+Parent Demand Key,父级需求键,APS BOM Pegging
+Parent Item,父级物料,APS BOM Pegging
+Planned,已计划,APS BOM Pegging
+Planned Available Time,计划可用时间,APS BOM Pegging
+Planning Run,计划运算,APS BOM Pegging
+Production Qty,生产数量,APS BOM Pegging
+Qty Per Parent,每单位父项用量,APS BOM Pegging
+Raw Material Leaf,原料叶节点,APS BOM Pegging
+Required Available Time,要求可用时间,APS BOM Pegging
+Required Gross Qty,毛需求数量,APS BOM Pegging
+Root Commitment,根需求承诺,APS BOM Pegging
+Root Demand Key,根需求键,APS BOM Pegging
+Scheduled,已排程,APS BOM Pegging
+Source Snapshot JSON,来源快照 JSON,APS BOM Pegging
+Status,状态,APS BOM Pegging
+Stock Covered Qty,库存覆盖数量,APS BOM Pegging
+WIP Covered Qty,在制覆盖数量,APS BOM Pegging
+Actual Good Qty,实际良品数量,APS Campaign Output
+Actual Scrap Qty,实际报废数量,APS Campaign Output
+Co-product,联产品,APS Campaign Output
+Demand Commitment,需求承诺,APS Campaign Output
+Demand Covered Qty,需求覆盖数量,APS Campaign Output
+Excess Qty,超出数量,APS Campaign Output
+Item Code,物料编码,APS Campaign Output
+Output Note,产出说明,APS Campaign Output
+Output Per Cycle,每模产出,APS Campaign Output
+Output Role,产出角色,APS Campaign Output
+Planned Qty,计划数量,APS Campaign Output
+Primary,主产出,APS Campaign Output
+Schedule Result,排程结果,APS Campaign Output
+Work Order,工单,APS Campaign Output
+Parent Commitment,父级需求承诺,APS Demand Commitment
+Root Commitment,根需求承诺,APS Demand Commitment
+Acknowledgment Count,确认数量,APS Planning Run
+CP-SAT,CP-SAT,APS Planning Run
+Cancelled,已取消,APS Planning Run
+Failed,失败,APS Planning Run
+Fallback,回退方案,APS Planning Run
+Feasible,可行,APS Planning Run
+Latest Replan Cycle,最新重排周期,APS Planning Run
+Legacy,旧版,APS Planning Run
+Legacy Fallback,旧版回退,APS Planning Run
+Not Started,未开始,APS Planning Run
+Optimal,最优,APS Planning Run
+Queued,已排队,APS Planning Run
+Running,运行中,APS Planning Run
+Selected Solver Scenario,已选求解方案,APS Planning Run
+Solver Acknowledged By,求解风险确认人,APS Planning Run
+Solver Acknowledged On,求解风险确认时间,APS Planning Run
+Solver Acknowledgment Fingerprint,求解风险确认指纹,APS Planning Run
+Solver Acknowledgment Reason,求解风险确认原因,APS Planning Run
+Solver Best Bound,求解最佳界,APS Planning Run
+Solver Completed On,求解完成时间,APS Planning Run
+Solver Engine Used,使用的求解引擎,APS Planning Run
+Solver Gap Percent,求解差距百分比,APS Planning Run
+Solver Input Fingerprint,求解输入指纹,APS Planning Run
+Solver Job,求解任务,APS Planning Run
+Solver Objective Value,求解目标值,APS Planning Run
+Solver Phase,求解阶段,APS Planning Run
+Solver Quality JSON,求解质量 JSON,APS Planning Run
+Solver Runtime Seconds,求解运行秒数,APS Planning Run
+Solver Solution Fingerprint,求解方案指纹,APS Planning Run
+Solver Started On,求解开始时间,APS Planning Run
+Solver Status,求解状态,APS Planning Run
+Timeout,超时,APS Planning Run
+Total Critical Unplanned Qty,关键未排数量合计,APS Planning Run
+Total Late Qty,延期数量合计,APS Planning Run
+Total On Time Qty,准时数量合计,APS Planning Run
+Total Recovery Qty,恢复数量合计,APS Planning Run
+Unresolved Blocker Count,未解决阻塞数量,APS Planning Run
+Actual Cycles,实际模次,APS Production Campaign
+Audit JSON,审计 JSON,APS Production Campaign
+Campaign Key,生产活动键,APS Production Campaign
+Campaign Outputs,生产活动产出,APS Production Campaign
+Cancelled,已取消,APS Production Campaign
+Capacity Owner Segment,产能所有者分段,APS Production Campaign
+Company,公司,APS Production Campaign
+Completed,已完成,APS Production Campaign
+Draft,草稿,APS Production Campaign
+End Time,结束时间,APS Production Campaign
+Failed,失败,APS Production Campaign
+Family Campaign,联产品生产活动,APS Production Campaign
+In Progress,进行中,APS Production Campaign
+Input Fingerprint,输入指纹,APS Production Campaign
+Linked Work Order Scheduling,关联工单排产,APS Production Campaign
+Machine / Workstation,机台 / 工作站,APS Production Campaign
+Mold,模具,APS Production Campaign
+Planned,已计划,APS Production Campaign
+Planned Cycles,计划模次,APS Production Campaign
+Planning Run,计划运算,APS Production Campaign
+Plant Floor,车间,APS Production Campaign
+Released,已释放,APS Production Campaign
+Source Summary,来源摘要,APS Production Campaign
+Start Time,开始时间,APS Production Campaign
+Status,状态,APS Production Campaign
+Acknowledged,已确认,APS Replan Cycle
+Acknowledgment Required,需要确认,APS Replan Cycle
+Added Count,新增数量,APS Replan Cycle
+Analyzing,分析中,APS Replan Cycle
+Applied,已应用,APS Replan Cycle
+Applied By,应用人,APS Replan Cycle
+Applied On,应用时间,APS Replan Cycle
+Approval Reason,批准原因,APS Replan Cycle
+Approved,已批准,APS Replan Cycle
+Approved By,批准人,APS Replan Cycle
+Approved On,批准时间,APS Replan Cycle
+Audit JSON,审计 JSON,APS Replan Cycle
+Baseline JSON,基线 JSON,APS Replan Cycle
+Baseline Run,基线运算,APS Replan Cycle
+Cancelled,已取消,APS Replan Cycle
+Cancelled Count,取消数量,APS Replan Cycle
+Company,公司,APS Replan Cycle
+Created By User,创建用户,APS Replan Cycle
+Cycle Type,周期类型,APS Replan Cycle
+Difference JSON,差异 JSON,APS Replan Cycle
+Draft,草稿,APS Replan Cycle
+Emergency Manual,紧急手工,APS Replan Cycle
+Execution Cutoff,执行截止时间,APS Replan Cycle
+Failed,失败,APS Replan Cycle
+Fallback Acknowledged By,回退确认人,APS Replan Cycle
+Fallback Acknowledged On,回退确认时间,APS Replan Cycle
+Fallback Rate Used,使用回退速率,APS Replan Cycle
+Fallback Reason,回退原因,APS Replan Cycle
+Fallback Required,需要回退确认,APS Replan Cycle
+Forecast JSON,预测 JSON,APS Replan Cycle
+Fresh,新鲜,APS Replan Cycle
+Freshness Minutes,新鲜度分钟数,APS Replan Cycle
+Freshness Status,新鲜度状态,APS Replan Cycle
+Frozen Count,冻结数量,APS Replan Cycle
+Idempotency Key,幂等键,APS Replan Cycle
+Input Fingerprint,输入指纹,APS Replan Cycle
+Moved Earlier Count,提前移动数量,APS Replan Cycle
+Moved Later Count,延后移动数量,APS Replan Cycle
+Plant Floor,车间,APS Replan Cycle
+Proposal Ready,建议已就绪,APS Replan Cycle
+Quantity Changed Count,数量变更数,APS Replan Cycle
+Rejected,已拒绝,APS Replan Cycle
+Resource Changed Count,资源变更数,APS Replan Cycle
+Scheduled Shift,定时班次,APS Replan Cycle
+Shift Date,班次日期,APS Replan Cycle
+Shift Schedule Proposal Batch,排产建议批次,APS Replan Cycle
+Shift Type,班次类型,APS Replan Cycle
+Solution Fingerprint,方案指纹,APS Replan Cycle
+Solver Metrics JSON,求解指标 JSON,APS Replan Cycle
+Stale,过期,APS Replan Cycle
+Status,状态,APS Replan Cycle
+Unchanged Count,未变更数量,APS Replan Cycle
+Work Order Proposal Batch,工单建议批次,APS Replan Cycle
+Acknowledgment Required,需要确认,APS Schedule Result
+Admission Class,准入等级,APS Schedule Result
+Applied with Exceptions,带例外已应用,APS Schedule Result
+BOM Component,BOM 生产组件,APS Schedule Result
+BOM Demand Key,BOM 需求键,APS Schedule Result
+Critical Unplanned Qty,关键未排数量,APS Schedule Result
+Effective Due Time,有效交期时间,APS Schedule Result
+Hard Blocked,硬阻塞,APS Schedule Result
+On Time Qty,准时数量,APS Schedule Result
+Original Due Time,原始交期时间,APS Schedule Result
+P0,P0,APS Schedule Result
+P1,P1,APS Schedule Result
+P2,P2,APS Schedule Result
+Parent Commitment,父级需求承诺,APS Schedule Result
+Promised Completion Time,承诺完成时间,APS Schedule Result
+Ready,已就绪,APS Schedule Result
+Recovery Completion Time,恢复完成时间,APS Schedule Result
+Recovery Qty,恢复数量,APS Schedule Result
+Root Commitment,根需求承诺,APS Schedule Result
+Service Priority,服务优先级,APS Schedule Result
+Shortage Code,欠量代码,APS Schedule Result
+Solver Decision JSON,求解决策 JSON,APS Schedule Result
+Solver Explanation,求解说明,APS Schedule Result
+Assignment Reason,分配原因,APS Schedule Segment
+Baseline End Time,基线结束时间,APS Schedule Segment
+Baseline Start Time,基线开始时间,APS Schedule Segment
+Capacity Owner,产能所有者,APS Schedule Segment
+Current End Time,当前结束时间,APS Schedule Segment
+Current Start Time,当前开始时间,APS Schedule Segment
+Forecast End Time,预测结束时间,APS Schedule Segment
+Forecast Start Time,预测开始时间,APS Schedule Segment
+Production Campaign,联产品生产活动,APS Schedule Segment
+Replan Cycle,重排周期,APS Schedule Segment
+Solver End Time,求解结束时间,APS Schedule Segment
+Solver Scenario,求解方案,APS Schedule Segment
+Solver Start Time,求解开始时间,APS Schedule Segment
+Solver Task Key,求解任务键,APS Schedule Segment
+APS BOM Policy,APS BOM 策略,APS Settings
+APS Producible Item Groups,APS 可生产物料组,APS Settings
+Default BOM Only,仅默认 BOM,APS Settings
+Explicit Approved Alternative,明确批准的替代 BOM,APS Settings
+One Item Group per line. Only these manufactured components become APS machine demands.,每行一个物料组。只有这些可制造组件会成为 APS 机台需求。,APS Settings
+Applied,已应用,APS Solver Job
+Audit JSON,审计 JSON,APS Solver Job
+Best Bound,最佳界,APS Solver Job
+CP-SAT,CP-SAT,APS Solver Job
+Cancel Requested,已请求取消,APS Solver Job
+Cancelled,已取消,APS Solver Job
+Company,公司,APS Solver Job
+Completed On,完成时间,APS Solver Job
+Draft,草稿,APS Solver Job
+Error Code,错误代码,APS Solver Job
+Error Message,错误信息,APS Solver Job
+Failed,失败,APS Solver Job
+Fallback,回退方案,APS Solver Job
+Feasible,可行,APS Solver Job
+Gap Percent,差距百分比,APS Solver Job
+Idempotency Key,幂等键,APS Solver Job
+Input Fingerprint,输入指纹,APS Solver Job
+Input Snapshot JSON,输入快照 JSON,APS Solver Job
+Legacy Fallback,旧版回退,APS Solver Job
+Objective Value,目标值,APS Solver Job
+Optimal,最优,APS Solver Job
+Planning Run,计划运算,APS Solver Job
+Plant Floor,车间,APS Solver Job
+Progress Percent,进度百分比,APS Solver Job
+Queued,已排队,APS Solver Job
+Queued On,排队时间,APS Solver Job
+Retryable,可重试,APS Solver Job
+Running,运行中,APS Solver Job
+Runtime Seconds,运行秒数,APS Solver Job
+Scenario Count,方案数量,APS Solver Job
+Scenarios JSON,方案 JSON,APS Solver Job
+Selected By,选择人,APS Solver Job
+Selected On,选择时间,APS Solver Job
+Selected Reason,选择原因,APS Solver Job
+Selected Scenario,已选方案,APS Solver Job
+Solution Fingerprint,方案指纹,APS Solver Job
+Solver Engine,求解引擎,APS Solver Job
+Solver Phase,求解阶段,APS Solver Job
+Started On,开始时间,APS Solver Job
+Status,状态,APS Solver Job
+Timeout,超时,APS Solver Job
+A production campaign requires exactly one Primary output.,一个生产活动必须且只能有一个主产出。,Injection APS
+A reason is required to acknowledge a fallback rate.,确认回退速率时必须填写原因。,Injection APS
+A reason is required to acknowledge solver risks.,确认求解风险时必须填写原因。,Injection APS
+A reason is required to approve a replan proposal.,批准重排建议时必须填写原因。,Injection APS
+A reason is required when selecting a non-recommended scenario.,选择非推荐方案时必须填写原因。,Injection APS
+APS Solver Scenario Comparison,APS 求解方案比较,Injection APS
+Acknowledge the risks for the selected solver fingerprint before Apply.,应用前请先确认当前求解方案指纹对应的风险。,Injection APS
+An emergency replan requires a reason.,紧急重排必须填写原因。,Injection APS
+Analyze the V2 schedule before opening solver scenarios.,打开求解方案前请先分析 V2 排程。,Injection APS
+Approve the replan proposal before Apply.,应用前请先批准重排建议。,Injection APS
+BOM Pegging rows are maintained by the controlled APS BOM service.,BOM 追溯行由受控的 APS BOM 服务维护。,Injection APS
+Campaign planned cycles cannot be negative.,生产活动计划模次不能为负数。,Injection APS
+Changeovers / Minutes,换型次数 / 分钟,Injection APS
+Critical Unplanned,关键未排数量,Injection APS
+Delivery objectives are solved first. Efficiency objectives may only break delivery-equivalent ties.,求解时优先满足交付目标，效率目标只能在交付结果等价时用于择优。,Injection APS
+Enable APS V2 and select CP-SAT before running the V2 solver.,运行 V2 求解器前请启用 APS V2 并选择 CP-SAT。,Injection APS
+"Enable APS V2, CP-SAT, and Co-product Campaign before using campaign planning.",使用联产品计划前请启用 APS V2、CP-SAT 和联产品生产活动。,Injection APS
+"Enable APS V2, CP-SAT, and Multilevel BOM Planning before expanding BOM demand.",展开 BOM 需求前请启用 APS V2、CP-SAT 和多层 BOM 计划。,Injection APS
+"Enable APS V2, CP-SAT, and Shift Replan before creating a replan cycle.",创建重排周期前请启用 APS V2、CP-SAT 和班次重排。,Injection APS
+Family mold {0} does not have at least two reliable outputs.,联产品模具 {0} 没有至少两个可靠产出。,Injection APS
+Gap,差距,Injection APS
+Late Qty / Max Delay,延期数量 / 最大延迟,Injection APS
+No feasible scheduled task exists; an empty formal schedule cannot be applied.,没有可行的已排任务；不能应用空的正式排程。,Injection APS
+No validated solver scenario is available.,没有可用的已验证求解方案。,Injection APS
+Only a Planned campaign can create Work Orders.,只有“已计划”的生产活动才能创建工单。,Injection APS
+Only a ready replan proposal can be approved.,只有已就绪的重排建议才能批准。,Injection APS
+P0 On Time Qty,P0 准时数量,Injection APS
+P1/P2 Completed,P1/P2 完成数量,Injection APS
+Production Campaigns are maintained by the controlled APS campaign service.,生产活动由受控的 APS 联产品服务维护。,Injection APS
+Reason for Non-Recommended Scenario,选择非推荐方案的原因,Injection APS
+Replan Cycle {0} was not found.,未找到重排周期 {0}。,Injection APS
+Replan Cycles are maintained by the controlled APS shift-replan service.,重排周期由受控的 APS 班次重排服务维护。,Injection APS
+Resolve hard blockers before applying the solver result.,应用求解结果前请先解决硬阻塞。,Injection APS
+Scenario,方案,Injection APS
+Select,选择,Injection APS
+Select Scenario,选择方案,Injection APS
+Select a validated solver scenario.,请选择一个已验证的求解方案。,Injection APS
+Shift Type is required.,班次类型为必填项。,Injection APS
+Solver Job {0} was not found.,未找到求解任务 {0}。,Injection APS
+Solver Jobs are maintained by the controlled APS solver service.,求解任务由受控的 APS 求解服务维护。,Injection APS
+Solver inputs changed. Analyze again before Apply.,求解输入已变化，请重新分析后再应用。,Injection APS
+The replan proposal changed. Refresh before continuing.,重排建议已变化，请刷新后继续。,Injection APS
+The selected solver fingerprint changed during Apply.,应用过程中所选求解方案指纹发生了变化。,Injection APS
+The selected solver scenario is no longer available.,所选求解方案已不可用。,Injection APS
+The selected solver solution failed independent validation.,所选求解方案未通过独立校验。,Injection APS
+The solver input fingerprint changed. Refresh and analyze again.,求解输入指纹已变化，请刷新并重新分析。,Injection APS
+This replan cycle does not use a fallback rate.,此重排周期未使用回退速率。,Injection APS
+This solver result does not currently require risk acknowledgment.,当前求解结果不需要风险确认。,Injection APS
+Utilization Spread,利用率差距,Injection APS
+You do not have permission for this replan action.,你没有执行此重排操作的权限。,Injection APS
+Difference,差异,Injection APS
+Replan Cycle,重排周期,APS Shift Schedule Proposal Batch
+APS Shift Replan Center,APS 班次重排中心,Injection APS
+Acknowledge Freshness / Fallback,确认数据新鲜度 / 回退,Injection APS
+Acknowledge Replan Risk,确认重排风险,Injection APS
+Acknowledge execution freshness and fallback risks before generating proposals.,生成建议前请先确认执行数据新鲜度和回退风险。,Injection APS
+Acknowledge freshness or fallback risk first.,请先确认数据新鲜度或回退风险。,Injection APS
+Actual production evidence refreshed.,实际生产证据已刷新。,Injection APS
+Apply Reviewed Proposal,应用已审核建议,Injection APS
+Apply the Work Order proposal batch before generating the replan Shift Proposal.,生成重排班次建议前请先应用工单建议批次。,Injection APS
+Approve Replan,批准重排,Injection APS
+Calculating forecast and shift differences...,正在计算预测与班次差异...,Injection APS
+Create Replan Proposal,创建重排建议,Injection APS
+"Create a proposal to compare Current Plan, Forecast, and the next-shift recommendation.",创建建议以比较当前计划、预测和下一班次推荐方案。,Injection APS
+Current End,当前结束,Injection APS
+Current Start,当前开始,Injection APS
+Cycle Type,周期类型,Injection APS
+Day Shift,白班,Injection APS
+Emergency Manual,紧急手工,Injection APS
+Enter a reason for Emergency Manual replan.,请输入紧急手工重排原因。,Injection APS
+Forecast End,预测结束,Injection APS
+Freshness,数据新鲜度,Injection APS
+Generate Review Proposals,生成审核建议,Injection APS
+Generate and review the Shift Schedule proposal before Apply.,应用前请先生成并审核班次排产建议。,Injection APS
+Generate and review the Shift Schedule proposal first.,请先生成并审核班次排产建议。,Injection APS
+Generate the Shift Schedule proposal before approval.,批准前请先生成班次排产建议。,Injection APS
+Night Shift,夜班,Injection APS
+No freshness or fallback acknowledgment is currently required.,当前不需要确认数据新鲜度或回退风险。,Injection APS
+Open Shift Proposal,打开班次建议,Injection APS
+Proposed End,建议结束,Injection APS
+Proposed Start,建议开始,Injection APS
+Refresh Actuals,刷新实际数据,Injection APS
+Refreshing formal production actuals...,正在刷新正式生产实际数据...,Injection APS
+Review every Shift Schedule proposal row before approving the replan.,批准重排前请审核每一条班次排产建议。,Injection APS
+Scheduled Shift,定时班次,Injection APS
+Segment,排程分段,Injection APS
+Select a Planning Run first.,请先选择计划运算。,Injection APS
+Shift Date,班次日期,Injection APS
+The Shift Schedule proposal already exists.,班次排产建议已存在。,Injection APS
+The replan must be approved by GMC before Apply.,重排必须由 GMC 批准后才能应用。,Injection APS
+minutes,分钟,Injection APS
+A production campaign requires at least two physical outputs.,一个生产活动必须至少包含两个物理产出。,Injection APS
+Campaign output Item Codes must be unique.,生产活动的产出物料编码必须唯一。,Injection APS
+Campaign end time must be later than start time.,生产活动结束时间必须晚于开始时间。,Injection APS
+Campaign output {0} requires a positive output per cycle.,生产活动产出 {0} 的每模产量必须大于零。,Injection APS
+Campaign output {0} planned quantity must equal planned cycles × output per cycle.,生产活动产出 {0} 的计划数量必须等于计划模次乘以每模产量。,Injection APS
+One shared machine/mold interval; review and apply every output atomically.,共用一个机台/模具时段；所有产出必须整组审核并原子应用。,Injection APS
+Family co-product Segment {0} has no exact V2 Campaign output and capacity-owner lineage. Recalculate the plan; legacy automatic family credit cannot be released.,联产品排程段 {0} 缺少准确的 V2 生产活动产出及产能所有者血缘。请重新运算计划；旧版自动联产品抵扣不可下发。
+Move the Campaign capacity owner instead of a derived output Segment.,请移动生产活动的产能所有者，而不是派生产出排程段。,Injection APS
+Campaign quantity changes and cancellation require a fresh solver Run; direct resize/cancel is blocked.,生产活动的数量变更和取消必须重新运行求解器；禁止直接调整数量或取消。,Injection APS
+Campaign proposal outputs must be approved or rejected as one atomic group: {0}.,生产活动建议的所有产出必须作为一个原子组统一批准或拒绝：{0}。,Injection APS
+Campaign output Work Order {0} created atomically.,生产活动产出工单 {0} 已原子创建。
+Campaign {0} Work Order creation failed; the complete proposal batch was rolled back: {1},生产活动 {0} 创建工单失败；整个建议批次已回滚：{1},Injection APS
+Campaign Work Orders must be approved and applied through a Work Order Proposal batch.,生产活动工单必须通过工单建议批次审核并应用。,Injection APS
+Production Campaign {0} was not found.,未找到生产活动 {0}。,Injection APS
+The approved proposal does not contain every Campaign output exactly once.,已批准建议未准确且仅一次地包含生产活动的每个产出。,Injection APS
+Every Campaign output must be Approved before atomic Work Order creation.,原子创建工单前必须批准生产活动的每个产出。,Injection APS
+Campaign {0} changed after review. Regenerate the proposal batch.,生产活动 {0} 在审核后发生变化。请重新生成建议批次。,Injection APS
+Only Campaign capacity owner {0} may move the shared interval.,只有生产活动产能所有者 {0} 可以移动共享时段。,Injection APS
+Scheduling Item {0} belongs to a different APS Production Campaign.,排产明细 {0} 属于另一个 APS 生产活动。
+Sales Order Requirement,销售订单要求,APS Work Order Proposal Item
+Demand Commitment,需求承诺,APS Work Order Proposal Item
+Campaign Output Role,生产活动产出角色,APS Schedule Result
+Primary,主产出,APS Work Order Proposal Item
+Output Role,产出角色,APS Shift Schedule Proposal Item
+Campaign Output Row,生产活动产出行,APS Work Order Proposal Item
+Production Campaign,生产活动,APS Schedule Result
+Excess Qty,超产数量,APS Work Order Proposal Item
+Source Reason,来源原因,APS Work Order Proposal Item
+Capacity Owner,产能所有者,APS Work Order Proposal Item
+Primary,主产出,APS Shift Schedule Proposal Item
+Production Campaign,生产活动,APS Work Order Proposal Item
+Co-product,联产品,APS Schedule Result
+Campaign Group Key,生产活动分组键,APS Schedule Result
+Co-product,联产品,APS Shift Schedule Proposal Item
+Campaign Co-product,生产活动联产品,APS Schedule Result
+Campaign Summary,生产活动摘要,APS Work Order Proposal Batch
+Output Role,产出角色,APS Work Order Proposal Item
+Production Campaign,生产活动,APS Shift Schedule Proposal Item
+Co-product,联产品,APS Work Order Proposal Item
+Primary,主产出,APS Schedule Result
+Capacity Owner,产能所有者,APS Shift Schedule Proposal Item
+Family Campaign output {0} has more than one Run-level Result; consolidate exact demand ownership before materializing.,联产品生产活动产出 {0} 在本次运算中存在多个结果；请先合并准确的需求归属再生成单据。,Injection APS
+"BOM Decisions","BOM 决策","Injection APS"
+"BOM Tree","BOM 树","Injection APS"
+"BOM Selection Snapshot","BOM 选择快照","APS Planning Run"
+"BOM Selection Fingerprint","BOM 选择指纹","APS Planning Run"
+"BOM Selection By","BOM 选择人","APS Planning Run"
+"BOM Selection On","BOM 选择时间","APS Planning Run"
+"BOM Selection Reason","BOM 选择原因","APS Planning Run"
+"Selected BOM","已选 BOM","APS Schedule Result"
+"Selected BOM Fingerprint","已选 BOM 指纹","APS Schedule Result"
+"BOM Selection Source","BOM 选择来源","APS Schedule Result"
+"Selected BOM","已选 BOM","APS Work Order Proposal Item"
+"Parent Result","父件运算结果","APS BOM Pegging"
+"Child Result","子件运算结果","APS BOM Pegging"
+"Selection Source","选择来源","APS BOM Pegging"
+"Component UOM","组件单位","APS BOM Pegging"
+"Stock UOM","库存单位","APS BOM Pegging"
+"Conversion Factor","换算系数","APS BOM Pegging"
+"Batch Size","生产批量","APS BOM Pegging"
+"Batch Excess Qty","批量超产数量","APS BOM Pegging"
+"Covered","已由库存/WIP覆盖","APS BOM Pegging"
+"Default BOM","默认 BOM","Injection APS"
+"Explicit Approved Alternative","明确批准的替代 BOM","Injection APS"
+"Use Default BOM","使用默认 BOM","Injection APS"
+"Approved Selection","已批准选择","Injection APS"
+"Approval Reason","批准原因","Injection APS"
+"Save BOM Decisions","保存 BOM 决策","Injection APS"
+"Only explicitly approved alternatives replace the submitted default BOM. Any BOM master change requires approval again.","只有明确批准的替代 BOM 才会取代已提交的默认 BOM。BOM 主数据发生任何变化后都必须重新批准。","Injection APS"
+"No eligible manufactured items were found.","未找到可选择的生产物料。","Injection APS"
+"Saving BOM decisions...","正在保存 BOM 决策……","Injection APS"
+"BOM decisions saved; analyze the schedule again.","BOM 决策已保存；请重新分析排程。","Injection APS"
+"Roots","根需求数","Injection APS"
+"Late Dependencies","延期依赖","Injection APS"
+"Raw Material Advisory","原料提示","Injection APS"
+"Root Demand","根需求","Injection APS"
+"Child","子件","Injection APS"
+"Parent","父件","Injection APS"
+"Required","需求量","Injection APS"
+"WIP","在制品","Injection APS"
+"Produce","需生产","Injection APS"
+"Apply a validated V2 schedule to materialize BOM pegging.","应用已验证的 V2 排程后才会生成 BOM Pegging。","Injection APS"
+"The Planning Run changed. Refresh BOM selections and try again.","本次 APS 运算已发生变化。请刷新 BOM 选择后重试。","Injection APS"
+"BOM selections can be changed only before the schedule is applied or released.","只能在排程应用或下发之前更改 BOM 选择。","Injection APS"
+"APS BOM Policy must be Explicit Approved Alternative before selecting a non-default BOM.","选择非默认 BOM 前，APS BOM 策略必须设为“明确批准的替代 BOM”。","Injection APS"
+"A reason is required when approving BOM alternatives.","批准替代 BOM 时必须填写原因。","Injection APS"
+"Each BOM selection requires one unique Item and BOM.","每项 BOM 选择必须包含唯一的物料和 BOM。","Injection APS"
+"BOM {0} is not an active submitted BOM for Item {1}.","BOM {0} 不是物料 {1} 的有效已提交 BOM。","Injection APS"
+"BOM selections are not reachable from this Run: {0}.","以下 BOM 选择与本次 APS 运算的需求链无关：{0}。","Injection APS"
+"Correct the BOM master or reapprove the changed BOM selection, then analyze again.","请修正 BOM 主数据，或重新批准已变化的 BOM 选择，然后再次分析。","Injection APS"
+"Raw-material advisory Pegging cannot own machine production.","原料提示 Pegging 不能占用机器产能。","Injection APS"
+"BOM Pegging quantity does not conserve stock, WIP, production, and batch excess.","BOM Pegging 的库存、在制品、生产数量和批量超产不守恒。","Injection APS"
+"Manufactured BOM production requires an exact child demand key.","BOM 子件生产必须具有准确的子需求键。","Injection APS"
+"Parent item {0} starts before manufactured child {1} is available.","父件 {0} 的开始时间早于生产子件 {1} 的可用时间。","Injection APS"
+"BOM dependency blocks this change: child {0} must finish before parent {1} starts.","BOM 前置关系阻止本次调整：子件 {0} 必须在父件 {1} 开始前完成。","Injection APS"
+"Selected BOM {0} is no longer an active submitted BOM for {1}. Analyze the APS Run again.","已选 BOM {0} 已不再是物料 {1} 的有效已提交 BOM。请重新分析本次 APS 运算。","Injection APS"
+"Selected BOM {0} changed after APS analysis. Analyze and approve the Run again.","已选 BOM {0} 在 APS 分析后发生变化。请重新分析并批准本次运算。","Injection APS"
+"Policy","策略","Injection APS"
+"Invalid multilevel BOM input.","多层 BOM 输入无效。","Injection APS"
+"Explicit Approved Alternative","明确批准的替代 BOM","APS BOM Pegging"
+"Default BOM","默认 BOM","APS Schedule Result"
+"Default BOM","默认 BOM","APS BOM Pegging"
+"Explicit Approved Alternative","明确批准的替代 BOM","APS Schedule Result"
+"APS Runs","APS 运算","Injection APS"
+"Actual Delivery Note allocations cover the effective schedule quantity.","实际销售出库分配已覆盖有效排期数量。","Injection APS"
+"Campaign","生产活动","Injection APS"
+"Campaign Outputs","生产活动产出","Injection APS"
+"Clear APS Run to return to the effective cross-Run view.","清空“APS 运算”筛选，返回当前有效的跨运算视图。","Injection APS"
+"Conservation Issues","守恒异常","Injection APS"
+"Conservation Status","守恒状态","Injection APS"
+"Current","当前","Injection APS"
+"Current effective cross-Run projection","当前有效的跨运算投影","Injection APS"
+"Current production is planned, but no Forecast completion is available.","当前已有生产计划，但尚无预测完成时间。","Injection APS"
+"Customer Schedule Progress Matrix","客户排期进度矩阵","Injection APS"
+"Customer Schedule Progress V2","客户排期进度 V2","Injection APS"
+"DN","销售出库","Injection APS"
+"DP","出货计划","Injection APS"
+"Date","日期","Injection APS"
+"Date Cell","日期单元格","Injection APS"
+"Date Matrix","日期矩阵","Injection APS"
+"Delivered quantity and active finished-goods allocation cover the demand.","已交货数量和有效成品库存分配已覆盖需求。","Injection APS"
+"Delivered, stock-covered, and current planned quantities do not cover demand.","已交货、库存覆盖和当前计划数量仍未覆盖需求。","Injection APS"
+"Delivery Plan","出货计划","Injection APS"
+"Delivery Plan / Delivered","出货计划 / 实际交货","Injection APS"
+"Delivery and Recovery","交货与恢复","Injection APS"
+"Demand / Solver Delta","需求 / 求解差异","Injection APS"
+"Demand ledger quantities do not conserve; inspect the linked Commitment and allocations.","需求台账数量不守恒；请检查关联的需求承诺和分配记录。","Injection APS"
+"Documents","单据","Injection APS"
+"Each Demand Identity is projected from its current Formal owner; no recent old Run is selected by status priority.","每个需求标识均按其当前归属的正式运算进行投影；不会按状态优先级选择最近的历史运算。","Injection APS"
+"Earlier Dates","更早日期","Injection APS"
+"Enable APS V2 before opening the Progress date-cell drilldown.","打开进度日期单元格下钻前请先启用 APS V2。","Injection APS"
+"Excess","超产","Injection APS"
+"Export the current filtered page and visible date window.","导出当前筛选页和可见日期窗口。","Injection APS"
+"Forecast completion is later than the effective customer due time.","预测完成时间晚于有效客户交期。","Injection APS"
+"Forecast completion is within 24 hours of the effective due time.","预测完成时间距有效交期不足 24 小时。","Injection APS"
+"Good","良品","Injection APS"
+"Green / Risk / Late","满足 / 风险 / 延期","Injection APS"
+"Later Dates","更晚日期","Injection APS"
+"Loading progress lineage...","正在加载进度血缘……","Injection APS"
+"More than one commitment is present for this projection scope; resolve demand ownership.","本投影范围存在多条需求承诺；请先处理需求归属。","Injection APS"
+"Next Rows","下一页数据","Injection APS"
+"Next date window","下一个日期窗口","Injection APS"
+"Next result page","下一页结果","Injection APS"
+"No Demand Identity","无需求标识","Injection APS"
+"No later dates are available in this filter range.","当前筛选范围内没有更晚的日期。","Injection APS"
+"No more result rows are available.","没有更多结果数据。","Injection APS"
+"No readable source document is available.","没有可读的来源单据。","Injection APS"
+"One machine/mold capacity bar owns all physical outputs; output Work Orders and actuals remain separate.","一条机台/模具产能条拥有全部实物产出；各产出的工单和实绩仍独立保留。","Injection APS"
+"Only commitments from the explicitly selected APS Run are shown.","仅显示明确选定的 APS 运算中的需求承诺。","Injection APS"
+"Open source documents for this date cell.","打开本日期单元格的来源单据。","Injection APS"
+"Original","原计划","Injection APS"
+"Original / Current / Forecast","原计划 / 当前计划 / 预测","Injection APS"
+"Original / Current / Forecast / Actual","原计划 / 当前计划 / 预测 / 实际","Injection APS"
+"Original Plan","原计划","Injection APS"
+"Output Role","产出角色","Injection APS"
+"Per Cycle","每模次","Injection APS"
+"Planned","已计划","Injection APS"
+"Previous Rows","上一页数据","Injection APS"
+"Previous date window","上一个日期窗口","Injection APS"
+"Previous result page","上一页结果","Injection APS"
+"Progress Cell Drilldown","进度单元格下钻","Injection APS"
+"Progress Detail","进度明细","Injection APS"
+"Progress View","进度视图","Injection APS"
+"Progress matrix end date cannot be earlier than its start date.","进度矩阵结束日期不能早于开始日期。","Injection APS"
+"Progress matrix range cannot exceed {0} days.","进度矩阵范围不能超过 {0} 天。","Injection APS"
+"Recovery Completion","恢复完成时间","Injection APS"
+"Rows {0} - {1}","第 {0} - {1} 条","Injection APS"
+"Select a Demand Identity or schedule row before opening progress details.","打开进度明细前，请先选择需求标识或排期明细。","Injection APS"
+"Select a Run only when an explicit single-Run audit is required.","仅在需要审核某一次明确的 APS 运算时选择“APS 运算”。","Injection APS"
+"Shortage","欠量","Injection APS"
+"Shortage / Recovery","欠量 / 恢复","Injection APS"
+"Single Run view","单次运算视图","Injection APS"
+"Source Documents","来源单据","Injection APS"
+"Status and Conservation","状态与守恒","Injection APS"
+"The current Forecast covers demand before the effective due time.","当前预测可在有效交期前覆盖需求。","Injection APS"
+"The current Formal projection still contains critical unplanned quantity.","当前正式运算的投影仍包含关键未计划数量。","Injection APS"
+"The customer due date has passed and actual delivery/coverage remains incomplete.","客户交期已过，实际交货/覆盖仍未完成。","Injection APS"
+"The plan has a shortage, but a recovery completion is projected.","计划存在欠量，但已预测恢复完成时间。","Injection APS"
+"The requested progress row was not found in the current projection.","当前投影中未找到请求的进度行。","Injection APS"
+"This active schedule row has no Demand Identity and cannot be projected safely.","此生效排期明细尚未关联需求标识，无法安全投影。","Injection APS"
+"This is the first date window.","当前已是第一个日期窗口。","Injection APS"
+"This is the first result page.","当前已是第一页结果。","Injection APS"
+"APS V2 is disabled. Customer Schedule Progress continues to use the Legacy read-only projection.","APS V2 已关闭。客户排期进度继续使用旧版只读投影。","Injection APS"
+"Enable APS V2 to use the identity-backed date matrix.","启用 APS V2 后才能使用基于需求标识的日期矩阵。","Injection APS"
+"Legacy / V2 Trial Comparison","旧版 / V2 试算对比","Injection APS"
+"Trial comparison is not available for this run.","当前运算暂无试算对比。","Injection APS"
+"Trial comparison is read-only; only a Formal run can be applied.","试算对比为只读；只有正式运算才能应用。","Injection APS"
+"The Legacy fingerprint was captured before V2 projection and is retained in the Solver Job audit record.","旧版方案指纹在 V2 投影前生成，并保存在求解任务的审计记录中。","Injection APS"
+"Scheduled Qty","已排数量","Injection APS"
+"Late Qty","延期数量","Injection APS"
+"Changeovers","换模次数","Injection APS"
+"Setup Minutes","准备分钟","Injection APS"
+"Metric","指标","Injection APS"
+"Delta (V2 - Legacy)","差异（V2－旧版）","Injection APS"
+"Trial runs are read-only. Create or approve a Formal run before applying the V2 schedule.","试算运算为只读；应用 V2 排程前，请先创建或批准正式运算。","Injection APS"
+"A Trial run is read-only. Create or approve a Formal run before applying the V2 schedule.","试算运算为只读；应用 V2 排程前，请先创建或批准正式运算。","Injection APS"
+"Proposed tasks before Apply","应用前的建议任务","Injection APS"
+"These rows are a preview only. No production segment is changed until a Formal run is applied by an authorized approver.","这些行仅供预览；只有授权审批人应用正式运算后，生产排程段才会变更。","Injection APS"
+"Cycles","模次","Injection APS"
+"Occupied Start","占用开始时间","Injection APS"
+"Production Start","生产开始时间","Injection APS"
+"Setup / Changeover","准备 / 换模","Injection APS"
+"Zone","时域区","Injection APS"
+"No proposed task is available for this scenario.","此方案没有可用的建议任务。","Injection APS"
+"Independent validation failed. Review the warnings; this scenario cannot be selected.","独立校验失败。请检查警告；此方案不能被选择。","Injection APS"
+"Your role cannot select solver scenarios.","您的角色不能选择求解方案。","Injection APS"
+"-","-","Injection APS"
+"Your role cannot perform this action.","您的角色不能执行此操作。","Injection APS"
+"These rows are read-only until Apply.","应用前这些行均为只读。","Injection APS"
+"Apply the analyzed capacity plan before confirming this run.","确认本次运算前，请先应用已分析的产能方案。","Injection APS"
+"Re-analyze and Apply capacity after the latest execution-layer change before the next release step.","执行层数据更新后，请重新分析并应用产能方案，再继续下发。","Injection APS"
+"Capacity balance failed plan consistency with {0} error(s): {1}","产能平衡未通过计划一致性检查，共有 {0} 个错误：{1}"
+"No error detail was returned.","未返回错误明细。"
+"V2 solver Apply created {0} workstation overlap(s) and {1} mold overlap(s).","V2 求解方案应用后产生 {0} 个机台重叠和 {1} 个模具重叠。"
+"V2 solver Apply failed plan consistency with {0} error(s): {1}","V2 求解方案应用未通过计划一致性检查，共有 {0} 个错误：{1}"
+"Capacity evidence can only be rebound after the planning run is approved.","只有计划运算获批后才能重新绑定产能依据。"
+"Apply the analyzed capacity balance before approving this planning run.","批准本次计划运算前，请先应用已分析的产能平衡方案。"
+"Scenario selection is locked after Apply. Create a new run or use the controlled change/reanalysis workflow to choose another scenario.","应用后方案选择已锁定。请新建一次运算，或通过受控变更/重新分析流程选择其他方案。"
+"An approved V2 planning run cannot be recalculated in place. Create a new run or use the controlled change workflow.","已批准的 V2 计划运算不能原地重算。请新建一次运算，或使用受控变更流程。"
+"The applied Run and Solver Job evidence are inconsistent. Reconciliation is required before another Apply.","已应用运算与求解任务的证据不一致；再次应用前必须先完成核对。","Injection APS"
+"The Planning Run scope changed while Apply was waiting for its lock.","等待应用锁期间，计划运算范围已发生变化。","Injection APS"
+"A newer Solver Job exists. Refresh before Apply.","已有更新的求解任务；应用前请刷新。","Injection APS"
+APS Interface Failed to Load,APS 界面资源加载失败,Injection APS
+"Refresh the page and try again. If the problem continues, contact the system administrator.",请刷新页面后重试。如问题持续，请联系系统管理员。,Injection APS
+"APS Run Details","运算详情","Injection APS"
+"Key Results","关键结果","Injection APS"
+"Overview","运算概览","Injection APS"
+"Planning and Fulfillment","计划与履约","Injection APS"
+"Risk and Execution","风险与执行","Injection APS"
+"Other Actions","其他操作","Injection APS"
+"Demand Ownership","需求归属","Injection APS"
+"Workflow","流程","Injection APS"
+"Request at most {0} Item display rows.","每次最多请求 {0} 条物料显示信息。","Injection APS"
+No blocking reason is currently recorded.,当前未记录阻断原因。,Injection APS
+Affected Object,影响对象,Injection APS
+Diagnosis / Recommendation,诊断与建议,Injection APS
+Latest details could not be loaded.,无法加载最新详情。,Injection APS
+The list summary is shown below. Refresh the page and try again.,以下显示清单摘要。请刷新页面后重试。,Injection APS
+Exception ID,异常编号,Injection APS
+Affected Context,影响范围,Injection APS
+Exception Message,异常信息,Injection APS
+Diagnostic Details,诊断明细,Injection APS
+Loading exception diagnosis and resolution guidance...,正在加载异常诊断与处理建议...,Injection APS
+Loading exception details...,正在加载异常详情...,Injection APS
+Exception details loaded.,异常详情已加载。,Injection APS
+Segment updated on the Board.,排程段已在看板中更新。,Injection APS
+"Check the linked Mold and Mold Product records for status, cycle time, cavity output, and machine-tonnage compatibility.",请检查关联的模具及模具产品记录，包括状态、周期时间、穴数产出和机台吨位兼容性。
+"Correct the mold assignment or move the segment to a compatible machine, then recalculate and confirm that the exception is cleared.",修正模具分配或将排程段移至兼容机台，然后重新运算并确认异常已清除。
+"Check APS Machine Capability, the machine calendar, and active downtime for the affected workstation.",请检查受影响机台的 APS 机台能力、机台日历和生效中的停机时段。
+"Restore capacity or move/resize the affected segment in the Board, then rerun validation.",恢复产能，或在看板中移动、调整受影响的排程段，然后重新执行校验。
+"Open the affected segment in the Board and compare its time window with adjacent machine and mold segments.",在看板中打开受影响排程段，对比其时间窗口与相邻机台、模具排程段。
+"Move, resize, or split the segment into a conflict-free window, then rerun plan validation.",将排程段移动、调整或拆分至无冲突时段，然后重新执行计划校验。
+"Verify the BOM, source warehouse, available stock, and expected supply date for the affected item.",核对受影响物料的 BOM、来源仓库、可用库存和预计到料日期。
+"Correct the material or supply data, then recalculate APS and confirm that the shortage no longer blocks the plan.",修正物料或供应数据，然后重新运算 APS，并确认短缺不再阻断计划。
+"Verify the source customer schedule or sales order line, including item, date, quantity, and Demand Identity ownership.",核对来源客户排期或销售订单行，包括物料、日期、数量和需求标识归属。
+"Correct the source demand or process it through Change Impact, then rebuild the planning run.",修正来源需求或通过变更影响流程处理，然后重建计划运算。
+"Check the linked Work Order, Work Order Scheduling, and latest execution feedback for inconsistent status or quantity.",检查关联工单、工单排产和最新执行反馈中不一致的状态或数量。
+"Correct or resync the execution document, then refresh the Execution Center and verify that the exception is cleared.",修正或重新同步执行单据，然后刷新执行中心并确认异常已清除。
+Open the source record and correct the condition described in the exception message.,打开来源记录并修正异常信息中描述的问题。
+"Recalculate or rebuild exceptions for this APS run, then confirm that the exception no longer appears before release.",重新运算或重建本次 APS 运算的异常，并在下发前确认该异常不再出现。
+Operational Facts,现场事实,Injection APS
+Schedule Result,排程结果,Injection APS
+Requested Delivery,要求交期,Injection APS
+Segment Start,排程段开始,Injection APS
+Segment End,排程段结束,Injection APS
+Projected Completion,预计完成,Injection APS
+Delay Minutes,延误分钟数,Injection APS
+Segment Qty,排程段数量,Injection APS
+Segment Status,排程段状态,Injection APS
+Confirm Manual Overproduction,确认手工超产,Injection APS
+Confirm Resize,确认调整长度,Injection APS
+Segment: {0},排程段：{0}
+Current Qty: {0},当前数量：{0}
+Overproduction Qty: {0},超产数量：{0}
+"Manual resize to {0} on {1} with mold {2}.",在机台 {1} 使用模具 {2} 手工调整排程段长度，目标数量为 {0}。
+"Compare the requested delivery date with the segment end time and the displayed delay minutes.",对比要求交期、排程段结束时间及显示的延误分钟数。
+"If a feasible earlier window exists, move, resize, or split the segment on the Board and run validation again.",如存在可行的更早时段，请在看板中移动、调整长度或拆分排程段，然后重新校验。
+"If capacity cannot meet the date, adjust machine capacity or downtime first; otherwise confirm the revised customer delivery date in the source demand and recalculate APS.",如现有产能无法满足交期，请先调整机台产能或停机时段；否则应在来源需求中确认新的客户交期，再重新运算 APS。
+Demand baseline,需求基线,Injection APS
+Batch admission,批量准入,Injection APS
+Impact confirmation,影响确认,Injection APS
+APS calculation,APS 计算,Injection APS
+Create admission draft,创建准入草稿,Injection APS
+Continue to demand admission,继续处理需求准入,Injection APS
+Confirm admission draft,确认准入草稿,Injection APS
+This creates the demand baseline without running APS. Optional demand is confirmed in the next step.,这一步只创建需求基线，不执行 APS 计算。可选需求将在下一步确认。,Injection APS
+Preparing demand baseline...,正在准备需求基线……,Injection APS
+Admission draft created.,准入草稿已创建。,Injection APS
+Demand baseline is ready. Opening the next step.,需求基线已就绪，正在打开下一步。,Injection APS
+Only P0 demand was found and confirmed automatically. Run the first APS calculation now.,仅存在 P0 需求，系统已自动确认。现在可执行首次 APS 计算。,Injection APS
+Demand admission is complete. Recalculate this Run before capacity analysis.,需求准入已完成。请在产能分析前重新计算本次运算。,Injection APS
+Open demand admission,打开需求准入,Injection APS
+Demand admission,需求准入,Injection APS
+Admission status pending review,准入状态待检查,Injection APS
+This creates the demand baseline first; APS calculation starts only after demand admission.,系统会先创建需求基线；完成需求准入后才开始 APS 计算。,Injection APS
+Review net requirements,复核净需求,Injection APS
+Continue to net requirement review,继续复核净需求,Injection APS
+Preview another import,预览其他导入,Injection APS
+Schedule import completed,排期导入已完成,Injection APS
+"Review warnings if any, then verify the net demand before creating the APS draft Run.",如有警告请先检查，再复核净需求并创建 APS 草稿运算。,Injection APS
+APS Workflow,APS 流程
+Decide optional demand in one batch,一次完成可选需求准入,Injection APS
+"P0 is included automatically. Choose one policy for P1 and P2, review the impact once, then continue to APS calculation.",P0 由系统自动纳入。为 P1 和 P2 选择一个策略，统一确认影响后即可继续 APS 计算。,Injection APS
+Admission class guide,准入类别说明,Injection APS
+"Confirmed customer demand; included and locked automatically.",客户已确认需求；系统自动全部纳入并锁定。,Injection APS
+"Framework order remainder; PMC decides whether to produce early.",框架订单剩余需求；由 PMC 决定是否提前生产。,Injection APS
+"Safety-stock replenishment; PMC decides whether to include it.",安全库存补充需求；由 PMC 决定是否纳入。,Injection APS
+Choose a batch policy,选择批量策略,Injection APS
+The policy applies to all optional rows. You can still fine-tune individual exceptions below.,策略会应用于全部可选需求；仍可在下方单独调整特殊项。,Injection APS
+Preview and confirm,预览并确认,Injection APS
+Select the draft Planning Run created from Net Requirements.,请选择由净需求创建的草稿运算。
+Preview admission impact,预览准入影响,Injection APS
+Prepare demand baseline,准备需求基线,Injection APS
+The demand baseline is missing. Prepare it before making admission decisions.,缺少需求基线。请先准备基线，再进行准入决策。,Injection APS
+"Choose the recommended standard policy for a quick decision, then preview the total impact before saving.",可选择推荐的标准策略快速完成决策，保存前再统一预览影响。,Injection APS
+This Run has no demand baseline yet.,本次运算尚无需求基线。,Injection APS
+Only mandatory P0 demand was found,仅发现必须执行的 P0 需求,Injection APS
+"The system confirmed it automatically; no optional rows require PMC input.",系统已自动确认；无需 PMC 处理可选需求。,Injection APS
+Continue to calculation,继续计算,Injection APS
+Standard policy,标准方案,Injection APS
+Recommended,推荐,Injection APS
+Use the suggested P1 quantity and exclude P2.,P1 采用系统建议量，P2 全部排除。,Injection APS
+Conservative policy,保守方案,Injection APS
+Exclude all P1 and P2 demand.,全部排除 P1 和 P2 需求。,Injection APS
+All suggestions,全部建议,Injection APS
+Use the suggested quantity for both P1 and P2.,P1 和 P2 均采用系统建议量。,Injection APS
+Filter by admission class,按准入类别筛选,Injection APS
+Search demand admission,搜索需求准入,Injection APS
+"Search customer, internal item, customer item or item name",搜索客户、内部物料号、客户物料号或物料名称,Injection APS
+Select current page,选中当前页,Injection APS
+Select all filtered,选中全部筛选结果,Injection APS
+Clear selection,清除选中,Injection APS
+Use suggestion,采用建议,Injection APS
+Restore saved value,恢复已保存值,Injection APS
+Suggested Qty,建议数量,Injection APS
+Included Qty,纳入数量,Injection APS
+Decision,决策,Injection APS
+Select row,选中本行,Injection APS
+Included,已纳入,Injection APS
+Partially included,部分纳入,Injection APS
+Excluded,已排除,Injection APS
+{0} filtered rows,筛选后 {0} 行,Injection APS
+No admission rows match the current filters.,当前筛选条件下没有需求准入数据。,Injection APS
+Included quantity must be between zero and the candidate quantity.,纳入数量必须在零与候选数量之间。,Injection APS
+Page {0} of {1},第 {0} 页，共 {1} 页,Injection APS
+Previous Page,上一页
+Next Page,下一页
+Modified rows,已修改行数,Injection APS
+P1 included,P1 纳入量,Injection APS
+P2 included,P2 纳入量,Injection APS
+Total change,总量变化,Injection APS
+Calculating admission impact...,正在计算准入影响……,Injection APS
+Custom adjustment,自定义调整,Injection APS
+"Review the complete batch impact. Saving will return this Run to pending calculation.",请检查完整的批量影响。保存后本次运算将返回待计算状态。,Injection APS
+Total plan quantity,总计划量,Injection APS
+Excluded / partial rows,排除或部分纳入行数,Injection APS
+The existing calculation and capacity analysis will become invalid. Recalculate this Run after saving.,现有计算结果和产能分析将失效。保存后请重新计算本次运算。,Injection APS
+Batch decision reason,批量决策原因,Injection APS
+Record why this batch policy is appropriate.,请记录选择本批次策略的原因。,Injection APS
+Back to adjust,返回调整,Injection APS
+Confirm admission and continue,确认准入并继续,Injection APS
+Admission impact,准入影响,Injection APS
+Enter one reason for this batch decision.,请填写本次批量决策的原因。,Injection APS
+Select a Run,选择一次运算,Injection APS
+Automatically confirmed because the baseline contains only mandatory P0 demand.,因基线仅包含必须执行的 P0 需求，系统已自动确认。
+Demand admission can only be changed on an unapproved Draft or Planned run.,只有尚未批准的草稿或已计划运算才能修改需求准入。
+Confirm this Run's demand admission before recalculation or capacity analysis.,重新计算或产能分析前，请先确认本次运算的需求准入。
+Demand admission changed after the last calculation. Recalculate this Run before continuing.,需求准入在上次计算后已变更。请重新计算本次运算后再继续。
+Confirmed {0} optional admission quantity.,已确认 {0} 可选需求纳入量。
+APS V2 is disabled; use the existing recalculation flow.,APS V2 未启用；请使用现有重新计算流程。
+"Demand admission can only be changed on an unapproved Draft, Planned, or Risk run.",只有尚未批准的草稿、已计划或风险运算才能修改需求准入。
+The selected demand admission strategy is not valid.,所选需求准入策略无效。
+Selected admission quantity cannot be negative.,需求准入数量不能为负数。
+Demand admission is locked because this Run has been approved or left the editable planning states.,本次运算已批准或已离开可编辑的计划状态，需求准入已锁定。
+You do not have permission to confirm demand admission.,您没有确认需求准入的权限。,Injection APS
+Admission decisions saved. Recalculate this Run before continuing.,需求准入决策已保存。请重新计算本次运算后再继续。,Injection APS
+Progress Layer,进度层,Injection APS
+Customer Schedule,客户排期,Injection APS
+APS Plan,APS 计划,Injection APS
+Actual Inbound,实际入库,Injection APS
+Retry APS Interface,重试加载 APS 界面,Injection APS
+Plan completion moved {0} hours later.,计划完成时间向后移动了 {0} 小时。,Injection APS
+Segment duration increased by {0} hours.,排产段时长增加了 {0} 小时。,Injection APS
+Schedule Result {0} has no active demand commitment owned by Planning Run {1}.,排产结果 {0} 没有属于计划运算 {1} 的有效需求承诺。
+Schedule Result {0} references optional demand with no admitted quantity.,排产结果 {0} 引用了未获准数量的可选需求。
+Recomputing APS constraints...,正在重新计算 APS 约束...,Injection APS
+Loading constraint resolutions...,正在加载约束处理项...,Injection APS
+Constraint resolutions could not be loaded. Check access and try again.,约束处理项加载失败。请检查权限后重试。,Injection APS
+Retry,重试,Injection APS
+Excluding the affected commitment...,正在排除受影响的需求承诺...,Injection APS
+Requesting temporary override...,正在申请临时覆盖...,Injection APS
+Approve Temporary Override,批准临时覆盖,Injection APS
+Approving temporary override...,正在批准临时覆盖...,Injection APS
+Request Override,申请覆盖,Injection APS
+Request Temporary Override,申请临时覆盖,Injection APS
+Override Type,覆盖类型,Injection APS
+Expires On,到期时间,Injection APS
+Proposed Value,建议值,Injection APS
+Submit,提交,Injection APS
+Proposed Value must be valid JSON.,建议值必须是有效的 JSON。,Injection APS
+This constraint cannot be excluded from release.,此约束不允许通过排除需求来处理。,Injection APS
+"Planning input {0} has no unique active admitted commitment in Run {1}. Rebuild the demand baseline before recalculating.","计划输入 {0} 在试算 {1} 中没有唯一且有效的已准入承诺。请先重建需求基线，再重新计算。",Injection APS
+"P0 Commitment {0} no longer matches its customer schedule row. Rebuild the demand baseline before recalculating.","P0 需求承诺 {0} 与客户排期明细已不一致。请先重建需求基线，再重新计算。",Injection APS
+"P0 Commitment {0} fails quantity conservation. Rebuild the demand baseline before recalculating.","P0 需求承诺 {0} 的数量不守恒。请先重建需求基线，再重新计算。",Injection APS
+"Admitted P0 quantity from Commitment {0}.","来自需求承诺 {0} 的已准入 P0 数量。",Injection APS
+"Schedule Result {0} quantity no longer matches admitted Commitment {1}. Recalculate the Planning Run before analysis.","排产结果 {0} 的数量与已准入需求承诺 {1} 不一致。请重新计算计划运算后再分析。"
+Loading customer schedule progress...,正在加载客户排期进度...,Injection APS
+No progress data is shown because the selected scope could not be loaded.,因所选范围加载失败，当前不显示任何进度数据。,Injection APS
+Current Page Demand,当前页需求,Injection APS
+Current Page Status,当前页状态,Injection APS
+Cell color legend,单元格颜色图例,Injection APS
+Short / Late,短缺 / 延迟,Injection APS
+Progress Risk,进度风险,Injection APS
+Actual / Delivered,实际入库 / 已送货,Injection APS
+No quantity,无数量,Injection APS
+Update,更新,Injection APS
+Loading APS runs...,正在加载 APS 运算...,Injection APS
+APS runs could not be loaded for the selected scope.,无法加载所选范围内的 APS 运算。,Injection APS
+Temporary Risk Exception,临时风险例外,Injection APS
+Approve Temporary Risk Exception,批准临时风险例外,Injection APS
+Approving temporary risk exception...,正在批准临时风险例外...,Injection APS
+Request Exception,申请例外,Injection APS
+Request Temporary Risk Exception,申请临时风险例外,Injection APS
+"This exception only waives the named blocker until expiry. It does not change cycle time, capacity, compatibility, or other master data.",此例外仅在到期前豁免指定阻断项，不会更改周期、产能、兼容性或其他主数据。,Injection APS
+Planning Run changes must use the controlled APS planning service.,计划运算的变更必须通过受控的 APS 计划服务执行。
+Planning Run engine and approval fields are maintained by controlled APS actions: {0}.,计划运算的引擎及审批字段由受控的 APS 操作维护：{0}。
+{0} {1} is no longer linked to a Planning Run.,{0} {1} 已不再关联计划运算。,Injection APS
+delivery synchronization,送货同步,Injection APS
+Select a Customer before synchronizing deliveries.,同步送货前请选择客户。,Injection APS
+Select at least one Item before synchronizing deliveries.,同步送货前请至少选择一个物料。,Injection APS
+"Status filtering would scan too many schedule rows. Narrow the customer, item, or date range.",状态筛选将扫描过多排期明细。请缩小客户、物料或日期范围。,Injection APS
+Status filtering would scan too many customer/item groups. Narrow the filters or date range.,状态筛选将扫描过多客户与物料组合。请缩小筛选或日期范围。,Injection APS
+Cumulative APS coverage is {0} short of the customer schedule by this date.,截至该日期，APS 累计覆盖量比客户排期少 {0}。
+Actual inbound is {0} behind cumulative APS completions by this date.,截至该日期，实际入库量比 APS 累计完工量少 {0}。
+Delivered quantity is {0} short of the cumulative customer schedule by this date.,截至该日期，送货量比客户累计排期少 {0}。
+Existing Work Orders carry this quantity into the current demand plan.,现有工单将此数量承接到当前需求计划。,Injection APS
+BOM-derived APS Result(s) {0} have no Planning Run lineage before {1}.,由 BOM 派生的 APS 排产结果 {0} 在 {1} 前缺少计划运算血缘。
+BOM-derived APS Result evidence is invalid before {0}: {1},由 BOM 派生的 APS 排产结果证据在 {0} 前无效：{1}
+Negative admitted or planned quantity is invalid for Schedule Result {0}.,排产结果 {0} 的准入量或计划量不能为负数。
+BOM-derived Result evidence is invalid before solver reanalysis: {0},求解器重新分析前发现 BOM 派生结果证据无效：{0}
+missing Results: {0},缺失排产结果：{0}
+duplicate Results: {0},重复排产结果：{0}
+Results with no active demand commitment: {0},没有有效需求承诺的排产结果：{0}
+Planning Run {0} does not have a complete 1:1 admitted projection ({1}).,计划运算 {0} 没有完整的一对一准入投影（{1}）。
+Admitted projection quantities cannot be negative.,准入投影数量不能为负数。
+"Planning Run {0} admitted projection is not quantity-conserving: Results {1}, Commitments {2}.",计划运算 {0} 的准入投影数量不守恒：排产结果 {1}，需求承诺 {2}。
+company,公司,Injection APS
+customer,客户,Injection APS
+item,物料,Injection APS
+planning horizon,计划周期,Injection APS
+run type,运算类型,Injection APS
+existing work order policy,现有工单策略,Injection APS
+plant floor scope,车间范围,Injection APS
+The prepared demand baseline freezes {0}. Create a new Planning Run to change these inputs.,已准备的需求基线已冻结{0}。如需更改这些输入，请新建计划运算。
+"Planning input {0} has no unique active admitted commitment in Run {1}. Rebuild the demand baseline before recalculating.",计划输入 {0} 在计划运算 {1} 中没有唯一有效的已准入需求承诺。请先重建需求基线再重新计算。
+Admitted quantity {0} is below the minimum batch {1}; APS will not silently overproduce beyond the admitted quantity.,准入数量 {0} 低于最小批量 {1}；APS 不会在未提示的情况下超出准入数量生产。
+Adjust demand admission or approve an explicit constraint decision.,请调整需求准入，或明确批准一项约束处理决定。
+Planning Run {0} was not found.,未找到计划运算 {0}。,Injection APS
+P0 Commitment {0} no longer matches its customer schedule row. Rebuild the demand baseline before recalculating.,P0 需求承诺 {0} 与客户排期明细已不一致。请先重建需求基线再重新计算。
+P0 Commitment {0} fails quantity conservation. Rebuild the demand baseline before recalculating.,P0 需求承诺 {0} 数量不守恒。请先重建需求基线再重新计算。
+Admitted P0 quantity from Commitment {0}.,来自需求承诺 {0} 的已准入 P0 数量。
+Exception Type,例外类型,Injection APS
+The current solver does not support temporary constraint overrides. Correct the master data or exclude the affected demand.,当前求解器不支持临时约束例外。请修正主数据或排除受影响的需求。,Injection APS
+New Planning Runs must start in Draft/Pending state without engine results: {0}.,新的计划运算必须以不含引擎结果的草稿/待处理状态开始：{0}。
+This APS payload includes records or linked references outside your permitted scope.,此 APS 数据包含超出您权限范围的记录或关联引用。
+Temporary override fingerprint chain is cyclic. Analyze again after correcting the resolution records.,临时例外的指纹链出现循环。请修正约束处理记录后重新分析。,Injection APS
+"CP-SAT does not implement temporary constraint override semantics. Supersede the approved override, correct the constraint, or exclude the affected demand before analysis.",CP-SAT 尚未实现临时约束例外语义。请作废已批准的例外、修正约束或在分析前排除受影响的需求。
+Fixed production coverage {0} exceeds admitted quantity {1} for Schedule Result {2}. Reconcile execution before analysis.,排产结果 {2} 的固定生产覆盖量 {0} 超过准入数量 {1}。请在分析前核对执行数据。
+Excluded APS result(s) cannot be released to Work Orders: {0}. Regenerate the proposal batch.,已排除的 APS 排产结果不能下达到工单：{0}。请重新生成建议批次。
+The current CP-SAT solver does not support temporary constraint overrides. Correct the master data or exclude the affected demand.,当前 CP-SAT 求解器不支持临时约束例外。请修正主数据或排除受影响的需求。
+New Planning Runs must start without a precomputed planning window or engine results: {0}.,新的计划运算必须在没有预先计算的计划窗口或引擎结果时开始：{0}。
+This APS payload includes linked records outside your permitted scope.,此 APS 数据包含超出您权限范围的关联记录。
+Remaining admitted quantity {0} is below minimum batch {1} for Schedule Result {2}.,排产结果 {2} 的剩余准入数量 {0} 低于最小批量 {1}。
+Manufactured BOM demand {0} quantity {1} is below minimum batch {2}.,制造型 BOM 需求 {0} 的数量 {1} 低于最小批量 {2}。
+Admitted Commitment {0} has no Schedule Result.,已准入需求承诺 {0} 没有对应的排产结果。
+Admitted Commitment {0} has duplicate Schedule Results.,已准入需求承诺 {0} 存在重复的排产结果。
+Schedule Result {0} has no active admitted Commitment.,排产结果 {0} 没有有效的已准入需求承诺。
+Invalid CP-SAT solver input.,CP-SAT 求解器输入无效。,Injection APS
+This APS record links to data outside your permitted scope.,此 APS 记录关联了超出您权限范围的数据。
+The source Delivery Note Item no longer belongs to this delivery row.,源送货单明细已不再属于这条待分配交付记录。
+The selected Demand Identity current schedule row is no longer valid.,所选需求标识当前关联的排期明细已失效。
+A cancellation proposal no longer matches its Scheduling Item.,取消建议已不再匹配对应的排产明细。
+A proposal Scheduling Item no longer belongs to its parent schedule.,建议中的排产明细已不再属于对应的排产单。
+The shift schedule preview permission scope is incomplete. Refresh and retry.,班次排产预览的权限范围不完整。请刷新后重试。
+Schedule Result {0} no longer matches the admitted demand and frozen production-lot boundary for Commitment {1}. Recalculate the Planning Run before analysis.,排产结果 {0} 已不再匹配需求承诺 {1} 的准入需求量及冻结生产批量边界。请重新计算计划运算后再分析。
+Schedule Result {0} has no frozen production quantity evidence.,排产结果 {0} 缺少冻结的生产数量依据。
+Fixed production coverage {0} exceeds production boundary {1} for Schedule Result {2}. Reconcile execution before analysis.,排产结果 {2} 的固定生产覆盖量 {0} 超过生产边界 {1}。请在分析前核对执行数据。
+"Allocated Stock","已分配库存","Injection APS"
+"APS Unscheduled","APS 未排数量","Injection APS"
+"APS Unscheduled / Recovery","APS 未排数量 / 补数","Injection APS"
+"Unfulfilled Qty","未交付数量","Injection APS"
+"No Formal Plan","暂无正式计划","Injection APS"
+"No Formal APS Projection","暂无正式 APS 计划","Injection APS"
+"No Formal APS owner exists in this scope. Trial Run stock and plan quantities are excluded; production and delivery appear only after APS attributes their source documents to this demand.","当前范围没有正式生效的 APS 计划；试算批次的库存和计划不会合并显示，生产与交付也只展示已归属到该需求的来源单据。","Injection APS"
+"No Formal APS owner exists for this demand. Select a Trial Run to inspect trial stock and planning quantities.","该需求没有正式生效的 APS 计划。请选择一个试算批次查看对应的库存分配和计划数量。","Injection APS"
+"Select a Trial Run to inspect it. Until a Run is selected, plan and allocated-stock quantities are not projected.","请选择一个试算批次查看试算结果；选择批次前不展示 APS 计划和已分配库存。","Injection APS"
+"APS Attributed Production","APS 已归属生产","Injection APS"
+"APS Attributed Inbound","APS 已归属入库","Injection APS"
+"Allocated Delivery","已归属交付","Injection APS"

@@ -1,0 +1,51 @@
+{
+ "actions": [],
+ "autoname": "APS-ADM-.#####",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "planning_run", "company", "customer", "item_code", "demand_identity", "source_doctype", "source_name", "admission_class",
+  "candidate_qty", "recommended_qty", "selected_qty", "mandatory", "status", "recommendation_reason",
+  "continuity_benefit", "changeover_reduction_minutes", "inventory_days", "utilization_benefit_percent",
+  "input_fingerprint", "decision_fingerprint", "idempotency_key", "decision_reason", "decided_by", "decided_on"
+ ],
+ "fields": [
+  {"fieldname":"planning_run","fieldtype":"Link","in_list_view":1,"label":"Planning Run","options":"APS Planning Run","read_only":1,"reqd":1,"search_index":1},
+  {"fieldname":"company","fieldtype":"Link","in_list_view":1,"label":"Company","options":"Company","read_only":1,"reqd":1,"search_index":1},
+  {"fieldname":"customer","fieldtype":"Link","in_list_view":1,"label":"Customer","options":"Customer","read_only":1,"search_index":1},
+  {"fieldname":"item_code","fieldtype":"Link","in_list_view":1,"label":"Item Code","options":"Item","read_only":1,"reqd":1,"search_index":1},
+  {"fieldname":"demand_identity","fieldtype":"Link","label":"Demand Identity","options":"APS Demand Identity","read_only":1,"search_index":1},
+  {"fieldname":"source_doctype","fieldtype":"Link","label":"Source DocType","options":"DocType","read_only":1},
+  {"fieldname":"source_name","fieldtype":"Dynamic Link","label":"Source Name","options":"source_doctype","read_only":1},
+  {"default":"P0","fieldname":"admission_class","fieldtype":"Select","in_list_view":1,"label":"Admission Class","options":"P0\nP1\nP2","read_only":1,"reqd":1,"search_index":1},
+  {"fieldname":"candidate_qty","fieldtype":"Float","label":"Candidate Qty","non_negative":1,"read_only":1,"reqd":1},
+  {"fieldname":"recommended_qty","fieldtype":"Float","label":"Recommended Qty","non_negative":1,"read_only":1},
+  {"fieldname":"selected_qty","fieldtype":"Float","label":"Selected Qty","non_negative":1,"read_only":1},
+  {"default":"0","fieldname":"mandatory","fieldtype":"Check","label":"Mandatory","read_only":1},
+  {"default":"Candidate","fieldname":"status","fieldtype":"Select","in_list_view":1,"label":"Status","options":"Candidate\nSelected\nExcluded\nSuperseded","read_only":1,"reqd":1,"search_index":1},
+  {"fieldname":"recommendation_reason","fieldtype":"Small Text","label":"Recommendation Reason","read_only":1},
+  {"default":"0","fieldname":"continuity_benefit","fieldtype":"Check","label":"Continuity Benefit","read_only":1},
+  {"fieldname":"changeover_reduction_minutes","fieldtype":"Float","label":"Changeover Reduction Minutes","non_negative":1,"read_only":1},
+  {"fieldname":"inventory_days","fieldtype":"Float","label":"Inventory Days","non_negative":1,"read_only":1},
+  {"fieldname":"utilization_benefit_percent","fieldtype":"Percent","label":"Utilization Benefit Percent","read_only":1},
+  {"fieldname":"input_fingerprint","fieldtype":"Data","label":"Input Fingerprint","read_only":1,"search_index":1},
+  {"fieldname":"decision_fingerprint","fieldtype":"Data","label":"Decision Fingerprint","read_only":1,"search_index":1},
+  {"fieldname":"idempotency_key","fieldtype":"Data","hidden":1,"label":"Idempotency Key","read_only":1,"unique":1},
+  {"fieldname":"decision_reason","fieldtype":"Small Text","label":"Decision Reason","read_only":1},
+  {"fieldname":"decided_by","fieldtype":"Link","label":"Decided By","options":"User","read_only":1},
+  {"fieldname":"decided_on","fieldtype":"Datetime","label":"Decided On","read_only":1}
+ ],
+ "links": [],
+ "module": "Injection APS",
+ "name": "APS Demand Admission",
+ "permissions": [
+  {"export":1,"print":1,"read":1,"report":1,"role":"System Manager","share":1},
+  {"export":1,"print":1,"read":1,"report":1,"role":"GMC","share":1},
+  {"export":1,"print":1,"read":1,"report":1,"role":"PMC","share":1},
+  {"export":1,"print":1,"read":1,"report":1,"role":"Manufacturing Manager","share":1}
+ ],
+ "read_only": 1,
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "track_changes": 1
+}

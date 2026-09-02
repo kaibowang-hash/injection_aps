@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import csv
 import json
 import os
 import tempfile
 import unittest
 import zipfile
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import frappe
@@ -12,7 +14,7 @@ import frappe
 from injection_aps import install
 from injection_aps.api import app
 from injection_aps.patches.v0_0_2 import migrate_aps_food_grade_field
-from injection_aps.services import planning
+from injection_aps.services import customizations, planning
 from injection_aps.setup.resources import STANDARD_CUSTOM_FIELDS, get_standard_custom_field_names
 
 
@@ -86,34 +88,124 @@ class TestImportAndTransactionGuards(unittest.TestCase):
 				"Work Order", permission_type, doc="WO-1"
 			)
 
-	def test_item_food_grade_field_is_namespaced_and_owned_for_safe_uninstall(self):
-		item_fields = {row["fieldname"] for row in STANDARD_CUSTOM_FIELDS["Item"]}
-		self.assertIn("custom_aps_food_grade", item_fields)
+	def test_item_food_grade_uses_existing_master_field_and_aps_fields_share_manufacturing_section(self):
+		item_fields = {row["fieldname"]: row for row in STANDARD_CUSTOM_FIELDS["Item"]}
+		self.assertNotIn("custom_aps_food_grade", item_fields)
 		self.assertNotIn("custom_food_grade", item_fields)
+		section = item_fields["custom_aps_planning_section"]
+		self.assertEqual(section["fieldtype"], "Section Break")
+		self.assertEqual(section["insert_after"], "manufacturing")
+		self.assertEqual(section["collapsible"], 1)
+		self.assertEqual(
+			item_fields["custom_aps_prebuild_allowed"]["insert_after"],
+			"custom_aps_planning_section",
+		)
 		owned_names = set(get_standard_custom_field_names())
-		self.assertIn("Item-custom_aps_food_grade", owned_names)
+		self.assertIn("Item-custom_aps_planning_section", owned_names)
+		self.assertNotIn("Item-custom_aps_food_grade", owned_names)
 		self.assertNotIn("Item-custom_food_grade", owned_names)
 
-	def test_food_grade_migration_copies_only_blank_targets_and_keeps_legacy_field(self):
+	def test_item_aps_custom_field_labels_and_descriptions_have_chinese_translations(self):
+		translation_path = Path(__file__).resolve().parents[1] / "translations" / "zh.csv"
+		with translation_path.open(encoding="utf-8-sig", newline="") as handle:
+			translations = {
+				(row[0], row[2] if len(row) > 2 else "")
+				for row in csv.reader(handle)
+				if len(row) >= 2 and row[0] and row[1]
+			}
+
+		for field in STANDARD_CUSTOM_FIELDS["Item"]:
+			for key in ("label", "description"):
+				message = field.get(key)
+				if message:
+					self.assertTrue(
+						(message, "") in translations or (message, "Item") in translations,
+						message,
+					)
+
+	def test_deprecated_food_grade_setting_is_normalized_to_item_master_field(self):
+		settings = frappe._dict(item_food_grade_field="custom_aps_food_grade")
+		with patch.object(planning.frappe, "get_cached_doc", return_value=settings):
+			self.assertEqual(planning.get_settings_dict()["item_food_grade_field"], "custom_food_grade")
+
+	def test_safe_uninstall_ignores_custom_layout_fields(self):
 		database = MagicMock()
 		database.exists.return_value = True
-		database.get_single_value.return_value = "custom_food_grade"
+		with (
+			patch.object(customizations, "APS_TRANSACTION_DOCTYPES", ()),
+			patch.object(
+				customizations,
+				"STANDARD_CUSTOM_FIELDS",
+				{
+					"Item": [
+						{
+							"fieldname": "custom_aps_planning_section",
+							"fieldtype": "Section Break",
+						}
+					]
+				},
+			),
+			patch.object(customizations.frappe, "db", database),
+		):
+			customizations.ensure_safe_to_uninstall()
+
+		database.sql.assert_not_called()
+
+	def test_item_field_order_preserves_site_layout_and_moves_aps_fields_to_manufacturing(self):
+		database = MagicMock()
+		database.exists.return_value = True
+		database.get_value.return_value = frappe._dict(
+			name="Item-main-field_order",
+			value=json.dumps(
+				[
+					"details",
+					"custom_aps_food_grade",
+					"custom_aps_prebuild_allowed",
+					"inventory_section",
+					"manufacturing",
+					"default_bom",
+					"purchasing_tab",
+				]
+			),
+		)
+		with patch.object(customizations.frappe, "db", database):
+			customizations._ensure_item_aps_field_order()
+
+		updated_order = json.loads(database.set_value.call_args.args[3])
+		aps_fields = [row["fieldname"] for row in STANDARD_CUSTOM_FIELDS["Item"]]
+		manufacturing_index = updated_order.index("manufacturing")
+		self.assertEqual(
+			updated_order[manufacturing_index + 1 : manufacturing_index + 1 + len(aps_fields)],
+			aps_fields,
+		)
+		self.assertNotIn("custom_aps_food_grade", updated_order)
+		self.assertLess(updated_order.index("inventory_section"), manufacturing_index)
+		self.assertGreater(updated_order.index("default_bom"), manufacturing_index)
+		self.assertGreater(updated_order.index("purchasing_tab"), manufacturing_index)
+
+	def test_food_grade_migration_restores_master_source_and_removes_duplicate_field(self):
+		database = MagicMock()
+		database.exists.return_value = True
+		database.get_single_value.return_value = "custom_aps_food_grade"
 		database.has_column.return_value = True
 		with (
 			patch.object(migrate_aps_food_grade_field.frappe, "db", database),
-			patch.object(migrate_aps_food_grade_field, "create_custom_fields") as create_fields,
+			patch.object(migrate_aps_food_grade_field.frappe, "delete_doc") as delete_doc,
 		):
 			migrate_aps_food_grade_field.execute()
 
-		create_fields.assert_called_once()
-		field = create_fields.call_args.args[0]["Item"][0]
-		self.assertEqual(field["fieldname"], "custom_aps_food_grade")
 		query = database.sql.call_args.args[0]
-		self.assertIn("set `custom_aps_food_grade` = `custom_food_grade`", query)
-		self.assertIn("ifnull(`custom_aps_food_grade`, '') = ''", query)
+		self.assertIn("set `custom_food_grade` = `custom_aps_food_grade`", query)
+		self.assertIn("ifnull(`custom_food_grade`, '') = ''", query)
 		self.assertNotIn("delete", query.lower())
 		database.set_single_value.assert_called_once_with(
-			"APS Settings", "item_food_grade_field", "custom_aps_food_grade"
+			"APS Settings", "item_food_grade_field", "custom_food_grade"
+		)
+		delete_doc.assert_called_once_with(
+			"Custom Field",
+			"Item-custom_aps_food_grade",
+			force=1,
+			ignore_permissions=True,
 		)
 
 	def test_food_grade_migration_preserves_explicit_site_field_configuration(self):
@@ -122,27 +214,35 @@ class TestImportAndTransactionGuards(unittest.TestCase):
 		database.get_single_value.return_value = "custom_customer_food_class"
 		with (
 			patch.object(migrate_aps_food_grade_field.frappe, "db", database),
-			patch.object(migrate_aps_food_grade_field, "create_custom_fields"),
+			patch.object(migrate_aps_food_grade_field.frappe, "delete_doc") as delete_doc,
 		):
 			migrate_aps_food_grade_field.execute()
 
 		database.sql.assert_not_called()
 		database.set_single_value.assert_not_called()
+		delete_doc.assert_not_called()
 
-	def test_roles_are_created_before_workspace_on_install_and_migrate(self):
-		for hook in (install.after_install, install.after_migrate):
-			calls = []
-			with (
-				patch.object(install, "ensure_standard_customizations", side_effect=lambda: calls.append("customizations")),
-				patch.object(install, "ensure_default_settings", side_effect=lambda: calls.append("settings")),
-				patch.object(install, "ensure_seed_records", side_effect=lambda: calls.append("seeds")),
-				patch.object(install, "ensure_roles", side_effect=lambda: calls.append("roles")),
-				patch.object(install, "ensure_roles_and_permissions", side_effect=lambda: calls.append("permissions")),
-				patch.object(install, "ensure_workspace_resources", side_effect=lambda: calls.append("workspace")),
-				patch.object(install.frappe, "clear_cache", side_effect=lambda: calls.append("cache")),
-			):
-				hook()
-			self.assertLess(calls.index("roles"), calls.index("workspace"))
+	def test_roles_are_created_before_workspace_on_install(self):
+		calls = []
+		with (
+			patch.object(
+				install,
+				"ensure_standard_customizations",
+				side_effect=lambda **_kwargs: calls.append("customizations"),
+			),
+			patch.object(install, "ensure_default_settings", side_effect=lambda: calls.append("settings")),
+			patch.object(install, "ensure_seed_records", side_effect=lambda: calls.append("seeds")),
+			patch.object(install, "ensure_roles", side_effect=lambda: calls.append("roles")),
+			patch.object(
+				install,
+				"ensure_roles_and_permissions",
+				side_effect=lambda **_kwargs: calls.append("permissions"),
+			),
+			patch.object(install, "ensure_workspace_resources", side_effect=lambda: calls.append("workspace")),
+			patch.object(install.frappe, "clear_cache", side_effect=lambda: calls.append("cache")),
+		):
+			install.after_install()
+		self.assertLess(calls.index("roles"), calls.index("workspace"))
 
 	def test_before_install_creates_roles_before_frappe_schema_sync(self):
 		with patch.object(install, "ensure_roles") as ensure_roles:
@@ -1893,6 +1993,35 @@ class TestImportAndTransactionGuards(unittest.TestCase):
 					diff_rows=[{**current[0], "previous_schedule_date": "2026-08-12"}],
 				)
 		self.assertEqual(production_sync.call_count, 2)
+
+	def test_initial_schedule_replays_tracked_unallocated_delivery(self):
+		database = MagicMock()
+		database.exists.return_value = False
+		with (
+			patch.object(planning.frappe, "db", database),
+			patch(
+				"injection_aps.services.delivery_sync.sync_delivery_allocations",
+				return_value={},
+			) as delivery_sync,
+		):
+			counts = planning._rebuild_schedule_execution_allocations(
+				previous_item_rows=[],
+				new_item_rows=[{
+					"name": "NEW-1",
+					"parent": "SCHEDULE-1",
+					"company": "COMPANY-1",
+					"customer": "CUSTOMER-1",
+					"item_code": "ITEM-1",
+				}],
+				diff_rows=[],
+			)
+		delivery_sync.assert_called_once_with(
+			company="COMPANY-1",
+			customer="CUSTOMER-1",
+			item_codes=["ITEM-1"],
+			target_remap={},
+		)
+		self.assertEqual(counts["delivery_syncs"], 1)
 
 	def test_result_baseline_adds_run_to_production_resync_before_ledger_exists(self):
 		result = frappe._dict(

@@ -19,7 +19,7 @@ PHYSICAL_SEGMENT_KINDS = ("Primary", "Manual")
 
 def sync_production_for_run(run_name: str) -> dict[str, Any]:
 	"""Reconcile formal Manufacture rows to APS segments through an idempotent detail ledger."""
-	from injection_aps.services import availability, consistency
+	from injection_aps.services import availability, campaign_planning, consistency
 
 	save_point = "aps_production_sync_{0}".format(frappe.generate_hash(length=10))
 	frappe.db.savepoint(save_point)
@@ -36,6 +36,7 @@ def sync_production_for_run(run_name: str) -> dict[str, Any]:
 			reason="formal production allocation synchronization",
 		)
 		fulfillment = availability.recalculate_run_fulfillment(run_name)
+		campaigns = campaign_planning.sync_campaign_actuals(run_name)
 		frappe.db.release_savepoint(save_point)
 		return {
 			"run": run_name,
@@ -45,6 +46,7 @@ def sync_production_for_run(run_name: str) -> dict[str, Any]:
 			"rollup": rollup,
 			"consistency": consistency_summary,
 			"fulfillment": fulfillment,
+			"campaigns": campaigns,
 		}
 	except Exception:
 		frappe.db.rollback(save_point=save_point)
@@ -97,12 +99,15 @@ def validate_manufacture_before_submit(doc, method: str | None = None):
 			"sales_order_item",
 			"custom_aps_run",
 			"custom_aps_result_reference",
+			"custom_aps_campaign",
 		],
 		as_dict=True,
 	) if work_order else None
 	work_order_aps_run = (work_order_values or {}).get("custom_aps_run")
 	work_order_aps_result = (work_order_values or {}).get("custom_aps_result_reference")
+	work_order_aps_campaign = (work_order_values or {}).get("custom_aps_campaign")
 	runs = set()
+	direct_scheduling_item_has_aps_lineage = False
 	if direct_segment:
 		run_name = _get_segment_run(direct_segment)
 		if not run_name:
@@ -115,7 +120,12 @@ def validate_manufacture_before_submit(doc, method: str | None = None):
 		item_link = frappe.db.get_value(
 			"Scheduling Item",
 			direct_scheduling_item,
-			["custom_aps_run", "custom_aps_segment_reference"],
+			[
+				"custom_aps_run",
+				"custom_aps_result_reference",
+				"custom_aps_segment_reference",
+				"custom_aps_campaign",
+			],
 			as_dict=True,
 		)
 		if not item_link:
@@ -123,6 +133,15 @@ def validate_manufacture_before_submit(doc, method: str | None = None):
 				_("APS Scheduling Item {0} does not exist.").format(direct_scheduling_item),
 				frappe.ValidationError,
 			)
+		direct_scheduling_item_has_aps_lineage = any(
+			item_link.get(fieldname)
+			for fieldname in (
+				"custom_aps_run",
+				"custom_aps_result_reference",
+				"custom_aps_segment_reference",
+				"custom_aps_campaign",
+			)
+		)
 		if item_link.custom_aps_run:
 			runs.add(item_link.custom_aps_run)
 		elif item_link.custom_aps_segment_reference:
@@ -139,10 +158,11 @@ def validate_manufacture_before_submit(doc, method: str | None = None):
 		runs.add(eligible_wo_runs[0])
 	has_aps_signal = bool(
 		direct_segment
-		or direct_scheduling_item
+		or direct_scheduling_item_has_aps_lineage
 		or runs
 		or eligible_wo_runs
 		or work_order_aps_result
+		or work_order_aps_campaign
 	)
 	if not has_aps_signal:
 		return
@@ -183,6 +203,7 @@ def validate_manufacture_before_submit(doc, method: str | None = None):
 			"work_order_sales_order_item": (work_order_values or {}).get("sales_order_item"),
 			"work_order_aps_run": work_order_aps_run,
 			"work_order_aps_result": work_order_aps_result,
+			"work_order_aps_campaign": work_order_aps_campaign,
 			"scrap_warehouse": (work_order_values or {}).get("scrap_warehouse"),
 		}
 		# Use the exact same output predicate as reconciliation.  Some ERPNext
@@ -270,6 +291,8 @@ def _get_run_segment_contexts(run_name: str) -> list[dict[str, Any]]:
 			seg.planned_qty,
 			seg.segment_kind,
 			seg.segment_status,
+			seg.production_campaign,
+			seg.capacity_owner,
 			seg.linked_work_order as work_order,
 			seg.linked_work_order_scheduling as work_order_scheduling,
 			seg.linked_scheduling_item as scheduling_item,
@@ -291,7 +314,10 @@ def _get_run_segment_contexts(run_name: str) -> list[dict[str, Any]]:
 		inner join `tabAPS Schedule Result` r on r.name = seg.parent
 		where seg.parenttype = 'APS Schedule Result'
 			and r.planning_run = %(run_name)s
-			and seg.segment_kind in ('Primary', 'Manual')
+			and (
+				seg.segment_kind in ('Primary', 'Manual')
+				or (seg.segment_kind = 'Family Co-Product' and seg.production_campaign is not null)
+			)
 			and ifnull(seg.segment_status, 'Planned') not in ('Blocked', 'Cancelled')
 			and ifnull(seg.planned_qty, 0) > 0
 		order by seg.start_time asc, seg.idx asc, seg.name asc
@@ -324,6 +350,9 @@ def _get_run_segment_contexts(run_name: str) -> list[dict[str, Any]]:
 			si.custom_aps_run,
 			si.custom_aps_result_reference,
 			si.custom_aps_segment_reference,
+			si.custom_aps_campaign,
+			si.custom_aps_output_role,
+			si.custom_aps_capacity_owner,
 			ifnull(wos.status, '') as wos_status,
 			ifnull(wos.custom_aps_approval_state, '') as approval_state
 		from `tabScheduling Item` si
@@ -493,6 +522,7 @@ def _get_formal_manufacture_sources(contexts: list[dict[str, Any]]) -> list[dict
 			wo.sales_order_item as work_order_sales_order_item,
 			wo.custom_aps_run as work_order_aps_run,
 			wo.custom_aps_result_reference as work_order_aps_result,
+			wo.custom_aps_campaign as work_order_aps_campaign,
 			wo.docstatus as work_order_docstatus,
 			wo.status as work_order_status,
 			wo.scrap_warehouse
@@ -633,7 +663,7 @@ def _build_desired_production_allocations(
 		for context in candidates:
 			if remaining <= QTY_TOLERANCE:
 				break
-			if allocation_method == "Direct":
+			if allocation_method == "Direct" or context.get("scheduling_items"):
 				key = (context["segment"], source["output_type"])
 				quota = _context_output_quota(context, source["output_type"])
 			else:
@@ -654,7 +684,7 @@ def _build_desired_production_allocations(
 			segment_allocations.append((context, remaining))
 			overflow_key = (
 				(context["segment"], source["output_type"])
-				if allocation_method == "Direct"
+				if allocation_method == "Direct" or context.get("scheduling_items")
 				else (context["segment"], "Total")
 			)
 			used_by_context_output[overflow_key] += remaining
@@ -945,6 +975,11 @@ def _validate_direct_production_context(
 				_("Scheduling Item {0} belongs to a different APS segment.").format(direct_scheduling_item),
 				frappe.ValidationError,
 			)
+		if direct_item.get("custom_aps_campaign") and direct_item.get("custom_aps_campaign") != context.get("production_campaign"):
+			frappe.throw(
+				_("Scheduling Item {0} belongs to a different APS Production Campaign.").format(direct_scheduling_item),
+				frappe.ValidationError,
+			)
 
 	expected_work_orders = _context_work_orders(context)
 	if expected_work_orders and source.get("work_order") not in expected_work_orders:
@@ -1009,6 +1044,8 @@ def _validate_production_output_context(
 
 
 def _work_order_lineage_matches_context(source: dict[str, Any], context: dict[str, Any]) -> bool:
+	if source.get("work_order_aps_campaign"):
+		return source.get("work_order_aps_campaign") == context.get("production_campaign")
 	return (
 		(source.get("work_order_sales_order") or "") == (context.get("sales_order") or "")
 		and (source.get("work_order_sales_order_item") or "") == (context.get("sales_order_item") or "")
@@ -1077,7 +1114,7 @@ def _get_eligible_work_order_runs(work_order: str | None) -> list[str]:
 				and seg.linked_work_order = %s
 				and wo.docstatus = 1
 				and ifnull(wo.status, '') not in ('Stopped', 'Completed', 'Closed', 'Cancelled')
-				and seg.segment_kind in ('Primary', 'Manual')
+				and (seg.segment_kind in ('Primary', 'Manual') or (seg.segment_kind = 'Family Co-Product' and seg.production_campaign is not null))
 				and ifnull(seg.segment_status, 'Planned') not in ('Blocked', 'Cancelled')
 				and ifnull(seg.planned_qty, 0) > 0
 				and ifnull(run.status, 'Draft') != 'Closed'
@@ -1096,7 +1133,7 @@ def _get_eligible_work_order_runs(work_order: str | None) -> list[str]:
 				and si.custom_aps_run = r.planning_run
 				and si.custom_aps_result_reference = r.name
 				and seg.parenttype = 'APS Schedule Result'
-				and seg.segment_kind in ('Primary', 'Manual')
+				and (seg.segment_kind in ('Primary', 'Manual') or (seg.segment_kind = 'Family Co-Product' and seg.production_campaign is not null))
 				and ifnull(seg.segment_status, 'Planned') not in ('Blocked', 'Cancelled')
 				and ifnull(seg.planned_qty, 0) > 0
 				and ifnull(run.status, 'Draft') != 'Closed'
@@ -1116,9 +1153,14 @@ def _get_eligible_work_order_runs(work_order: str | None) -> list[str]:
 				and ifnull(wo.status, '') not in ('Stopped', 'Completed', 'Closed', 'Cancelled')
 				and wo.custom_aps_run = r.planning_run
 				and wo.production_item = r.item_code
-				and ifnull(wo.sales_order, '') = ifnull(r.sales_order, '')
-				and ifnull(wo.sales_order_item, '') = ifnull(r.sales_order_item, '')
-				and seg.segment_kind in ('Primary', 'Manual')
+				and (
+					(wo.custom_aps_campaign is not null and wo.custom_aps_campaign = seg.production_campaign)
+					or (
+						ifnull(wo.sales_order, '') = ifnull(r.sales_order, '')
+						and ifnull(wo.sales_order_item, '') = ifnull(r.sales_order_item, '')
+					)
+				)
+				and (seg.segment_kind in ('Primary', 'Manual') or (seg.segment_kind = 'Family Co-Product' and seg.production_campaign is not null))
 				and ifnull(seg.segment_status, 'Planned') not in ('Blocked', 'Cancelled')
 				and ifnull(seg.planned_qty, 0) > 0
 				and ifnull(run.status, 'Draft') != 'Closed'
@@ -1364,6 +1406,32 @@ def _source_fingerprint(source: dict[str, Any]) -> str:
 	).hexdigest()
 
 
+def _ledger_values_changed(doc, values: dict[str, Any]) -> bool:
+	for fieldname, expected in values.items():
+		if fieldname == "last_synced_on":
+			continue
+		actual = doc.get(fieldname)
+		if actual in (None, "") and expected in (None, ""):
+			continue
+		field = doc.meta.get_field(fieldname)
+		fieldtype = field.fieldtype if field else ""
+		if fieldtype in ("Float", "Currency", "Percent"):
+			if abs(flt(actual) - flt(expected)) > QTY_TOLERANCE:
+				return True
+		elif fieldtype in ("Check", "Int"):
+			if cint(actual) != cint(expected):
+				return True
+		elif fieldtype == "Date":
+			if getdate(actual) != getdate(expected):
+				return True
+		elif fieldtype == "Datetime":
+			if get_datetime(actual) != get_datetime(expected):
+				return True
+		elif str(actual or "") != str(expected or ""):
+			return True
+	return False
+
+
 def _reconcile_production_ledger(run_name: str, desired: list[dict[str, Any]]) -> dict[str, int]:
 	desired_by_key = {row["allocation_key"]: row for row in desired}
 	existing = {
@@ -1380,9 +1448,11 @@ def _reconcile_production_ledger(run_name: str, desired: list[dict[str, Any]]) -
 	for key, values in desired_by_key.items():
 		if key in existing:
 			doc = frappe.get_doc("APS Production Allocation", existing[key])
-			doc.update(values)
-			doc.save(ignore_permissions=True)
-			updated += 1
+			if _ledger_values_changed(doc, values):
+				doc.update(values)
+				doc.last_synced_on = now_datetime()
+				doc.save(ignore_permissions=True)
+				updated += 1
 		else:
 			frappe.get_doc({"doctype": "APS Production Allocation", **values}).insert(ignore_permissions=True)
 			created += 1
@@ -1392,13 +1462,17 @@ def _reconcile_production_ledger(run_name: str, desired: list[dict[str, Any]]) -
 		doc = frappe.get_doc("APS Production Allocation", name)
 		docstatus = cint(frappe.db.get_value("Stock Entry", doc.source_stock_entry, "docstatus"))
 		previous_effective = flt(doc.effective_qty)
-		doc.source_docstatus = docstatus
-		doc.effective_qty = 0
-		doc.reversed_qty = max(flt(doc.reversed_qty), previous_effective)
-		doc.is_effective = 0
-		doc.reversal_reason = "Source Stock Entry cancelled" if docstatus == 2 else "Source is no longer eligible"
-		doc.last_synced_on = now_datetime()
-		doc.save(ignore_permissions=True)
+		reversal_values = {
+			"source_docstatus": docstatus,
+			"effective_qty": 0,
+			"reversed_qty": max(flt(doc.reversed_qty), previous_effective),
+			"is_effective": 0,
+			"reversal_reason": "Source Stock Entry cancelled" if docstatus == 2 else "Source is no longer eligible",
+		}
+		if _ledger_values_changed(doc, reversal_values):
+			doc.update(reversal_values)
+			doc.last_synced_on = now_datetime()
+			doc.save(ignore_permissions=True)
 		reversed_count += cint(previous_effective > QTY_TOLERANCE)
 	return {"created": created, "updated": updated, "reversed": reversed_count}
 

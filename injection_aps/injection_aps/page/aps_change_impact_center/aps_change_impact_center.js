@@ -1,5 +1,5 @@
 frappe.pages["aps-change-impact-center"].on_page_load = function (wrapper) {
-	frappe.require("/assets/injection_aps/js/injection_aps_shared.js", () => {
+	injection_aps.ui_loader.start("20260902.1", () => {
 		if (!wrapper.injection_aps_controller) {
 			wrapper.injection_aps_controller = new InjectionAPSChangeImpactCenter(wrapper);
 		}

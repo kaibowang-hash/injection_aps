@@ -242,6 +242,9 @@ class TestPhase6QuantityAudit(FrappeTestCase):
 				"targets": [
 					{
 						"customer_schedule_item": schedule_item,
+						"customer_schedule": schedule,
+						"sales_order": "",
+						"sales_order_item": "",
 						"item_code": self.item,
 						"schedule_date": str(requested_date),
 						"source_open_qty": 100,

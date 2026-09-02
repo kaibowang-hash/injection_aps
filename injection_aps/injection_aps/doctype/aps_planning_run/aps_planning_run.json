@@ -13,8 +13,45 @@
   "horizon_days",
   "horizon_start",
   "horizon_end",
+  "demand_horizon_start_date",
+  "demand_horizon_end_date",
+  "freeze_horizon_days",
+  "freeze_horizon_end_date",
+  "restricted_horizon_days",
+  "restricted_horizon_end_date",
+  "recovery_horizon_days",
+  "recovery_horizon_start_date",
+  "recovery_horizon_end_date",
+  "due_time_policy",
   "run_type",
   "existing_work_order_policy",
+  "planning_customer_filter",
+  "planning_item_filter",
+  "baseline_run",
+  "latest_replan_cycle",
+  "demand_baseline_fingerprint",
+  "admission_fingerprint",
+  "admission_confirmed_fingerprint",
+  "admission_confirmed_by",
+  "admission_confirmed_on",
+  "admission_strategy",
+  "admission_decision_reason",
+  "planned_admission_fingerprint",
+  "bom_selection_json",
+  "bom_selection_fingerprint",
+  "bom_selection_by",
+  "bom_selection_on",
+  "bom_selection_reason",
+  "baseline_prepared_by",
+  "baseline_prepared_on",
+  "total_p0_qty",
+  "total_stock_covered_qty",
+  "total_carried_qty",
+  "total_new_plan_qty",
+  "total_selected_p1_qty",
+  "total_selected_p2_qty",
+  "carried_commitment_count",
+  "source_run_count",
   "status",
   "approval_state",
   "approved_by",
@@ -40,6 +77,32 @@
   "capacity_balance_applied_on",
   "capacity_balance_fingerprint",
   "capacity_balance_analysis_json",
+  "constraint_resolution_count",
+  "excluded_commitment_count",
+  "solver_job",
+  "solver_engine_used",
+  "solver_status",
+  "solver_phase",
+  "solver_started_on",
+  "solver_completed_on",
+  "solver_runtime_seconds",
+  "solver_best_bound",
+  "solver_objective_value",
+  "solver_gap_percent",
+  "solver_input_fingerprint",
+  "solver_solution_fingerprint",
+  "selected_solver_scenario",
+  "solver_quality_json",
+  "solver_acknowledged_by",
+  "solver_acknowledged_on",
+  "solver_acknowledgment_reason",
+  "solver_acknowledgment_fingerprint",
+  "total_on_time_qty",
+  "total_late_qty",
+  "total_recovery_qty",
+  "total_critical_unplanned_qty",
+  "acknowledgment_count",
+  "unresolved_blocker_count",
   "consistency_status",
   "consistency_checked_on",
   "consistency_details",
@@ -102,6 +165,68 @@
    "read_only": 1
   },
   {
+   "fieldname": "demand_horizon_start_date",
+   "fieldtype": "Date",
+   "label": "Demand Horizon Start Date",
+   "read_only": 1
+  },
+  {
+   "fieldname": "demand_horizon_end_date",
+   "fieldtype": "Date",
+   "label": "Demand Horizon End Date",
+   "read_only": 1
+  },
+  {
+   "default": "2",
+   "fieldname": "freeze_horizon_days",
+   "fieldtype": "Int",
+   "label": "Freeze Horizon Days"
+  },
+  {
+   "fieldname": "freeze_horizon_end_date",
+   "fieldtype": "Date",
+   "label": "Freeze Horizon End Date",
+   "read_only": 1
+  },
+  {
+   "default": "7",
+   "fieldname": "restricted_horizon_days",
+   "fieldtype": "Int",
+   "label": "Restricted Horizon Days"
+  },
+  {
+   "fieldname": "restricted_horizon_end_date",
+   "fieldtype": "Date",
+   "label": "Restricted Horizon End Date",
+   "read_only": 1
+  },
+  {
+   "default": "7",
+   "fieldname": "recovery_horizon_days",
+   "fieldtype": "Int",
+   "label": "Recovery Horizon Days"
+  },
+  {
+   "fieldname": "recovery_horizon_start_date",
+   "fieldtype": "Date",
+   "label": "Recovery Horizon Start Date",
+   "read_only": 1
+  },
+  {
+   "fieldname": "recovery_horizon_end_date",
+   "fieldtype": "Date",
+   "label": "Recovery Horizon End Date",
+   "read_only": 1
+  },
+  {
+   "default": "Delivery Date End Of Day",
+   "fieldname": "due_time_policy",
+   "fieldtype": "Select",
+   "label": "Due Time Policy",
+   "options": "Delivery Date End Of Day\nDelivery Date Last Production Shift End",
+   "read_only": 1
+  },
+  {
    "default": "Trial",
    "fieldname": "run_type",
    "fieldtype": "Select",
@@ -113,6 +238,189 @@
    "fieldtype": "Select",
    "label": "Existing Work Order Policy",
    "options": "\nInclude\nExclude",
+   "read_only": 1
+  },
+  {
+   "fieldname": "planning_customer_filter",
+   "fieldtype": "Link",
+   "label": "Planning Customer Filter",
+   "options": "Customer",
+   "read_only": 1
+  },
+  {
+   "fieldname": "planning_item_filter",
+   "fieldtype": "Link",
+   "label": "Planning Item Filter",
+   "options": "Item",
+   "read_only": 1
+  },
+  {
+   "fieldname": "baseline_run",
+   "fieldtype": "Link",
+   "label": "Baseline Run",
+   "options": "APS Planning Run",
+   "read_only": 1,
+   "search_index": 1
+  },
+  {
+   "fieldname": "latest_replan_cycle",
+   "fieldtype": "Link",
+   "label": "Latest Replan Cycle",
+   "options": "APS Replan Cycle",
+   "read_only": 1,
+   "search_index": 1
+  },
+  {
+   "fieldname": "demand_baseline_fingerprint",
+   "fieldtype": "Data",
+   "label": "Demand Baseline Fingerprint",
+   "read_only": 1,
+   "search_index": 1
+  },
+  {
+   "fieldname": "admission_fingerprint",
+   "fieldtype": "Data",
+   "label": "Admission Fingerprint",
+   "read_only": 1,
+   "search_index": 1
+  },
+  {
+   "fieldname": "admission_confirmed_fingerprint",
+   "fieldtype": "Data",
+   "hidden": 1,
+   "label": "Admission Confirmed Fingerprint",
+   "read_only": 1,
+   "search_index": 1
+  },
+  {
+   "fieldname": "admission_confirmed_by",
+   "fieldtype": "Link",
+   "label": "Admission Confirmed By",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "fieldname": "admission_confirmed_on",
+   "fieldtype": "Datetime",
+   "label": "Admission Confirmed On",
+   "read_only": 1
+  },
+  {
+   "fieldname": "admission_strategy",
+   "fieldtype": "Data",
+   "label": "Admission Strategy",
+   "read_only": 1
+  },
+  {
+   "fieldname": "admission_decision_reason",
+   "fieldtype": "Small Text",
+   "label": "Admission Decision Reason",
+   "read_only": 1
+  },
+  {
+   "fieldname": "planned_admission_fingerprint",
+   "fieldtype": "Data",
+   "hidden": 1,
+   "label": "Planned Admission Fingerprint",
+   "read_only": 1,
+   "search_index": 1
+  },
+  {
+   "fieldname": "bom_selection_json",
+   "fieldtype": "Long Text",
+   "hidden": 1,
+   "label": "BOM Selection Snapshot",
+   "read_only": 1
+  },
+  {
+   "fieldname": "bom_selection_fingerprint",
+   "fieldtype": "Data",
+   "hidden": 1,
+   "label": "BOM Selection Fingerprint",
+   "read_only": 1,
+   "search_index": 1
+  },
+  {
+   "fieldname": "bom_selection_by",
+   "fieldtype": "Link",
+   "hidden": 1,
+   "label": "BOM Selection By",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "fieldname": "bom_selection_on",
+   "fieldtype": "Datetime",
+   "hidden": 1,
+   "label": "BOM Selection On",
+   "read_only": 1
+  },
+  {
+   "fieldname": "bom_selection_reason",
+   "fieldtype": "Small Text",
+   "hidden": 1,
+   "label": "BOM Selection Reason",
+   "read_only": 1
+  },
+  {
+   "fieldname": "baseline_prepared_by",
+   "fieldtype": "Link",
+   "label": "Baseline Prepared By",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "fieldname": "baseline_prepared_on",
+   "fieldtype": "Datetime",
+   "label": "Baseline Prepared On",
+   "read_only": 1
+  },
+  {
+   "fieldname": "total_p0_qty",
+   "fieldtype": "Float",
+   "label": "Total P0 Qty",
+   "read_only": 1
+  },
+  {
+   "fieldname": "total_stock_covered_qty",
+   "fieldtype": "Float",
+   "label": "Total Stock Covered Qty",
+   "read_only": 1
+  },
+  {
+   "fieldname": "total_carried_qty",
+   "fieldtype": "Float",
+   "label": "Total Carried Qty",
+   "read_only": 1
+  },
+  {
+   "fieldname": "total_new_plan_qty",
+   "fieldtype": "Float",
+   "label": "Total New Plan Qty",
+   "read_only": 1
+  },
+  {
+   "fieldname": "total_selected_p1_qty",
+   "fieldtype": "Float",
+   "label": "Total Selected P1 Qty",
+   "read_only": 1
+  },
+  {
+   "fieldname": "total_selected_p2_qty",
+   "fieldtype": "Float",
+   "label": "Total Selected P2 Qty",
+   "read_only": 1
+  },
+  {
+   "fieldname": "carried_commitment_count",
+   "fieldtype": "Int",
+   "label": "Carried Commitment Count",
+   "read_only": 1
+  },
+  {
+   "fieldname": "source_run_count",
+   "fieldtype": "Int",
+   "label": "Source Run Count",
    "read_only": 1
   },
   {
@@ -236,7 +544,7 @@
    "fieldname": "capacity_balance_status",
    "fieldtype": "Select",
    "label": "Capacity Balance Status",
-   "options": "Not Analyzed\nBalanced\nSuggestion Ready\nConfirmation Required\nApplied\nBlocked",
+   "options": "Not Analyzed\nBalanced\nSuggestion Ready\nConfirmation Required\nApplied\nBlocked\nReady\nAcknowledgment Required\nHard Blocked\nApplied with Exceptions",
    "read_only": 1
   },
   {
@@ -276,6 +584,42 @@
    "label": "Capacity Balance Analysis JSON",
    "read_only": 1
   },
+  {
+   "fieldname": "constraint_resolution_count",
+   "fieldtype": "Int",
+   "label": "Constraint Resolution Count",
+   "read_only": 1
+  },
+  {
+   "fieldname": "excluded_commitment_count",
+   "fieldtype": "Int",
+   "label": "Excluded Commitment Count",
+   "read_only": 1
+  },
+  {"fieldname":"solver_job","fieldtype":"Link","label":"Solver Job","options":"APS Solver Job","read_only":1,"search_index":1},
+  {"fieldname":"solver_engine_used","fieldtype":"Select","label":"Solver Engine Used","options":"\nLegacy\nCP-SAT\nLegacy Fallback","read_only":1},
+  {"default":"Not Started","fieldname":"solver_status","fieldtype":"Select","label":"Solver Status","options":"Not Started\nQueued\nRunning\nOptimal\nFeasible\nTimeout\nFallback\nFailed\nCancelled\nApplied","read_only":1},
+  {"fieldname":"solver_phase","fieldtype":"Data","label":"Solver Phase","read_only":1},
+  {"fieldname":"solver_started_on","fieldtype":"Datetime","label":"Solver Started On","read_only":1},
+  {"fieldname":"solver_completed_on","fieldtype":"Datetime","label":"Solver Completed On","read_only":1},
+  {"fieldname":"solver_runtime_seconds","fieldtype":"Float","label":"Solver Runtime Seconds","read_only":1},
+  {"fieldname":"solver_best_bound","fieldtype":"Float","label":"Solver Best Bound","read_only":1},
+  {"fieldname":"solver_objective_value","fieldtype":"Float","label":"Solver Objective Value","read_only":1},
+  {"fieldname":"solver_gap_percent","fieldtype":"Percent","label":"Solver Gap Percent","read_only":1},
+  {"fieldname":"solver_input_fingerprint","fieldtype":"Data","label":"Solver Input Fingerprint","read_only":1,"search_index":1},
+  {"fieldname":"solver_solution_fingerprint","fieldtype":"Data","label":"Solver Solution Fingerprint","read_only":1,"search_index":1},
+  {"fieldname":"selected_solver_scenario","fieldtype":"Data","label":"Selected Solver Scenario","read_only":1},
+  {"fieldname":"solver_quality_json","fieldtype":"Long Text","label":"Solver Quality JSON","read_only":1},
+  {"fieldname":"solver_acknowledged_by","fieldtype":"Link","label":"Solver Acknowledged By","options":"User","read_only":1},
+  {"fieldname":"solver_acknowledged_on","fieldtype":"Datetime","label":"Solver Acknowledged On","read_only":1},
+  {"fieldname":"solver_acknowledgment_reason","fieldtype":"Small Text","label":"Solver Acknowledgment Reason","read_only":1},
+  {"fieldname":"solver_acknowledgment_fingerprint","fieldtype":"Data","label":"Solver Acknowledgment Fingerprint","read_only":1},
+  {"fieldname":"total_on_time_qty","fieldtype":"Float","label":"Total On Time Qty","read_only":1},
+  {"fieldname":"total_late_qty","fieldtype":"Float","label":"Total Late Qty","read_only":1},
+  {"fieldname":"total_recovery_qty","fieldtype":"Float","label":"Total Recovery Qty","read_only":1},
+  {"fieldname":"total_critical_unplanned_qty","fieldtype":"Float","label":"Total Critical Unplanned Qty","read_only":1},
+  {"fieldname":"acknowledgment_count","fieldtype":"Int","label":"Acknowledgment Count","read_only":1},
+  {"fieldname":"unresolved_blocker_count","fieldtype":"Int","label":"Unresolved Blocker Count","read_only":1},
   {
    "default": "Unchecked",
    "fieldname": "consistency_status",

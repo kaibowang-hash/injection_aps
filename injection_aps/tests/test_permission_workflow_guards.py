@@ -231,6 +231,44 @@ class TestPermissionWorkflowGuards(unittest.TestCase):
 
 		service.assert_called_once_with(company="COMPANY-1")
 
+	def test_schedule_revision_and_optional_rebuild_execute_in_one_endpoint_call(self):
+		applied = {"schedule": "SCHEDULE-1", "import_batch": "BATCH-1"}
+		promotion = {"net_requirement_rows": 3}
+		with (
+			patch.object(app, "_require_demand_access"),
+			patch.object(app, "_require_plan_access") as require_plan,
+			patch.object(app, "_require_explicit_company", return_value="COMPANY-1"),
+			patch.object(app, "_require_document_access"),
+			patch.object(app, "_require_scope_access"),
+			patch.object(app, "_require_company_rebuild_scope") as require_rebuild_scope,
+			patch.object(app.schedule_revision, "apply_revision", return_value=applied.copy()) as apply_revision,
+			patch.object(
+				app.planning,
+				"promote_schedule_import_to_net_requirement",
+				return_value=promotion,
+			) as promote,
+		):
+			result = app.apply_schedule_revision(
+				customer="CUSTOMER-1",
+				company=" COMPANY-1 ",
+				version_no="V2",
+				confirmed_revision_mode="Partial Revision",
+				rows_json=[{"item_code": "ITEM-1", "qty": 25}],
+				rebuild=1,
+				existing_work_order_policy="Exclude",
+			)
+
+		require_plan.assert_called_once_with()
+		require_rebuild_scope.assert_called_once_with("COMPANY-1")
+		self.assertEqual(apply_revision.call_args.kwargs["company"], "COMPANY-1")
+		promote.assert_called_once_with(
+			import_batch="BATCH-1",
+			schedule="SCHEDULE-1",
+			company="COMPANY-1",
+			existing_work_order_policy="Exclude",
+		)
+		self.assertEqual(result["promotion"], promotion)
+
 	def test_planning_services_also_reject_empty_company_before_any_write(self):
 		cases = (
 			(lambda: planning.preview_customer_delivery_schedule("CUSTOMER-1", "", "V1")),
@@ -273,21 +311,36 @@ class TestPermissionWorkflowGuards(unittest.TestCase):
 		self.assertEqual(params, ("COMPANY-1",))
 
 	def test_complete_run_scope_traverses_every_result(self):
+		database = MagicMock()
+		database.exists.return_value = True
 		with (
 			patch.object(app, "_require_scoped_document_access") as require_scoped,
-			patch.object(app, "_require_all_documents_visible") as require_visible,
-			patch.object(app.frappe, "get_all", return_value=["RESULT-2", "RESULT-1"]),
+			patch.object(
+				app,
+				"_require_all_scoped_documents_visible",
+				side_effect=[{"RESULT-2", "RESULT-1"}, set(), set(), set()],
+			) as require_payload,
+			patch.object(app.frappe, "db", database),
 		):
 			app._require_complete_run_mutation_scope("RUN-1", run_ptype="write")
 
-		require_visible.assert_called_once_with("APS Schedule Result", {"planning_run": "RUN-1"})
 		self.assertEqual(
-			require_scoped.call_args_list,
+			require_payload.call_args_list,
 			[
-				call("APS Planning Run", "RUN-1", ptype="write", linked_run_ptype="write"),
-				call("APS Schedule Result", "RESULT-1", ptype="read", linked_run_ptype="read"),
-				call("APS Schedule Result", "RESULT-2", ptype="read", linked_run_ptype="read"),
+				call("APS Schedule Result", {"planning_run": "RUN-1"}),
+				call(
+					"APS Schedule Segment",
+					{
+						"parent": ("in", ["RESULT-1", "RESULT-2"]),
+						"parenttype": "APS Schedule Result",
+					},
+				),
+				call("APS Demand Commitment", {"planning_run": "RUN-1"}),
+				call("APS Demand Admission", {"planning_run": "RUN-1"}),
 			],
+		)
+		require_scoped.assert_called_once_with(
+			"APS Planning Run", "RUN-1", ptype="write", linked_run_ptype="write"
 		)
 
 	def test_proposal_scope_checks_result_customer_sales_order_and_item_child(self):
@@ -360,6 +413,161 @@ class TestPermissionWorkflowGuards(unittest.TestCase):
 					"APS Work Order Proposal Batch",
 					"BATCH-1",
 				)
+
+	def test_shift_batch_scope_accepts_bound_cancellation_and_checks_campaign_links(self):
+		row = frappe._dict(
+			name="ROW-1",
+			segment_reference="cancel::SCHEDULING-ITEM-1",
+			production_campaign="CAMPAIGN-1",
+			capacity_owner="SEGMENT-OWNER",
+			item_code="ITEM-1",
+			existing_scheduling="WOS-1",
+			existing_scheduling_item="SCHEDULING-ITEM-1",
+		)
+		with (
+			patch.object(app, "_require_scoped_document_access") as require_scoped,
+			patch.object(
+				app,
+				"_get_document_scope",
+				return_value=frappe._dict(company="COMPANY-1", planning_run="RUN-1"),
+			),
+			patch.object(app.frappe.db, "get_value", side_effect=["COMPANY-1", "WOS-1"]),
+			patch.object(app, "_require_complete_run_mutation_scope") as require_run,
+			patch.object(app.frappe, "get_all", return_value=[row]),
+			patch.object(app, "_require_document_access"),
+			patch.object(app, "_has_linked_document_access", return_value=True) as has_linked,
+		):
+			app._require_complete_proposal_batch_scope(
+				"APS Shift Schedule Proposal Batch",
+				"BATCH-1",
+				run_ptype="read",
+			)
+
+		require_run.assert_called_once_with("RUN-1", run_ptype="read")
+		require_scoped.assert_any_call("APS Production Campaign", "CAMPAIGN-1", ptype="read")
+		require_scoped.assert_any_call("APS Schedule Segment", "SEGMENT-OWNER", ptype="read")
+		has_linked.assert_called_once_with("Scheduling Item", "SCHEDULING-ITEM-1")
+
+	def test_shift_preview_checks_resolved_batches_and_all_untruncated_rows(self):
+		permission_rows = [
+			{"result_reference": f"RESULT-{index}", "item_code": "ITEM-1"}
+			for index in range(81)
+		]
+		payload = {
+			"run": "RUN-1",
+			"work_order_proposal_batch": "WOP-1",
+			"proposal_count": 81,
+			"pending_batches": [{"name": "SSP-1"}],
+			"preview_rows": permission_rows[:80],
+			"_permission_rows": permission_rows,
+			"truncated": True,
+		}
+		with (
+			patch.object(app, "_require_release_access"),
+			patch.object(app, "_require_complete_run_mutation_scope") as require_run,
+			patch.object(app, "_require_complete_proposal_batch_scope") as require_batch,
+			patch.object(app, "_require_payload_link_access") as require_links,
+			patch.object(app, "_prime_linked_document_access"),
+			patch.object(app.planning, "preview_shift_schedule_release", return_value=payload),
+			patch.object(app.item_display, "attach_item_display_fields", side_effect=lambda value: value),
+		):
+			result = app.preview_shift_schedule_release(run_name="RUN-1")
+
+		require_run.assert_called_once_with("RUN-1", run_ptype="read")
+		self.assertEqual(
+			require_batch.call_args_list,
+			[
+				call(
+					"APS Work Order Proposal Batch",
+					"WOP-1",
+					run_ptype="read",
+					require_run_scope=False,
+				),
+				call(
+					"APS Shift Schedule Proposal Batch",
+					"SSP-1",
+					run_ptype="read",
+					require_run_scope=False,
+				),
+			],
+		)
+		self.assertEqual(len(require_links.call_args.args[0]), 81)
+		self.assertNotIn("_permission_rows", result)
+
+	def test_resolve_unallocated_delivery_checks_source_and_target_scopes(self):
+		with (
+			patch.object(app, "_require_execution_access"),
+			patch.object(app, "_require_scoped_document_access") as require_scoped,
+			patch.object(
+				app.frappe.db,
+				"get_value",
+				return_value=frappe._dict(company="COMPANY-1", customer="CUSTOMER-1"),
+			),
+			patch.object(app, "_require_scope_access"),
+			patch.object(
+				app.delivery_fulfillment,
+				"resolve_unallocated_delivery",
+				return_value={"name": "UNALLOCATED-1"},
+			) as service,
+		):
+			app.resolve_unallocated_delivery("UNALLOCATED-1", "IDENTITY-1", "matched")
+
+		self.assertEqual(
+			require_scoped.call_args_list,
+			[
+				call("APS Unallocated Delivery", "UNALLOCATED-1", ptype="read"),
+				call("APS Demand Identity", "IDENTITY-1", ptype="read"),
+			],
+		)
+		service.assert_called_once_with(
+			name="UNALLOCATED-1",
+			demand_identity="IDENTITY-1",
+			reason="matched",
+		)
+
+	def test_shift_preview_fails_closed_without_complete_permission_rows(self):
+		payload = {
+			"run": "RUN-1",
+			"work_order_proposal_batch": "WOP-1",
+			"proposal_count": 81,
+			"pending_batches": [],
+			"preview_rows": [{"result_reference": f"RESULT-{index}"} for index in range(80)],
+			"truncated": True,
+		}
+		with (
+			patch.object(app, "_require_release_access"),
+			patch.object(app, "_require_complete_run_mutation_scope"),
+			patch.object(app, "_require_complete_proposal_batch_scope"),
+			patch.object(app.planning, "preview_shift_schedule_release", return_value=payload),
+			patch.object(app, "_require_payload_link_access") as require_links,
+			patch.object(app.item_display, "attach_item_display_fields") as attach_display,
+		):
+			with self.assertRaisesRegex(frappe.ValidationError, "permission scope is incomplete"):
+				app.preview_shift_schedule_release(run_name="RUN-1")
+
+		require_links.assert_not_called()
+		attach_display.assert_not_called()
+
+	def test_shift_preview_service_keeps_all_rows_for_permission_gate(self):
+		items = [{"item_code": "ITEM-1", "action": "New", "planned_qty": 1} for _index in range(81)]
+		context = {
+			"run_doc": frappe._dict(name="RUN-1"),
+			"work_order_proposal_batch_doc": frappe._dict(name="WOP-1"),
+			"release_from": "2026-09-01",
+			"release_to": "2026-09-02",
+			"shift_type": None,
+			"items": items,
+		}
+		with (
+			patch.object(planning, "_build_shift_schedule_release_context", return_value=context),
+			patch.object(planning, "_get_pending_shift_batches_for_release", return_value=[]),
+		):
+			result = planning.preview_shift_schedule_release(run_name="RUN-1")
+
+		self.assertEqual(len(result["preview_rows"]), 80)
+		self.assertEqual(len(result["_permission_rows"]), 81)
+		self.assertEqual(result["proposal_count"], 81)
+		self.assertTrue(result["truncated"])
 
 	def test_import_scope_checks_every_item_order_and_matching_order_item(self):
 		preview = {
@@ -668,8 +876,14 @@ class TestPermissionWorkflowGuards(unittest.TestCase):
 
 	def test_net_requirement_page_filters_denied_records_and_recalculates_summary(self):
 		rows = [
-			frappe._dict(name="NR-ALLOWED", net_requirement_qty=7, planning_qty=9),
-			frappe._dict(name="NR-DENIED", net_requirement_qty=100, planning_qty=120),
+			frappe._dict(
+				name="NR-ALLOWED", company="COMPANY-1", customer=None, item_code=None,
+				sales_order=None, sales_order_item=None, net_requirement_qty=7, planning_qty=9,
+			),
+			frappe._dict(
+				name="NR-DENIED", company="COMPANY-1", customer=None, item_code=None,
+				sales_order=None, sales_order_item=None, net_requirement_qty=100, planning_qty=120,
+			),
 		]
 		with (
 			patch.object(app, "_require_read_access"),
@@ -1222,7 +1436,7 @@ class TestPermissionWorkflowGuards(unittest.TestCase):
 			patch.object(
 				app,
 				"_has_document_access",
-				side_effect=lambda doctype, name, ptype="read": name
+				side_effect=lambda doctype, name, ptype="read", **_kwargs: name
 				not in {"CUSTOMER-DENIED", "RESULT-DENIED", "STOCK-DENIED", "DELIVERY-DENIED"},
 			),
 			patch.object(app.planning, "get_customer_schedule_progress_data", return_value=response),
@@ -1234,6 +1448,106 @@ class TestPermissionWorkflowGuards(unittest.TestCase):
 		self.assertEqual(result["rows"][0]["result_names"], [])
 		self.assertEqual(result["rows"][0]["production_source_documents"], [])
 		self.assertEqual(result["rows"][0]["delivery_source_documents"], [])
+
+	def test_customer_progress_v2_filters_rows_lineage_and_owner_documents(self):
+		response = {
+			"mode": "V2",
+			"projection": {"run_names": ["RUN-ALLOWED", "RUN-DENIED"]},
+			"pagination": {"total_rows": 2, "returned_rows": 2, "has_more": False},
+			"rows": [
+				{
+					"company": "COMPANY-1", "customer": "CUSTOMER-ALLOWED",
+					"schedule": "SCHEDULE-1", "schedule_item": "ITEM-ROW-1",
+					"item_code": "ITEM-1", "demand_identity": "IDENTITY-1",
+					"schedule_qty": 10, "status": "On Track", "conservation_status": "OK",
+					"commitment_names": ["COMMITMENT-ALLOWED", "COMMITMENT-DENIED"],
+					"result_names": ["RESULT-ALLOWED", "RESULT-DENIED"],
+					"run_names": ["RUN-ALLOWED", "RUN-DENIED"],
+					"source_documents": [
+						{"doctype": "APS Schedule Result", "name": "RESULT-ALLOWED"},
+						{"doctype": "APS Schedule Result", "name": "RESULT-DENIED"},
+					],
+					"events": [],
+				},
+				{
+					"company": "COMPANY-1", "customer": "CUSTOMER-DENIED",
+					"schedule": "SCHEDULE-2", "schedule_item": "ITEM-ROW-2",
+					"item_code": "ITEM-1", "demand_identity": "IDENTITY-2",
+					"schedule_qty": 20, "status": "Late", "conservation_status": "OK",
+					"source_documents": [], "events": [],
+				},
+			],
+		}
+		denied = {"CUSTOMER-DENIED", "RESULT-DENIED", "COMMITMENT-DENIED", "RUN-DENIED"}
+		with (
+			patch.object(app, "_require_read_access"),
+			patch.object(app, "_require_scope_access"),
+			patch.object(app, "_prime_progress_response_access"),
+			patch.object(app.v2_flags, "is_v2_enabled", return_value=True),
+			patch.object(app.progress_v2, "get_progress_detail", return_value=response),
+			patch.object(
+				app, "_has_linked_document_access",
+				side_effect=lambda doctype, name, **kwargs: name not in denied,
+			),
+			patch.object(
+				app, "_has_scoped_document_access",
+				side_effect=lambda doctype, name, **kwargs: name not in denied,
+			),
+		):
+			result = app.get_customer_schedule_progress_data(company="COMPANY-1")
+
+		self.assertEqual([row["customer"] for row in result["rows"]], ["CUSTOMER-ALLOWED"])
+		self.assertEqual(result["rows"][0]["commitment_names"], ["COMMITMENT-ALLOWED"])
+		self.assertEqual(result["rows"][0]["result_names"], ["RESULT-ALLOWED"])
+		self.assertEqual(result["rows"][0]["run_names"], ["RUN-ALLOWED"])
+		self.assertEqual(result["rows"][0]["source_documents"], [{"doctype": "APS Schedule Result", "name": "RESULT-ALLOWED"}])
+		self.assertEqual(result["projection"]["run_names"], ["RUN-ALLOWED"])
+		self.assertEqual(result["pagination"]["permission_filtered"], 1)
+
+	def test_progress_cell_drilldown_checks_parent_scope_and_filters_sources(self):
+		response = {
+			"projection": {"run_names": ["RUN-ALLOWED", "RUN-DENIED"], "selected_run": "RUN-DENIED"},
+			"source_documents": [
+				{"doctype": "Delivery Note", "name": "DN-ALLOWED"},
+				{"doctype": "Delivery Note", "name": "DN-DENIED"},
+			],
+			"cell": {
+				"sources": [{"doctype": "APS Production Allocation", "name": "ALLOCATION-DENIED"}]
+			},
+			"lineage": {"delivery": [{"doctype": "Delivery Note", "name": "DN-DENIED"}]},
+			"row": {
+				"source_documents": [], "commitment_names": [], "result_names": [],
+				"run_names": ["RUN-ALLOWED", "RUN-DENIED"],
+			},
+		}
+		with (
+			patch.object(app, "_require_read_access"),
+			patch.object(app, "_require_scoped_document_access") as require_scoped,
+			patch.object(app, "_prime_progress_response_access"),
+			patch.object(app.frappe.db, "get_value", return_value="SCHEDULE-1"),
+			patch.object(app.v2_flags, "is_v2_enabled", return_value=True),
+			patch.object(app.progress_v2, "get_progress_cell", return_value=response),
+			patch.object(
+				app, "_has_linked_document_access",
+				side_effect=lambda doctype, name, **kwargs: name not in {"DN-DENIED", "ALLOCATION-DENIED"},
+			),
+			patch.object(
+				app, "_has_scoped_document_access",
+				side_effect=lambda doctype, name, **kwargs: name != "RUN-DENIED",
+			),
+		):
+			result = app.get_progress_cell_drilldown(
+				date_value="2026-08-20", demand_identity="IDENTITY-1", schedule_item="ITEM-ROW-1",
+			)
+
+		require_scoped.assert_any_call("APS Demand Identity", "IDENTITY-1", ptype="read")
+		require_scoped.assert_any_call("Customer Delivery Schedule", "SCHEDULE-1", ptype="read")
+		self.assertEqual(result["source_documents"], [{"doctype": "Delivery Note", "name": "DN-ALLOWED"}])
+		self.assertEqual(result["lineage"]["delivery"], [])
+		self.assertEqual(result["cell"]["sources"], [])
+		self.assertEqual(result["row"]["run_names"], ["RUN-ALLOWED"])
+		self.assertEqual(result["projection"]["run_names"], ["RUN-ALLOWED"])
+		self.assertIsNone(result["projection"]["selected_run"])
 
 	def test_ui_and_doctype_definitions_make_engine_managed_records_read_only(self):
 		for child_name in ("aps_work_order_proposal_item", "aps_shift_schedule_proposal_item"):
@@ -1363,7 +1677,7 @@ class TestPermissionWorkflowGuards(unittest.TestCase):
 		):
 			permissions.ensure_dependency_link_permissions()
 
-		restore.assert_called_once_with()
+		restore.assert_not_called()
 		self.assertTrue(ensure.call_args_list)
 		self.assertEqual(
 			{entry.kwargs["doctype"] for entry in ensure.call_args_list},
@@ -1456,9 +1770,38 @@ class TestPermissionWorkflowGuards(unittest.TestCase):
 			"update_schedule_notes",
 			"sync_execution_feedback_to_aps",
 			"sync_delivery_allocations",
+			"apply_schedule_revision",
+			"resolve_schedule_identity_ambiguity",
+			"resolve_unallocated_delivery",
 			"analyze_capacity_balance",
 			"confirm_capacity_balance",
 			"apply_capacity_balance",
+			"prepare_run_demand_baseline",
+			"preview_admission_impact",
+			"save_demand_admission_decisions",
+			"request_temporary_override",
+			"approve_temporary_override",
+			"exclude_commitment_from_release",
+			"recompute_after_resolution",
+			"analyze_v2_schedule",
+			"set_run_bom_selections",
+			"select_solver_scenario",
+			"acknowledge_schedule_risks",
+			"apply_v2_schedule",
+			"cancel_solver_job",
+			"create_replan_cycle",
+			"create_shift_replan_cycle",
+			"analyze_shift_replan",
+			"refresh_shift_actuals",
+			"generate_replan_proposals",
+			"generate_shift_replan_proposals",
+			"acknowledge_replan_fallback",
+			"approve_replan_cycle",
+			"apply_replan_cycle",
+			"apply_shift_replan_proposal",
+			"materialize_production_campaigns",
+			"create_campaign_work_orders",
+			"create_trial_run_for_admission",
 			"get_execution_health_for_run",
 			"sync_machine_capabilities_from_workstations",
 			"analyze_change_request_impact",
@@ -1547,9 +1890,47 @@ class TestPermissionWorkflowGuards(unittest.TestCase):
 			"create_or_update_downtime_window",
 			"apply_schedule_impact",
 			"update_net_requirement_row",
+			"preview_admission_impact",
+			"save_demand_admission_decisions",
+			"recompute_after_resolution",
+			"analyze_v2_schedule",
+			"set_run_bom_selections",
+			"select_solver_scenario",
+			"acknowledge_schedule_risks",
+			"apply_v2_schedule",
+			"create_replan_cycle",
+			"refresh_shift_actuals",
+			"materialize_production_campaigns",
 		):
 			with self.subTest(function=function_name):
 				self.assertTrue(called(function_name, "_require_complete_run_mutation_scope"))
+
+		for function_name in (
+			"request_temporary_override",
+			"approve_temporary_override",
+			"exclude_commitment_from_release",
+			"cancel_solver_job",
+			"generate_replan_proposals",
+			"acknowledge_replan_fallback",
+			"approve_replan_cycle",
+			"apply_replan_cycle",
+			"create_campaign_work_orders",
+		):
+			with self.subTest(function=function_name):
+				self.assertTrue(called(function_name, "_require_derived_run_scope"))
+
+		for function_name, delegated_guard in (
+			("create_shift_replan_cycle", "create_replan_cycle"),
+			("analyze_shift_replan", "create_shift_replan_cycle"),
+			("generate_shift_replan_proposals", "generate_replan_proposals"),
+			("apply_shift_replan_proposal", "apply_replan_cycle"),
+		):
+			with self.subTest(function=function_name):
+				self.assertTrue(called(function_name, delegated_guard))
+
+		for function_name in ("prepare_run_demand_baseline", "create_trial_run_for_admission"):
+			with self.subTest(function=function_name):
+				self.assertTrue(called(function_name, "_require_company_rebuild_scope"))
 
 		for function_name in (
 			"apply_work_order_proposals",

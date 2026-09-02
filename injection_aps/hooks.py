@@ -22,6 +22,11 @@ required_apps = [
 	_local_app_or_name("mold_management"),
 ]
 
+app_include_js = [
+	"/assets/injection_aps/js/injection_aps_ui_loader.js",
+	"/assets/injection_aps/js/injection_aps_shared.js",
+]
+
 doctype_js = {
 	"APS Planning Run": "public/js/aps_planning_run.js",
 	"APS Work Order Proposal Batch": "public/js/aps_work_order_proposal_batch.js",
@@ -30,6 +35,7 @@ doctype_js = {
 	"APS Schedule Import Batch": "public/js/aps_schedule_import_batch.js",
 	"APS Change Request": "public/js/aps_change_request.js",
 	"APS Release Batch": "public/js/aps_release_batch.js",
+	"APS Unallocated Delivery": "public/js/aps_unallocated_delivery.js",
 }
 
 doctype_list_js = {
@@ -37,10 +43,18 @@ doctype_list_js = {
 }
 
 doc_events = {
+	"Delivery Plan": {
+		"validate": "injection_aps.services.delivery_fulfillment.sync_delivery_plan_lineage",
+	},
 	"Delivery Note": {
+		"before_validate": "injection_aps.services.delivery_fulfillment.inherit_delivery_note_lineage",
 		"before_submit": "injection_aps.services.delivery_sync.validate_delivery_before_submit",
 		"on_submit": "injection_aps.services.delivery_sync.queue_delivery_sync",
-		"on_cancel": "injection_aps.services.delivery_sync.queue_delivery_sync",
+		"on_cancel": [
+			"injection_aps.services.delivery_sync.retire_delivery_artifacts",
+			"injection_aps.services.delivery_sync.queue_delivery_sync",
+		],
+		"on_trash": "injection_aps.services.delivery_sync.delete_delivery_artifacts",
 	},
 	"Stock Entry": {
 		"before_submit": "injection_aps.services.execution_sync.validate_manufacture_before_submit",
@@ -59,5 +73,8 @@ scheduler_events = {
 		"*/15 * * * *": [
 			"injection_aps.services.customizations.sync_machine_capabilities_from_workstations",
 		]
-	}
+	},
+	"hourly": [
+		"injection_aps.services.shift_replan.scheduled_shift_replan",
+	]
 }

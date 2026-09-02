@@ -67,7 +67,7 @@ class TestProductionExecutionSync(FrappeTestCase):
 
 		replay = execution_sync.sync_production_for_run(self.fixture["run"])
 		self.assertEqual(replay["ledger"]["created"], 0)
-		self.assertEqual(replay["ledger"]["updated"], 2)
+		self.assertEqual(replay["ledger"]["updated"], 0)
 		self.assertEqual(
 			frappe.db.count("APS Production Allocation", {"source_stock_entry": stock_entry}),
 			2,

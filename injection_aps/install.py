@@ -16,7 +16,7 @@ def before_install():
 
 
 def after_install():
-	ensure_standard_customizations()
+	ensure_standard_customizations(update_existing=False)
 	ensure_default_settings()
 	ensure_seed_records()
 	# Workspace shortcuts can reference APS/GMC roles.  Those roles must exist
@@ -25,15 +25,15 @@ def after_install():
 	ensure_workspace_resources()
 	# Apply DocType/Page/Workspace permissions after every referenced resource
 	# exists; this also reruns the idempotent role creation guard.
-	ensure_roles_and_permissions()
+	ensure_roles_and_permissions(preserve_existing=True)
 	frappe.clear_cache()
 
 
 def after_migrate():
-	ensure_standard_customizations()
-	ensure_default_settings()
-	ensure_seed_records()
-	ensure_roles()
-	ensure_workspace_resources()
-	ensure_roles_and_permissions()
-	frappe.clear_cache()
+	"""Keep recurring migrations free of implicit site and UI mutations.
+
+	Schema sync still handles Injection APS DocTypes. Custom Fields, roles,
+	permissions, seed data and UI resources must use reviewed idempotent patches
+	or an explicit administrator action so their diff can be validated first.
+	"""
+	return None

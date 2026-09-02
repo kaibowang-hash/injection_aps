@@ -81,6 +81,13 @@ class TestChangeEngineCalculations(TestCase):
 		self._sales_order_item_patch.stop()
 		super().tearDown()
 
+	def test_customer_delta_rejects_a_non_customer_result_with_validation_error(self):
+		result = frappe._dict(demand_source="Forecast")
+		proposal = {"customer_demand_change": {"source_demand_delta": "DELTA-1"}}
+
+		with self.assertRaisesRegex(frappe.ValidationError, "non-customer APS result"):
+			change_engine._accept_customer_schedule_delta_baseline(result, proposal)
+
 	def test_plan_only_net_requirement_update_never_overwrites_gross_customer_demand(self):
 		result = frappe._dict(
 			name="RESULT-1",
