@@ -13,7 +13,7 @@ class APSConstraintResolution(Document):
 		if self.blocker_policy == "Temporary Override" and self.status == "Approved":
 			if not self.expires_on or get_datetime(self.expires_on) <= get_datetime(now_datetime()):
 				frappe.throw(_("An approved temporary override requires a future expiry time.", context="Injection APS"), frappe.ValidationError)
-		if self.blocker_policy != "Temporary Override" and self.resolution_type.startswith("Temporary"):
+		if self.blocker_policy != "Temporary Override" and str(self.resolution_type or "").startswith("Temporary"):
 			frappe.throw(_("This blocker does not allow a temporary override.", context="Injection APS"), frappe.ValidationError)
 
 	def on_update(self):

@@ -3897,7 +3897,7 @@ def _accept_customer_schedule_delta_baseline(result_doc, proposal: dict[str, Any
 		separators=(",", ":"),
 		default=str,
 	)
-	_, formula_baseline_json = planning._build_net_requirement_lineage_snapshot(
+	_source_snapshot_json, formula_baseline_json = planning._build_net_requirement_lineage_snapshot(
 		[],
 		demand_qty=demand_change.get("target_demand_qty"),
 		available_stock_qty=demand_change.get("available_stock_qty"),

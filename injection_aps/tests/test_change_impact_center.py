@@ -60,6 +60,11 @@ class TestChangeImpactCenterAPI(unittest.TestCase):
 		source_rows = [
 			{
 				"name": "APS-CR-1",
+				"company": "ACME",
+				"customer": None,
+				"planning_run": None,
+				"item_code": None,
+				"plant_floor": None,
 				"status": "Analyzed",
 				"analysis_fingerprint": "fingerprint",
 				"impact_json": "{}",

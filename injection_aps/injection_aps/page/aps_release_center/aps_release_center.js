@@ -1,10 +1,10 @@
 frappe.pages["aps-release-center"].on_page_load = function (wrapper) {
-	frappe.require("/assets/injection_aps/js/injection_aps_ui_loader.js", () => injection_aps.ui_loader.start("20260821.2", () => {
+	injection_aps.ui_loader.start("20260901.1", () => {
 		if (!wrapper.injection_aps_controller) {
 			wrapper.injection_aps_controller = new InjectionAPSReleaseCenter(wrapper);
 		}
 		wrapper.injection_aps_controller.refresh();
-	}));
+	});
 };
 
 frappe.pages["aps-release-center"].on_page_show = function (wrapper) {
@@ -332,7 +332,7 @@ class InjectionAPSReleaseCenter {
 		injection_aps.ui.render_cards(summaryTarget, [
 			{ label: __("Rows"), value: preview.proposal_count || 0 },
 			{ label: __("New", null, "Injection APS Execution"), value: actionCounts.New || 0 },
-			{ label: __("Update"), value: (actionCounts["Update Existing"] || 0) + (actionCounts["Move Existing"] || 0) },
+			{ label: __("Update", null, "Injection APS"), value: (actionCounts["Update Existing"] || 0) + (actionCounts["Move Existing"] || 0) },
 			{ label: __("Cancel"), value: actionCounts["Cancel Existing"] || 0 },
 			{ label: __("Qty"), value: injection_aps.ui.format_number(preview.total_planned_qty || 0) },
 			{ label: __("Shift Type", null, "Injection APS"), value: preview.shift_type || "All" },

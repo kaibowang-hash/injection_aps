@@ -7,6 +7,7 @@ frappe.provide("injection_aps.ui_loader");
 
 	injection_aps.ui_loader.__initialized = true;
 	injection_aps.ui_loader.__requests = {};
+	const ASSET_LOAD_TIMEOUT_MS = 10000;
 
 	injection_aps.ui_loader.load = function (expectedVersion) {
 		const version = String(expectedVersion || "").trim();
@@ -23,20 +24,31 @@ frappe.provide("injection_aps.ui_loader");
 
 		const request = new Promise((resolve, reject) => {
 			const script = document.createElement("script");
+			let settled = false;
+			const finish = (callback, value) => {
+				if (settled) return;
+				settled = true;
+				clearTimeout(timeout);
+				callback(value);
+			};
 			script.src = `/assets/injection_aps/js/injection_aps_shared.js?v=${encodeURIComponent(version)}`;
 			script.async = true;
 			script.dataset.injectionApsUiVersion = version;
 			script.addEventListener("load", () => {
 				if (!injection_aps.ui || injection_aps.ui.__asset_version !== version) {
-					reject(new Error(`APS UI asset version mismatch: expected ${version}.`));
+					finish(reject, new Error(`APS UI asset version mismatch: expected ${version}.`));
 					return;
 				}
 				injection_aps.ui.ensure_styles();
-				resolve(injection_aps.ui);
+				finish(resolve, injection_aps.ui);
 			}, { once: true });
 			script.addEventListener("error", () => {
-				reject(new Error(`Failed to load APS UI assets for version ${version}.`));
+				finish(reject, new Error(`Failed to load APS UI assets for version ${version}.`));
 			}, { once: true });
+			const timeout = setTimeout(() => {
+				if (typeof script.remove === "function") script.remove();
+				finish(reject, new Error(`APS UI asset load timed out for version ${version}.`));
+			}, ASSET_LOAD_TIMEOUT_MS);
 			document.head.appendChild(script);
 		});
 

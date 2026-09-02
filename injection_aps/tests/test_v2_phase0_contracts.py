@@ -58,11 +58,11 @@ class TestV2Phase0Contracts(unittest.TestCase):
 		self.assertEqual(comparison["reason_code"], "PHASE_0_V2_ENGINE_NOT_IMPLEMENTED")
 		self.assertFalse(comparison["formal_v2_writes_enabled"])
 
-	def test_api_baseline_requires_read_and_run_scope_access(self):
+	def test_api_baseline_requires_read_and_complete_run_scope_access(self):
 		app.frappe.local.flags = app.frappe._dict(in_test=True)
 		with (
 			patch.object(app, "_require_read_access") as require_read,
-			patch.object(app, "_require_scoped_document_access") as require_run,
+			patch.object(app, "_require_complete_run_mutation_scope") as require_run,
 			patch.object(
 				app.v2_baseline,
 				"capture_legacy_baseline",
@@ -71,9 +71,27 @@ class TestV2Phase0Contracts(unittest.TestCase):
 		):
 			result = app.capture_legacy_baseline("RUN-1")
 		require_read.assert_called_once_with()
-		require_run.assert_called_once_with("APS Planning Run", "RUN-1", ptype="read")
+		require_run.assert_called_once_with("RUN-1", run_ptype="read")
 		capture.assert_called_once_with("RUN-1")
 		self.assertEqual(result["content_fingerprint"], "abc")
+
+	def test_api_comparison_requires_complete_run_and_all_solver_jobs(self):
+		with (
+			patch.object(app, "_require_read_access"),
+			patch.object(app, "_require_complete_run_mutation_scope") as require_run,
+			patch.object(app, "_require_all_scoped_documents_visible") as require_jobs,
+			patch.object(
+				app.v2_baseline,
+				"get_legacy_v2_comparison",
+				return_value={"status": "Ready"},
+			) as compare,
+		):
+			result = app.get_legacy_v2_comparison("RUN-1", legacy_fingerprint="legacy")
+
+		require_run.assert_called_once_with("RUN-1", run_ptype="read")
+		require_jobs.assert_called_once_with("APS Solver Job", {"planning_run": "RUN-1"})
+		compare.assert_called_once_with("RUN-1", legacy_fingerprint="legacy")
+		self.assertEqual(result["status"], "Ready")
 
 	def test_settings_schema_keeps_all_v2_controls_hidden_and_disabled(self):
 		path = (

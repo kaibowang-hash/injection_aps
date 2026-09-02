@@ -107,6 +107,7 @@ def validate_manufacture_before_submit(doc, method: str | None = None):
 	work_order_aps_result = (work_order_values or {}).get("custom_aps_result_reference")
 	work_order_aps_campaign = (work_order_values or {}).get("custom_aps_campaign")
 	runs = set()
+	direct_scheduling_item_has_aps_lineage = False
 	if direct_segment:
 		run_name = _get_segment_run(direct_segment)
 		if not run_name:
@@ -119,7 +120,12 @@ def validate_manufacture_before_submit(doc, method: str | None = None):
 		item_link = frappe.db.get_value(
 			"Scheduling Item",
 			direct_scheduling_item,
-			["custom_aps_run", "custom_aps_segment_reference"],
+			[
+				"custom_aps_run",
+				"custom_aps_result_reference",
+				"custom_aps_segment_reference",
+				"custom_aps_campaign",
+			],
 			as_dict=True,
 		)
 		if not item_link:
@@ -127,6 +133,15 @@ def validate_manufacture_before_submit(doc, method: str | None = None):
 				_("APS Scheduling Item {0} does not exist.").format(direct_scheduling_item),
 				frappe.ValidationError,
 			)
+		direct_scheduling_item_has_aps_lineage = any(
+			item_link.get(fieldname)
+			for fieldname in (
+				"custom_aps_run",
+				"custom_aps_result_reference",
+				"custom_aps_segment_reference",
+				"custom_aps_campaign",
+			)
+		)
 		if item_link.custom_aps_run:
 			runs.add(item_link.custom_aps_run)
 		elif item_link.custom_aps_segment_reference:
@@ -143,7 +158,7 @@ def validate_manufacture_before_submit(doc, method: str | None = None):
 		runs.add(eligible_wo_runs[0])
 	has_aps_signal = bool(
 		direct_segment
-		or direct_scheduling_item
+		or direct_scheduling_item_has_aps_lineage
 		or runs
 		or eligible_wo_runs
 		or work_order_aps_result

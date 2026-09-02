@@ -60,6 +60,7 @@ def create_trial_run_for_admission(
 		setattr(run, fieldname, value)
 	run.due_time_policy = settings.get("due_time_policy") or "Delivery Date End Of Day"
 	planning._apply_selected_plant_floors_to_run(run, selected_floors)
+	run.flags.aps_run_transition = True
 	run.insert(ignore_permissions=True)
 	baseline = demand_ledger.prepare_run_demand_baseline(run.name)
 	admission = baseline.get("admission") or {}

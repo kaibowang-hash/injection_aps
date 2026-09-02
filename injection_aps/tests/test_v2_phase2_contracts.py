@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from injection_aps.api import app
 
@@ -48,9 +48,18 @@ class TestPhase2Contracts(unittest.TestCase):
 		self.assertIn('get_demand_admission_candidates', source)
 
 	def test_prepare_api_requires_plan_role_and_run_write_scope(self):
+		db = MagicMock()
+		db.get_value.return_value = app.frappe._dict(
+			company="COMPANY-1",
+			planning_customer_filter="CUSTOMER-1",
+			planning_item_filter="ITEM-1",
+		)
 		with (
 			patch.object(app, "_require_plan_access") as require_plan,
 			patch.object(app, "_require_scoped_document_access") as require_scope,
+			patch.object(app.frappe, "db", db),
+			patch.object(app, "_require_company_rebuild_scope") as require_company,
+			patch.object(app, "_require_document_access") as require_document,
 			patch.object(app.demand_ledger, "prepare_run_demand_baseline", return_value={"planning_run": "RUN-1"}) as service,
 		):
 			result = app.prepare_run_demand_baseline("RUN-1", "abc")
@@ -58,6 +67,9 @@ class TestPhase2Contracts(unittest.TestCase):
 		require_scope.assert_called_once_with(
 			"APS Planning Run", "RUN-1", ptype="write", linked_run_ptype="write"
 		)
+		require_company.assert_called_once_with("COMPANY-1")
+		require_document.assert_any_call("Customer", "CUSTOMER-1", ptype="read")
+		require_document.assert_any_call("Item", "ITEM-1", ptype="read")
 		service.assert_called_once_with("RUN-1", expected_fingerprint="abc")
 		self.assertEqual(result["planning_run"], "RUN-1")
 
@@ -103,7 +115,7 @@ class TestPhase2Contracts(unittest.TestCase):
 	def test_save_admission_api_rejects_non_array_payload_before_service(self):
 		with (
 			patch.object(app, "_require_plan_access"),
-			patch.object(app, "_require_scoped_document_access"),
+			patch.object(app, "_require_complete_run_mutation_scope"),
 			patch.object(app.demand_admission, "save_demand_admission_decisions") as service,
 			patch.object(
 				app.frappe,
@@ -120,7 +132,7 @@ class TestPhase2Contracts(unittest.TestCase):
 	def test_flag_off_candidate_api_returns_reason_without_reading_phase2_tables(self):
 		with (
 			patch.object(app, "_require_read_access"),
-			patch.object(app, "_require_scoped_document_access"),
+			patch.object(app, "_require_complete_run_mutation_scope"),
 			patch.object(app.v2_flags, "is_v2_enabled", return_value=False),
 			patch.object(app.demand_ledger, "get_run_demand_baseline") as baseline,
 		):

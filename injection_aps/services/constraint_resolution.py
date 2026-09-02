@@ -14,6 +14,7 @@ from injection_aps.services.v2_flags import is_v2_enabled
 
 OPEN_STATUSES = ("Open", "Requested", "Approved")
 QTY_TOLERANCE = 0.000001
+SOLVER_INPUT_BLOCKER_PREFIX = "solver_input|"
 
 
 def sync_solver_input_blocker(run_doc, *, blocker_key: str | None, message: str | None) -> None:
@@ -45,9 +46,92 @@ def sync_solver_input_blocker(run_doc, *, blocker_key: str | None, message: str 
 			_set_values(row.name, {"status": "Superseded", "resolved_by": frappe.session.user, "resolved_on": now_datetime()})
 
 
+def sync_solver_input_blockers(
+	run_doc: Any,
+	blockers: list[dict[str, Any]],
+	*,
+	input_fingerprint: str | None = None,
+) -> str:
+	"""Expose pre-job CP-SAT input failures in the Resolution Center."""
+	if not is_v2_enabled() or not frappe.db.exists("DocType", "APS Constraint Resolution"):
+		return ""
+	rows = [dict(row) for row in blockers]
+	input_hash = input_fingerprint or hashlib.sha256(
+		json.dumps(rows, ensure_ascii=True, sort_keys=True, default=str).encode()
+	).hexdigest()
+	current_keys = set()
+	for blocker in rows:
+		result_name = blocker.get("schedule_result")
+		result_row = _result_context(result_name)
+		commitment = blocker.get("demand_commitment") or _resolve_commitment(
+			run_doc.name, result_row
+		)
+		blocker_key = SOLVER_INPUT_BLOCKER_PREFIX + str(
+			blocker.get("blocker_key") or "invalid_input"
+		)
+		scope_key = str(
+			blocker.get("scope_key")
+			or blocker.get("demand_key")
+			or blocker.get("demand_commitment")
+			or ""
+		)
+		if not result_name and not scope_key:
+			scope_key = hashlib.sha256(
+				json.dumps(blocker, ensure_ascii=True, sort_keys=True, default=str).encode()
+			).hexdigest()
+		key = _resolution_key(run_doc.name, input_hash, blocker_key, result_name, scope_key)
+		current_keys.add(key)
+		policy = blocker.get("blocker_policy") or "Never Override"
+		values = {
+			"planning_run": run_doc.name,
+			"company": run_doc.company,
+			"plant_floor": result_row.get("plant_floor") or run_doc.get("plant_floor"),
+			"schedule_result": result_name,
+			"demand_commitment": commitment,
+			"blocker_key": blocker_key,
+			"blocker_policy": policy,
+			"severity": "Blocking",
+			"status": "Open",
+			"affected_customer": result_row.get("customer"),
+			"affected_item": result_row.get("item_code"),
+			"affected_qty": max(
+				flt(blocker.get("affected_qty")),
+				flt(result_row.get("critical_unplanned_qty")),
+				flt(result_row.get("unscheduled_qty")),
+				flt(result_row.get("planned_qty")),
+				0,
+			),
+			"message": blocker.get("message")
+			or _("Invalid CP-SAT solver input.", context="Injection APS"),
+			"suggested_action": _suggested_action(policy),
+			"input_fingerprint": input_hash,
+			"idempotency_key": key,
+		}
+		_upsert_engine_record(values)
+	for row in frappe.get_all(
+		"APS Constraint Resolution",
+		filters={
+			"planning_run": run_doc.name,
+			"blocker_key": ("like", f"{SOLVER_INPUT_BLOCKER_PREFIX}%"),
+			"status": ("in", ["Open", "Requested", "Approved"]),
+		},
+		fields=["name", "idempotency_key"],
+		limit_page_length=0,
+	):
+		if row.idempotency_key not in current_keys:
+			_set_values(
+				row.name,
+				{
+					"status": "Superseded",
+					"resolved_by": frappe.session.user,
+					"resolved_on": now_datetime(),
+				},
+			)
+	return input_hash
+
+
 def get_constraint_resolutions(planning_run: str) -> dict[str, Any]:
 	_require_v2()
-	_expire_overrides(planning_run)
 	run = frappe.get_doc("APS Planning Run", planning_run)
 	rows = frappe.get_all(
 		"APS Constraint Resolution",
@@ -64,8 +148,17 @@ def get_constraint_resolutions(planning_run: str) -> dict[str, Any]:
 		limit_page_length=0,
 	)
 	groups = {"must_fix": [], "temporary_override": [], "exclude": [], "acknowledgment": []}
+	visible_rows = []
 	for source in rows:
 		row = dict(source)
+		if (
+			row.get("status") == "Approved"
+			and row.get("blocker_policy") == "Temporary Override"
+			and (not row.get("expires_on") or get_datetime(row.get("expires_on")) <= get_datetime(now_datetime()))
+		):
+			# Reads stay side-effect free; an expired override is projected as expired
+			# until the next controlled recompute persists the transition.
+			row["status"] = "Expired"
 		policy = row.get("blocker_policy")
 		group = (
 			"temporary_override" if policy == "Temporary Override"
@@ -74,18 +167,23 @@ def get_constraint_resolutions(planning_run: str) -> dict[str, Any]:
 			else "must_fix"
 		)
 		groups[group].append(row)
+		visible_rows.append(row)
+	rows = visible_rows
+	temporary_override_supported, temporary_override_reason = _temporary_override_capability()
 	return {
 		"planning_run": run.name,
 		"company": run.company,
 		"readiness_status": run.get("capacity_balance_status") or "Not Analyzed",
 		"input_fingerprint": run.get("capacity_balance_fingerprint"),
+		"temporary_override_supported": temporary_override_supported,
+		"temporary_override_reason": temporary_override_reason,
 		"summary": {
 			"total": len(rows),
-			"open": sum(1 for row in rows if row.status in OPEN_STATUSES),
+			"open": sum(1 for row in rows if row.get("status") in OPEN_STATUSES),
 			"must_fix": len(groups["must_fix"]),
 			"temporary_override": len(groups["temporary_override"]),
 			"exclude": len(groups["exclude"]),
-			"excluded": sum(1 for row in rows if row.status == "Excluded"),
+			"excluded": sum(1 for row in rows if row.get("status") == "Excluded"),
 		},
 		"groups": groups,
 		"rows": [dict(row) for row in rows],
@@ -121,7 +219,7 @@ def sync_from_analysis(run_doc: Any, analysis: dict[str, Any]) -> None:
 			"status": "Open",
 			"affected_customer": result_row.get("customer"),
 			"affected_item": result_row.get("item_code"),
-			"affected_qty": max(flt(blocker.get("planned_qty")), 0),
+			"affected_qty": _affected_blocker_qty(blocker, result_row),
 			"message": blocker.get("message") or _("Unresolved APS constraint.", context="Injection APS"),
 			"suggested_action": _suggested_action(blocker.get("policy")),
 			"input_fingerprint": analysis.get("analysis_fingerprint"),
@@ -129,12 +227,15 @@ def sync_from_analysis(run_doc: Any, analysis: dict[str, Any]) -> None:
 		}
 		_upsert_engine_record(values)
 
+	used_overrides = {row.get("name") for row in analysis.get("approved_overrides") or []}
 	for row in frappe.get_all(
 		"APS Constraint Resolution",
-		filters={"planning_run": run_doc.name, "status": ("in", ["Open", "Requested"])},
-		fields=["name", "idempotency_key"],
+		filters={"planning_run": run_doc.name, "status": ("in", ["Open", "Requested", "Approved"])},
+		fields=["name", "status", "idempotency_key"],
 		limit_page_length=0,
 	):
+		if row.status == "Approved" and row.name in used_overrides:
+			continue
 		if row.idempotency_key not in current_keys:
 			_set_values(row.name, {"status": "Superseded", "resolved_by": frappe.session.user, "resolved_on": now_datetime()})
 
@@ -149,11 +250,17 @@ def request_temporary_override(
 	expected_fingerprint: str,
 ) -> dict[str, Any]:
 	_require_v2()
+	_assert_temporary_override_supported()
 	doc = _lock_resolution(resolution)
 	_assert_current_fingerprint(doc, expected_fingerprint)
 	if doc.blocker_policy != "Temporary Override":
 		frappe.throw(_("This constraint cannot be temporarily overridden.", context="Injection APS"), frappe.ValidationError)
-	if doc.status not in ("Open", "Rejected", "Expired"):
+	effective_status = (
+		"Expired"
+		if doc.status == "Approved" and (not doc.expires_on or get_datetime(doc.expires_on) <= get_datetime(now_datetime()))
+		else doc.status
+	)
+	if effective_status not in ("Open", "Rejected", "Expired"):
 		frappe.throw(_("Only an open, rejected, or expired resolution can be requested.", context="Injection APS"), frappe.ValidationError)
 	reason = _required_reason(reason)
 	if not expires_on or get_datetime(expires_on) <= get_datetime(now_datetime()):
@@ -180,6 +287,7 @@ def approve_temporary_override(
 	expected_fingerprint: str,
 ) -> dict[str, Any]:
 	_require_v2()
+	_assert_temporary_override_supported()
 	doc = _lock_resolution(resolution)
 	_assert_current_fingerprint(doc, expected_fingerprint)
 	if doc.blocker_policy != "Temporary Override" or doc.status != "Requested":
@@ -208,6 +316,8 @@ def exclude_commitment_from_release(
 	_require_v2()
 	doc = _lock_resolution(resolution)
 	_assert_current_fingerprint(doc, expected_fingerprint)
+	if doc.blocker_policy != "Exclude Only":
+		frappe.throw(_("This constraint cannot be excluded from release.", context="Injection APS"), frappe.ValidationError)
 	if not doc.demand_commitment and not doc.schedule_result:
 		frappe.throw(_("The affected demand cannot be identified for exclusion.", context="Injection APS"), frappe.ValidationError)
 	reason = _required_reason(reason)
@@ -238,8 +348,28 @@ def exclude_commitment_from_release(
 	return _response(doc.name, "Excluded", "Recompute the run; the remaining feasible plan can then be applied.")
 
 
+def _temporary_override_capability() -> tuple[bool, str]:
+	from injection_aps.services import v2_flags
+
+	settings = v2_flags.get_v2_settings()
+	if settings["enable_aps_v2"] and settings["solver_engine"] == "CP-SAT":
+		return False, _(
+			"The current CP-SAT solver does not support temporary constraint overrides. "
+			"Correct the master data or exclude the affected demand.",
+			context="Injection APS",
+		)
+	return True, ""
+
+
+def _assert_temporary_override_supported() -> None:
+	supported, reason = _temporary_override_capability()
+	if not supported:
+		frappe.throw(reason, frappe.ValidationError)
+
+
 def recompute_after_resolution(planning_run: str, *, expected_fingerprint: str | None = None) -> dict[str, Any]:
 	_require_v2()
+	_expire_overrides(planning_run)
 	run = frappe.get_doc("APS Planning Run", planning_run)
 	if expected_fingerprint and run.get("capacity_balance_fingerprint") not in (None, "", expected_fingerprint):
 		frappe.throw(_("The run fingerprint changed. Refresh before recomputing.", context="Injection APS"), frappe.ValidationError)
@@ -270,7 +400,12 @@ def get_excluded_result_names(planning_run: str) -> set[str]:
 	)
 
 
-def approved_overrides(planning_run: str, *, at_time: Any | None = None) -> list[dict[str, Any]]:
+def approved_overrides(
+	planning_run: str,
+	*,
+	at_time: Any | None = None,
+	expected_input_fingerprint: str | None = None,
+) -> list[dict[str, Any]]:
 	if not frappe.db.exists("DocType", "APS Constraint Resolution"):
 		return []
 	at_time = get_datetime(at_time or now_datetime())
@@ -280,12 +415,29 @@ def approved_overrides(planning_run: str, *, at_time: Any | None = None) -> list
 		fields=["name", "blocker_key", "resolution_type", "proposed_value_json", "expires_on", "approved_by", "approved_on", "input_fingerprint"],
 		limit_page_length=0,
 	)
-	return [dict(row) for row in rows if row.expires_on and get_datetime(row.expires_on) > at_time]
+	return [
+		dict(row)
+		for row in rows
+		if row.expires_on
+		and get_datetime(row.expires_on) > at_time
+		and (
+			not expected_input_fingerprint
+			or row.input_fingerprint == expected_input_fingerprint
+		)
+	]
 
 
-def apply_approved_overrides_to_analysis(planning_run: str, analysis: dict[str, Any]) -> list[dict[str, Any]]:
+def apply_approved_overrides_to_analysis(
+	planning_run: str,
+	analysis: dict[str, Any],
+	*,
+	expected_input_fingerprint: str,
+) -> list[dict[str, Any]]:
 	"""Downgrade only the exact approved blocker scope into an acknowledged risk."""
-	overrides = approved_overrides(planning_run)
+	overrides = approved_overrides(
+		planning_run,
+		expected_input_fingerprint=expected_input_fingerprint,
+	)
 	used = []
 	for override in overrides:
 		scope = frappe.db.get_value(
@@ -357,10 +509,22 @@ def _result_context(result: str | None) -> dict[str, Any]:
 	return dict(
 		frappe.db.get_value(
 			"APS Schedule Result", result,
-			["plant_floor", "customer", "item_code", "requested_date", "demand_commitment"],
+			[
+				"plant_floor", "customer", "item_code", "requested_date", "demand_commitment",
+				"planned_qty", "unscheduled_qty", "critical_unplanned_qty",
+			],
 			as_dict=True,
 		) or {}
 	)
+
+
+def _affected_blocker_qty(blocker: dict[str, Any], result: dict[str, Any]) -> float:
+	qty = max(flt(blocker.get("planned_qty")), 0)
+	if qty <= QTY_TOLERANCE:
+		qty = max(flt(result.get("critical_unplanned_qty")), flt(result.get("unscheduled_qty")), 0)
+	if qty <= QTY_TOLERANCE:
+		qty = max(flt(result.get("planned_qty")), 0)
+	return qty
 
 
 def _upsert_engine_record(values: dict[str, Any]) -> None:
@@ -390,14 +554,41 @@ def _set_values(name: str, values: dict[str, Any]) -> None:
 
 
 def _lock_resolution(name: str):
-	row = frappe.db.sql("select name from `tabAPS Constraint Resolution` where name = %s for update", name)
-	if not row:
+	scope = frappe.db.get_value(
+		"APS Constraint Resolution",
+		name,
+		["planning_run", "company"],
+		as_dict=True,
+	) or {}
+	if not scope:
 		frappe.throw(_("Constraint Resolution {0} was not found.", context="Injection APS").format(name), frappe.DoesNotExistError)
-	return frappe.get_doc("APS Constraint Resolution", name)
+	company = scope.get("company") or frappe.db.get_value("APS Planning Run", scope.get("planning_run"), "company")
+	if company:
+		frappe.db.sql("select name from `tabCompany` where name = %s for update", company)
+	run_rows = frappe.db.sql(
+		"select name, capacity_balance_fingerprint from `tabAPS Planning Run` where name = %s for update",
+		scope.get("planning_run"),
+		as_dict=True,
+	)
+	if not run_rows:
+		frappe.throw(_("Planning Run {0} was not found.", context="Injection APS").format(scope.get("planning_run")), frappe.DoesNotExistError)
+	rows = frappe.db.sql(
+		"select * from `tabAPS Constraint Resolution` where name = %s for update",
+		name,
+		as_dict=True,
+	)
+	if not rows:
+		frappe.throw(_("Constraint Resolution {0} was not found.", context="Injection APS").format(name), frappe.DoesNotExistError)
+	doc = frappe.get_doc("APS Constraint Resolution", name)
+	doc.update(rows[0])
+	doc.flags.aps_locked_run_fingerprint = run_rows[0].get("capacity_balance_fingerprint") or ""
+	return doc
 
 
 def _assert_current_fingerprint(doc: Any, expected: str) -> None:
-	run_fingerprint = frappe.db.get_value("APS Planning Run", doc.planning_run, "capacity_balance_fingerprint") or ""
+	run_fingerprint = doc.flags.get("aps_locked_run_fingerprint")
+	if run_fingerprint is None:
+		run_fingerprint = frappe.db.get_value("APS Planning Run", doc.planning_run, "capacity_balance_fingerprint") or ""
 	if not expected or expected != (doc.input_fingerprint or "") or expected != run_fingerprint:
 		frappe.throw(_("The analysis fingerprint changed. Refresh and analyze again.", context="Injection APS"), frappe.ValidationError)
 
@@ -405,7 +596,10 @@ def _assert_current_fingerprint(doc: Any, expected: str) -> None:
 def _invalidate_analysis(planning_run: str) -> None:
 	from injection_aps.services import capacity_balance
 
-	capacity_balance.invalidate_capacity_balance(planning_run)
+	capacity_balance.invalidate_capacity_balance(
+		planning_run,
+		preserve_constraint_resolutions=True,
+	)
 
 
 def _required_reason(reason: str) -> str:

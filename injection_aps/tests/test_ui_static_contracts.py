@@ -53,6 +53,15 @@ OFFICIAL_CONTEXTLESS_FALLBACKS = {
 
 
 class TestUIStaticContracts(unittest.TestCase):
+	def test_plain_text_conversion_uses_inert_template_content(self):
+		source = (APP_ROOT / "public/js/injection_aps_shared.js").read_text(encoding="utf-8")
+		plain_text = source[
+			source.index("injection_aps.ui.to_plain_text") : source.index("injection_aps.ui.format_number")
+		]
+		self.assertIn('document.createElement("template")', plain_text)
+		self.assertIn("template.content.textContent", plain_text)
+		self.assertNotIn('document.createElement("div")', plain_text)
+
 	def test_run_console_distills_primary_decisions_into_three_columns_and_drawer(self):
 		source = (
 			APP_ROOT
@@ -74,7 +83,7 @@ class TestUIStaticContracts(unittest.TestCase):
 			'data-run-details=',
 			'injection_aps.ui.open_drawer(',
 			'action_key: "open_run"',
-			'aps_run_console.css?v=20260821.2',
+			'aps_run_console.css?v=20260901.1',
 			"export_columns: exportColumns",
 			"return injection_aps.ui.format_number(value);",
 		):
@@ -115,6 +124,24 @@ class TestUIStaticContracts(unittest.TestCase):
 				self.assertIn(marker, css)
 		self.assertNotIn(":has(.ia-run-drawer)", css)
 		self.assertNotIn(".ia-run-drawer-section", css)
+
+	def test_reused_pages_resync_and_clear_route_run_state(self):
+		constraint = (
+			APP_ROOT
+			/ "injection_aps/page/aps_constraint_resolution_center/aps_constraint_resolution_center.js"
+		).read_text(encoding="utf-8")
+		run_console = (
+			APP_ROOT / "injection_aps/page/aps_run_console/aps_run_console.js"
+		).read_text(encoding="utf-8")
+		progress = (
+			APP_ROOT / "injection_aps/page/aps_customer_schedule_progress/aps_customer_schedule_progress.js"
+		).read_text(encoding="utf-8")
+
+		self.assertIn("if (nextRun !== state.run)", constraint)
+		self.assertNotIn("if (nextRun && nextRun !== state.run)", constraint)
+		self.assertIn("wrapper.injection_aps_controller.syncRouteState();", run_console)
+		self.assertIn("wrapper.injection_aps_controller.syncRouteState();", progress)
+		self.assertIn('const runName = injection_aps.ui.get_query_param("run_name") || "";', progress)
 
 	def test_execution_exception_drawer_loads_authoritative_context_and_guidance(self):
 		source = (
@@ -164,15 +191,37 @@ class TestUIStaticContracts(unittest.TestCase):
 			APP_ROOT
 			/ "injection_aps/page/aps_schedule_gantt/aps_schedule_gantt.js"
 		).read_text(encoding="utf-8")
-		self.assertIn(
+		self.assertNotIn(
 			'frappe.require("/assets/injection_aps/js/injection_aps_ui_loader.js"',
 			gantt,
 		)
-		self.assertIn('injection_aps.ui_loader.start("20260821.2"', gantt)
+		self.assertIn('injection_aps.ui_loader.start("20260901.1"', gantt)
 		self.assertNotIn(
 			'frappe.require("/assets/injection_aps/js/injection_aps_shared.js?v=',
 			gantt,
 		)
+
+	def test_gantt_avoids_duplicate_fetches_and_scroll_reflows(self):
+		gantt = (
+			APP_ROOT
+			/ "injection_aps/page/aps_schedule_gantt/aps_schedule_gantt.js"
+		).read_text(encoding="utf-8")
+		for marker in (
+			'this.loadingKey = ""',
+			'this.dataRunName = ""',
+			"if (this.loadingKey === loadingKey)",
+			"if (this.data && this.dataRunName !== runName)",
+			"scheduleDependencyRender()",
+			"if (this.dependencyRaf !== null)",
+			"this.renderGantt(this.data.tasks || [])",
+			'role="button"',
+			'tabindex="0"',
+		):
+			with self.subTest(marker=marker):
+				self.assertIn(marker, gantt)
+		api = (APP_ROOT / "api/app.py").read_text(encoding="utf-8")
+		self.assertNotIn('"fulfillment_timeline":', api)
+		self.assertNotIn('"fulfillment_results":', api)
 
 	def test_gantt_risk_values_are_translated_per_enum_across_all_render_paths(self):
 		source = (
@@ -323,11 +372,11 @@ class TestUIStaticContracts(unittest.TestCase):
 		for filename, ready_name in contracts.items():
 			source = (APP_ROOT / "public/js" / filename).read_text(encoding="utf-8")
 			with self.subTest(filename=filename):
+				declaration = "let" if filename == "aps_planning_run.js" else "const"
 				self.assertIn(
-					f'const {ready_name} = frappe.require("/assets/injection_aps/js/injection_aps_ui_loader.js")',
+					f'{declaration} {ready_name} = injection_aps.ui_loader.load("20260901.1")',
 					source,
 				)
-				self.assertIn('.then(() => injection_aps.ui_loader.load("20260821.2"))', source)
 				self.assertIn(f"await {ready_name};", source)
 				self.assertLess(
 					source.index(f"await {ready_name};"),
@@ -344,16 +393,21 @@ class TestUIStaticContracts(unittest.TestCase):
 		for path in page_sources:
 			source = path.read_text(encoding="utf-8")
 			with self.subTest(page=path.parent.name):
-				self.assertIn(
+				self.assertNotIn(
 					'frappe.require("/assets/injection_aps/js/injection_aps_ui_loader.js"',
 					source,
 				)
-				self.assertIn('injection_aps.ui_loader.start("20260821.2"', source)
+				self.assertIn('injection_aps.ui_loader.start("20260901.1"', source)
 
 		loader = (APP_ROOT / "public/js/injection_aps_ui_loader.js").read_text(encoding="utf-8")
 		shared = (APP_ROOT / "public/js/injection_aps_shared.js").read_text(encoding="utf-8")
+		hooks = (APP_ROOT / "hooks.py").read_text(encoding="utf-8")
+		self.assertLess(
+			hooks.index('"/assets/injection_aps/js/injection_aps_ui_loader.js"'),
+			hooks.index('"/assets/injection_aps/js/injection_aps_shared.js"'),
+		)
 		self.assertIn('injection_aps_shared.js?v=${encodeURIComponent(version)}', loader)
-		self.assertIn('const UI_ASSET_VERSION = "20260821.2"', shared)
+		self.assertIn('const UI_ASSET_VERSION = "20260901.1"', shared)
 		self.assertIn('existingStyle.setAttribute("href", styleHref)', shared)
 		self.assertIn('aps-icons.svg?v=${UI_ASSET_VERSION}', shared)
 

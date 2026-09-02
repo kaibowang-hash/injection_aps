@@ -22,6 +22,11 @@ required_apps = [
 	_local_app_or_name("mold_management"),
 ]
 
+app_include_js = [
+	"/assets/injection_aps/js/injection_aps_ui_loader.js",
+	"/assets/injection_aps/js/injection_aps_shared.js",
+]
+
 doctype_js = {
 	"APS Planning Run": "public/js/aps_planning_run.js",
 	"APS Work Order Proposal Batch": "public/js/aps_work_order_proposal_batch.js",
@@ -45,7 +50,11 @@ doc_events = {
 		"before_validate": "injection_aps.services.delivery_fulfillment.inherit_delivery_note_lineage",
 		"before_submit": "injection_aps.services.delivery_sync.validate_delivery_before_submit",
 		"on_submit": "injection_aps.services.delivery_sync.queue_delivery_sync",
-		"on_cancel": "injection_aps.services.delivery_sync.queue_delivery_sync",
+		"on_cancel": [
+			"injection_aps.services.delivery_sync.retire_delivery_artifacts",
+			"injection_aps.services.delivery_sync.queue_delivery_sync",
+		],
+		"on_trash": "injection_aps.services.delivery_sync.delete_delivery_artifacts",
 	},
 	"Stock Entry": {
 		"before_submit": "injection_aps.services.execution_sync.validate_manufacture_before_submit",

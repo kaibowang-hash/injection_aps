@@ -48,6 +48,12 @@ def validate_solution(snapshot: SolverInput, solution: SolverSolution, *, requir
 		allocated = sum(row.quantity_units for row in allocations_by_demand[demand.key])
 		if allocated + outcome.unscheduled_units != demand.quantity_units:
 			_error(errors, "demand_conservation", f"Demand {demand.key} does not conserve controllable quantity.")
+		if 0 < allocated < demand.minimum_batch_units:
+			_error(
+				errors,
+				"minimum_batch",
+				f"Demand {demand.key} schedules {allocated} below minimum batch {demand.minimum_batch_units}.",
+			)
 		on_time = demand.fixed_on_time_units + sum(row.quantity_units for row in tasks_by_demand[demand.key] if row.end_minute <= demand.due_minute)
 		late = demand.fixed_late_units + sum(row.quantity_units for row in tasks_by_demand[demand.key] if row.end_minute > demand.due_minute)
 		if outcome.on_time_units != on_time or outcome.late_units != late:
@@ -108,7 +114,7 @@ def validate_solution(snapshot: SolverInput, solution: SolverSolution, *, requir
 		if p0_weighted_tardiness > int(required_p0_floor.get("p0_weighted_tardiness", p0_weighted_tardiness)):
 			_error(errors, "p0_tardiness_regression", "A lower objective increased P0 weighted tardiness.")
 
-	result = {"valid": not errors, "errors": errors, "warnings": warnings, "checked": ["demand_conservation", "machine_no_overlap", "mold_no_overlap", "frozen_unchanged", "alternative_legality", "horizon", "p0_guard", "campaign_capacity_owner", "bom_precedence"]}
+	result = {"valid": not errors, "errors": errors, "warnings": warnings, "checked": ["demand_conservation", "minimum_batch", "machine_no_overlap", "mold_no_overlap", "frozen_unchanged", "alternative_legality", "horizon", "p0_guard", "campaign_capacity_owner", "bom_precedence"]}
 	if errors and raise_on_error:
 		raise InvalidSolverSolution(errors)
 	return result

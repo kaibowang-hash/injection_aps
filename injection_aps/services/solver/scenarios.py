@@ -227,6 +227,11 @@ def _greedy_fallback(snapshot: SolverInput, scenario_key: str, input_hash: str, 
 			predecessors[edge.successor_demand].append((edge.predecessor_demand, edge.lag_minutes))
 	for demand in _precedence_ordered_demands(snapshot):
 		remaining = demand.quantity_units
+		allocation_start = len(allocations)
+		task_start = len(tasks)
+		machine_cursor_before = dict(machine_cursor)
+		mold_cursor_before = dict(mold_cursor)
+		remaining_by_bucket_before = dict(remaining_by_bucket)
 		dependency_rows = predecessors.get(demand.key) or ()
 		if any(remaining_by_demand.get(key, 0) > 0 for key, _lag in dependency_rows):
 			continue
@@ -264,6 +269,16 @@ def _greedy_fallback(snapshot: SolverInput, scenario_key: str, input_hash: str, 
 				machine_cursor[alternative.machine] = end
 				if alternative.mold:
 					mold_cursor[alternative.mold] = end
+		if 0 < demand.quantity_units - remaining < demand.minimum_batch_units:
+			del allocations[allocation_start:]
+			del tasks[task_start:]
+			machine_cursor.clear()
+			machine_cursor.update(machine_cursor_before)
+			mold_cursor.clear()
+			mold_cursor.update(mold_cursor_before)
+			remaining_by_bucket.clear()
+			remaining_by_bucket.update(remaining_by_bucket_before)
+			remaining = demand.quantity_units
 		remaining_by_demand[demand.key] = remaining
 	outcomes = _outcomes_from_tasks(snapshot, tasks)
 	metrics = calculate_metrics(snapshot, outcomes, allocations, tasks, {"change_count": 0, "changeover_minutes": 0})

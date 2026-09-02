@@ -1,10 +1,10 @@
 frappe.pages["aps-schedule-gantt"].on_page_load = function (wrapper) {
-	frappe.require("/assets/injection_aps/js/injection_aps_ui_loader.js", () => injection_aps.ui_loader.start("20260821.2", () => {
+	injection_aps.ui_loader.start("20260901.1", () => {
 		if (!wrapper.injection_aps_controller) {
 			wrapper.injection_aps_controller = new InjectionAPSScheduleGantt(wrapper);
 		}
 		wrapper.injection_aps_controller.refresh();
-	}));
+	});
 };
 
 frappe.pages["aps-schedule-gantt"].on_page_show = function (wrapper) {
@@ -31,6 +31,9 @@ class InjectionAPSScheduleGantt {
 		this.routeRunName = "";
 		this.routeSegmentName = "";
 		this.refreshGeneration = 0;
+		this.loadingKey = "";
+		this.dataRunName = "";
+		this.dependencyRaf = null;
 		this.page = frappe.ui.make_app_page({
 			parent: wrapper,
 			title: __("Board"),
@@ -51,7 +54,14 @@ class InjectionAPSScheduleGantt {
 			options: ["Machine", "Mold", "Risk", "Locked"].join("\n"),
 			context: "Injection APS",
 			default: "Machine",
-			change: () => this.refresh(),
+			change: () => {
+				if (!this.data) {
+					this.refresh();
+					return;
+				}
+				this.renderGantt(this.data.tasks || []);
+				this.bindShellZoom();
+			},
 		});
 
 		this.page.main.html(`
@@ -91,8 +101,16 @@ class InjectionAPSScheduleGantt {
 		this.ganttShell = this.page.main.find(".ia-gantt-shell")[0];
 		this.timeline = this.page.main.find(".ia-gantt-timeline")[0];
 		this.grid = this.page.main.find(".ia-gantt-grid")[0];
-		this.ganttShell.addEventListener("scroll", () => {
-			window.requestAnimationFrame(() => this.renderDependencyLinks());
+		this.ganttShell.addEventListener("scroll", () => this.scheduleDependencyRender());
+	}
+
+	scheduleDependencyRender() {
+		if (this.dependencyRaf !== null) {
+			return;
+		}
+		this.dependencyRaf = window.requestAnimationFrame(() => {
+			this.dependencyRaf = null;
+			this.renderDependencyLinks();
 		});
 	}
 
@@ -892,27 +910,39 @@ class InjectionAPSScheduleGantt {
 	async refresh() {
 		injection_aps.ui.ensure_styles();
 		this.syncRouteContext();
-		const refreshGeneration = ++this.refreshGeneration;
 		const runName = this.runField.get_value();
-		if (!runName) {
-			const emptyData = await frappe.xcall("injection_aps.api.app.get_release_center_data", {});
-			if (refreshGeneration !== this.refreshGeneration || this.runField.get_value()) {
-				return;
-			}
-			this.runBody.style.display = "none";
-			injection_aps.ui.render_run_empty_state(this.emptyStateHost, {
-				title: __("No APS Run Selected"),
-				description: __("Board must be bound to a single APS run. Select an APS run first before viewing the Gantt schedule and risk segments."),
-				recent_runs: ((emptyData && emptyData.recent_runs) || []).map((row) => Object.assign({}, row, { route: row.gantt_route || row.route })),
-				console_route: "aps-run-console",
-			});
+		if (this.data && this.dataRunName !== runName) {
+			this.data = null;
+			this.dataRunName = "";
+			this.taskBySegment = {};
+			this.timeline.innerHTML = "";
+			this.grid.innerHTML = `<div class="ia-muted">${__("Loading board...")}</div>`;
+			this.ganttOverlay.querySelectorAll(".ia-bom-dependency-overlay").forEach((node) => node.remove());
+		}
+		const loadingKey = runName || "__empty__";
+		if (this.loadingKey === loadingKey) {
 			return;
 		}
-		this.runBody.style.display = "";
-		this.emptyStateHost.innerHTML = "";
-
-		injection_aps.ui.set_feedback(this.feedback, __("Loading board..."));
+		this.loadingKey = loadingKey;
+		const refreshGeneration = ++this.refreshGeneration;
 		try {
+			if (!runName) {
+				const emptyData = await frappe.xcall("injection_aps.api.app.get_release_center_data", {});
+				if (refreshGeneration !== this.refreshGeneration || this.runField.get_value()) {
+					return;
+				}
+				this.runBody.style.display = "none";
+				injection_aps.ui.render_run_empty_state(this.emptyStateHost, {
+					title: __("No APS Run Selected"),
+					description: __("Board must be bound to a single APS run. Select an APS run first before viewing the Gantt schedule and risk segments."),
+					recent_runs: ((emptyData && emptyData.recent_runs) || []).map((row) => Object.assign({}, row, { route: row.gantt_route || row.route })),
+					console_route: "aps-run-console",
+				});
+				return;
+			}
+			this.runBody.style.display = "";
+			this.emptyStateHost.innerHTML = "";
+			injection_aps.ui.set_feedback(this.feedback, __("Loading board..."));
 			const data = await frappe.xcall("injection_aps.api.app.get_schedule_gantt_data", {
 				run_name: runName,
 			});
@@ -920,6 +950,7 @@ class InjectionAPSScheduleGantt {
 				return;
 			}
 			this.data = data;
+			this.dataRunName = runName;
 			injection_aps.ui.render_run_context(this.runContextHost, this.data.run_context || this.data.run || null);
 			injection_aps.ui.render_status_line(this.statusHost, this.data.run_context || this.data.run || null);
 			this.renderBlockedResults(this.data.blocked_results || []);
@@ -942,6 +973,10 @@ class InjectionAPSScheduleGantt {
 			}
 			console.error(error);
 			injection_aps.ui.set_feedback(this.feedback, __("Failed to load board."), "error");
+		} finally {
+			if (this.loadingKey === loadingKey) {
+				this.loadingKey = "";
+			}
 		}
 	}
 
@@ -1306,6 +1341,13 @@ class InjectionAPSScheduleGantt {
 							details.customer_reference || "",
 						].filter(Boolean);
 						const visibleRiskFlags = riskFlags.slice(0, compactBar ? 1 : 2);
+						const accessibleLabel = [
+							title,
+							segmentLabel,
+							`${__("Planned Qty", null, "Injection APS")}: ${injection_aps.ui.format_number(details.segment_planned_qty || 0)}`,
+							`${__("Start Time", null, "Injection APS")}: ${injection_aps.ui.format_datetime(task.start)}`,
+							`${__("End Time", null, "Injection APS")}: ${injection_aps.ui.format_datetime(task.end)}`,
+						].filter(Boolean).join(", ");
 						bars.push(this.renderTaskLayer(task, "original", 4 + stackIndex * 44, timelineStart, timelineEnd, span));
 						bars.push(this.renderTaskLayer(task, "forecast", 4 + stackIndex * 44, timelineStart, timelineEnd, span));
 						bars.push(this.renderTaskLayer(task, "actual", 4 + stackIndex * 44, timelineStart, timelineEnd, span));
@@ -1328,6 +1370,10 @@ class InjectionAPSScheduleGantt {
 								data-draggable="${isDragLocked ? "0" : "1"}"
 								data-can-split="${isSplitLocked ? "0" : "1"}"
 								draggable="false"
+								role="button"
+								tabindex="0"
+								aria-haspopup="dialog"
+								aria-label="${injection_aps.ui.escape(accessibleLabel)}"
 							>
 								<span class="ia-gantt-actual-progress" style="width:${Math.min(Math.max(Number(task.progress || 0), 0), 100)}%;"></span>
 								<div class="ia-gantt-title">
@@ -1367,7 +1413,7 @@ class InjectionAPSScheduleGantt {
 
 		this.bindGanttInteractions();
 		this.applySegmentSearchHighlight();
-		window.requestAnimationFrame(() => this.renderDependencyLinks());
+		this.scheduleDependencyRender();
 	}
 
 	renderTaskLayer(task, layer, top, timelineStart, timelineEnd, span) {
@@ -1651,9 +1697,13 @@ class InjectionAPSScheduleGantt {
 		this.tools.innerHTML = `
 			<div class="ia-gantt-tools-main">
 				<div class="ia-chip-row ia-legend">
-					<span class="ia-chip">${__("Blue", null, "Injection APS")}: ${__("Normal", null, "Injection APS")}</span>
-					<span class="ia-chip">${__("Yellow", null, "Injection APS")}: ${__("Attention")}</span>
-					<span class="ia-chip">${__("Red", null, "Injection APS")}: ${__("Critical / Blocking")}</span>
+					<span class="ia-chip blue">${__("Blue", null, "Injection APS")}: ${__("Normal", null, "Injection APS")}</span>
+					<span class="ia-chip orange">${__("Yellow", null, "Injection APS")}: ${__("Attention")}</span>
+					<span class="ia-chip red">${__("Red", null, "Injection APS")}: ${__("Critical / Blocking")}</span>
+					<span class="ia-chip"><i class="ia-gantt-legend-swatch original" aria-hidden="true"></i>${__("Original Plan", null, "Injection APS")}</span>
+					<span class="ia-chip"><i class="ia-gantt-legend-swatch forecast" aria-hidden="true"></i>${__("Forecast", null, "Injection APS")}</span>
+					<span class="ia-chip"><i class="ia-gantt-legend-swatch actual" aria-hidden="true"></i>${__("Actual", null, "Injection APS")}</span>
+					<span class="ia-chip"><i class="ia-gantt-legend-swatch downtime" aria-hidden="true"></i>${__("Downtime", null, "Injection APS")}</span>
 					<span class="ia-chip">${__("B", null, "Injection APS")}: ${__("Copy Mold Parallelized")}</span>
 					<span class="ia-chip">${__("F")}: ${__("Family Mold Co-Production")}</span>
 					<span class="ia-chip">${__("L", null, "Injection APS")}: ${__("Locked", null, "Injection APS")}</span>
@@ -1984,7 +2034,7 @@ class InjectionAPSScheduleGantt {
 					}
 					this.scheduleHideSplitHoverHandle();
 				});
-				node.addEventListener("click", () => {
+				const openDetails = () => {
 					if (this.splitState || (this.__suppressBarClickUntil && Date.now() < this.__suppressBarClickUntil)) {
 						return;
 					}
@@ -1994,6 +2044,14 @@ class InjectionAPSScheduleGantt {
 					} else {
 						this.openResultDrawer(node.dataset.resultName, node.dataset.segmentName);
 					}
+				};
+				node.addEventListener("click", openDetails);
+				node.addEventListener("keydown", (event) => {
+					if (event.key !== "Enter" && event.key !== " ") {
+						return;
+					}
+					event.preventDefault();
+					openDetails();
 				});
 				node.addEventListener("contextmenu", (event) => this.openSegmentContextMenu(event, node));
 				if (node.dataset.draggable === "1") {

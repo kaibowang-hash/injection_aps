@@ -227,6 +227,68 @@ def queue_delivery_sync(doc, method: str | None = None):
 		)
 
 
+def retire_delivery_artifacts(doc, method: str | None = None) -> None:
+	"""Immediately retire APS rows when their source Delivery Note is cancelled.
+
+	The full allocation rebuild remains queued because it can be expensive, but the
+	derived rows must stop looking live before a user can try to delete the cancelled
+	Delivery Note.  These database-level updates intentionally do not depend on the
+	current user's APS permissions.
+	"""
+	if not doc.get("name"):
+		return
+
+	resolved_on = now_datetime()
+	for name in frappe.get_all(
+		"APS Unallocated Delivery",
+		filters={"source_delivery_note": doc.name},
+		pluck="name",
+	):
+		frappe.db.set_value(
+			"APS Unallocated Delivery",
+			name,
+			{
+				"status": "Source Cancelled",
+				"unallocated_qty": 0,
+				"resolved_on": resolved_on,
+			},
+			update_modified=False,
+		)
+
+	for row in frappe.get_all(
+		"APS Delivery Allocation",
+		filters={"source_delivery_note": doc.name},
+		fields=["name", "effective_qty", "reversed_qty"],
+	):
+		frappe.db.set_value(
+			"APS Delivery Allocation",
+			row.name,
+			{
+				"source_docstatus": 2,
+				"effective_qty": 0,
+				"reversed_qty": max(flt(row.reversed_qty), abs(flt(row.effective_qty))),
+				"is_effective": 0,
+				"reversal_reason": "Source Delivery Note cancelled",
+				"last_synced_on": resolved_on,
+			},
+			update_modified=False,
+		)
+
+
+def delete_delivery_artifacts(doc, method: str | None = None) -> None:
+	"""Delete APS-derived rows before Frappe checks Delivery Note back-links.
+
+	Delivery users are allowed to remove an erroneous cancelled Delivery Note without
+	being granted delete access to internal APS queue or ledger DocTypes.  Both kinds
+	of APS rows are fully derived and will be rebuilt from a submitted source.
+	"""
+	if not doc.get("name"):
+		return
+
+	for doctype in ("APS Unallocated Delivery", "APS Delivery Allocation"):
+		frappe.db.delete(doctype, {"source_delivery_note": doc.name})
+
+
 def _lock_delivery_scope(company: str, customer: str | None = None) -> None:
 	if customer:
 		frappe.db.sql("select name from `tabCustomer` where name = %s for update", customer)

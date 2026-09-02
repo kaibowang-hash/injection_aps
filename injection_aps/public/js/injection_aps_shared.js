@@ -1,7 +1,7 @@
 frappe.provide("injection_aps.ui");
 
 (function () {
-	const UI_ASSET_VERSION = "20260821.2";
+	const UI_ASSET_VERSION = "20260901.1";
 	if (injection_aps.ui.__asset_version === UI_ASSET_VERSION) {
 		return;
 	}
@@ -62,6 +62,11 @@ frappe.provide("injection_aps.ui");
 		select_solver_scenario: ["System Manager", "GMC", "PMC", "Manufacturing Manager"],
 		acknowledge_schedule_risks: ["System Manager", "GMC", "Manufacturing Manager"],
 		apply_v2_schedule: ["System Manager", "GMC", "Manufacturing Manager"],
+		open_constraint_resolution_center: ["System Manager", "GMC", "PMC", "Manufacturing Manager", "Manufacturing User"],
+		recompute_constraint_resolution: ["System Manager", "GMC", "PMC", "Manufacturing Manager"],
+		request_temporary_override: ["System Manager", "GMC", "PMC", "Manufacturing Manager"],
+		approve_temporary_override: ["System Manager", "GMC", "Manufacturing Manager"],
+		exclude_commitment_from_release: ["System Manager", "GMC", "Manufacturing Manager"],
 		create_replan_cycle: ["System Manager", "GMC", "PMC", "Manufacturing Manager"],
 		refresh_shift_actuals: ["System Manager", "GMC", "PMC", "Manufacturing Manager", "Manufacturing User"],
 		generate_replan_proposals: ["System Manager", "GMC", "PMC", "Manufacturing Manager"],
@@ -135,14 +140,15 @@ frappe.provide("injection_aps.ui");
 	};
 
 	injection_aps.ui.route_link = function (label, route) {
-		return `<a href="/app/${route}" class="ia-link">${injection_aps.ui.escape(label || "")}</a>`;
+		const safeRoute = String(route || "").replace(/^\/+/, "");
+		return `<a href="${injection_aps.ui.escape(`/app/${safeRoute}`)}" class="ia-link">${injection_aps.ui.escape(label || "")}</a>`;
 	};
 
 	injection_aps.ui.doc_route = function (doctype, name) {
 		if (!doctype || !name) {
 			return "";
 		}
-		return `Form/${doctype}/${name}`;
+		return `Form/${encodeURIComponent(doctype)}/${encodeURIComponent(name)}`;
 	};
 
 	injection_aps.ui.doc_link = function (doctype, name, label) {
@@ -311,9 +317,9 @@ frappe.provide("injection_aps.ui");
 		if (!/[<>]/.test(text)) {
 			return text;
 		}
-		const container = document.createElement("div");
-		container.innerHTML = text;
-		return container.textContent || container.innerText || "";
+		const template = document.createElement("template");
+		template.innerHTML = text;
+		return template.content.textContent || "";
 	};
 
 	injection_aps.ui.format_number = function (value, maximumFractionDigits) {

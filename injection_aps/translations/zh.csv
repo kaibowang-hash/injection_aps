@@ -1071,7 +1071,6 @@ Generate Proposal Batch,生成建议批次
 Previewing WOS release...,正在预览 WOS 下发...
 WOS release preview is ready.,WOS 下发预览已生成。
 Rows,行数
-Update,更新
 Cancel,取消
 Qty,数量
 WOS Date,WOS 日期
@@ -4616,3 +4615,114 @@ Selected admission quantity cannot be negative.,需求准入数量不能为负�
 Demand admission is locked because this Run has been approved or left the editable planning states.,本次运算已批准或已离开可编辑的计划状态，需求准入已锁定。
 You do not have permission to confirm demand admission.,您没有确认需求准入的权限。,Injection APS
 Admission decisions saved. Recalculate this Run before continuing.,需求准入决策已保存。请重新计算本次运算后再继续。,Injection APS
+Progress Layer,进度层,Injection APS
+Customer Schedule,客户排期,Injection APS
+APS Plan,APS 计划,Injection APS
+Actual Inbound,实际入库,Injection APS
+Retry APS Interface,重试加载 APS 界面,Injection APS
+Plan completion moved {0} hours later.,计划完成时间向后移动了 {0} 小时。,Injection APS
+Segment duration increased by {0} hours.,排产段时长增加了 {0} 小时。,Injection APS
+Schedule Result {0} has no active demand commitment owned by Planning Run {1}.,排产结果 {0} 没有属于计划运算 {1} 的有效需求承诺。
+Schedule Result {0} references optional demand with no admitted quantity.,排产结果 {0} 引用了未获准数量的可选需求。
+Recomputing APS constraints...,正在重新计算 APS 约束...,Injection APS
+Loading constraint resolutions...,正在加载约束处理项...,Injection APS
+Constraint resolutions could not be loaded. Check access and try again.,约束处理项加载失败。请检查权限后重试。,Injection APS
+Retry,重试,Injection APS
+Excluding the affected commitment...,正在排除受影响的需求承诺...,Injection APS
+Requesting temporary override...,正在申请临时覆盖...,Injection APS
+Approve Temporary Override,批准临时覆盖,Injection APS
+Approving temporary override...,正在批准临时覆盖...,Injection APS
+Request Override,申请覆盖,Injection APS
+Request Temporary Override,申请临时覆盖,Injection APS
+Override Type,覆盖类型,Injection APS
+Expires On,到期时间,Injection APS
+Proposed Value,建议值,Injection APS
+Submit,提交,Injection APS
+Proposed Value must be valid JSON.,建议值必须是有效的 JSON。,Injection APS
+This constraint cannot be excluded from release.,此约束不允许通过排除需求来处理。,Injection APS
+"Planning input {0} has no unique active admitted commitment in Run {1}. Rebuild the demand baseline before recalculating.","计划输入 {0} 在试算 {1} 中没有唯一且有效的已准入承诺。请先重建需求基线，再重新计算。",Injection APS
+"P0 Commitment {0} no longer matches its customer schedule row. Rebuild the demand baseline before recalculating.","P0 需求承诺 {0} 与客户排期明细已不一致。请先重建需求基线，再重新计算。",Injection APS
+"P0 Commitment {0} fails quantity conservation. Rebuild the demand baseline before recalculating.","P0 需求承诺 {0} 的数量不守恒。请先重建需求基线，再重新计算。",Injection APS
+"Admitted P0 quantity from Commitment {0}.","来自需求承诺 {0} 的已准入 P0 数量。",Injection APS
+"Schedule Result {0} quantity no longer matches admitted Commitment {1}. Recalculate the Planning Run before analysis.","排产结果 {0} 的数量与已准入需求承诺 {1} 不一致。请重新计算计划运算后再分析。"
+Loading customer schedule progress...,正在加载客户排期进度...,Injection APS
+No progress data is shown because the selected scope could not be loaded.,因所选范围加载失败，当前不显示任何进度数据。,Injection APS
+Current Page Demand,当前页需求,Injection APS
+Current Page Status,当前页状态,Injection APS
+Cell color legend,单元格颜色图例,Injection APS
+Short / Late,短缺 / 延迟,Injection APS
+Progress Risk,进度风险,Injection APS
+Actual / Delivered,实际入库 / 已送货,Injection APS
+No quantity,无数量,Injection APS
+Update,更新,Injection APS
+Loading APS runs...,正在加载 APS 运算...,Injection APS
+APS runs could not be loaded for the selected scope.,无法加载所选范围内的 APS 运算。,Injection APS
+Temporary Risk Exception,临时风险例外,Injection APS
+Approve Temporary Risk Exception,批准临时风险例外,Injection APS
+Approving temporary risk exception...,正在批准临时风险例外...,Injection APS
+Request Exception,申请例外,Injection APS
+Request Temporary Risk Exception,申请临时风险例外,Injection APS
+"This exception only waives the named blocker until expiry. It does not change cycle time, capacity, compatibility, or other master data.",此例外仅在到期前豁免指定阻断项，不会更改周期、产能、兼容性或其他主数据。,Injection APS
+Planning Run changes must use the controlled APS planning service.,计划运算的变更必须通过受控的 APS 计划服务执行。
+Planning Run engine and approval fields are maintained by controlled APS actions: {0}.,计划运算的引擎及审批字段由受控的 APS 操作维护：{0}。
+{0} {1} is no longer linked to a Planning Run.,{0} {1} 已不再关联计划运算。,Injection APS
+delivery synchronization,送货同步,Injection APS
+Select a Customer before synchronizing deliveries.,同步送货前请选择客户。,Injection APS
+Select at least one Item before synchronizing deliveries.,同步送货前请至少选择一个物料。,Injection APS
+"Status filtering would scan too many schedule rows. Narrow the customer, item, or date range.",状态筛选将扫描过多排期明细。请缩小客户、物料或日期范围。,Injection APS
+Status filtering would scan too many customer/item groups. Narrow the filters or date range.,状态筛选将扫描过多客户与物料组合。请缩小筛选或日期范围。,Injection APS
+Cumulative APS coverage is {0} short of the customer schedule by this date.,截至该日期，APS 累计覆盖量比客户排期少 {0}。
+Actual inbound is {0} behind cumulative APS completions by this date.,截至该日期，实际入库量比 APS 累计完工量少 {0}。
+Delivered quantity is {0} short of the cumulative customer schedule by this date.,截至该日期，送货量比客户累计排期少 {0}。
+Existing Work Orders carry this quantity into the current demand plan.,现有工单将此数量承接到当前需求计划。,Injection APS
+BOM-derived APS Result(s) {0} have no Planning Run lineage before {1}.,由 BOM 派生的 APS 排产结果 {0} 在 {1} 前缺少计划运算血缘。
+BOM-derived APS Result evidence is invalid before {0}: {1},由 BOM 派生的 APS 排产结果证据在 {0} 前无效：{1}
+Negative admitted or planned quantity is invalid for Schedule Result {0}.,排产结果 {0} 的准入量或计划量不能为负数。
+BOM-derived Result evidence is invalid before solver reanalysis: {0},求解器重新分析前发现 BOM 派生结果证据无效：{0}
+missing Results: {0},缺失排产结果：{0}
+duplicate Results: {0},重复排产结果：{0}
+Results with no active demand commitment: {0},没有有效需求承诺的排产结果：{0}
+Planning Run {0} does not have a complete 1:1 admitted projection ({1}).,计划运算 {0} 没有完整的一对一准入投影（{1}）。
+Admitted projection quantities cannot be negative.,准入投影数量不能为负数。
+"Planning Run {0} admitted projection is not quantity-conserving: Results {1}, Commitments {2}.",计划运算 {0} 的准入投影数量不守恒：排产结果 {1}，需求承诺 {2}。
+company,公司,Injection APS
+customer,客户,Injection APS
+item,物料,Injection APS
+planning horizon,计划周期,Injection APS
+run type,运算类型,Injection APS
+existing work order policy,现有工单策略,Injection APS
+plant floor scope,车间范围,Injection APS
+The prepared demand baseline freezes {0}. Create a new Planning Run to change these inputs.,已准备的需求基线已冻结{0}。如需更改这些输入，请新建计划运算。
+"Planning input {0} has no unique active admitted commitment in Run {1}. Rebuild the demand baseline before recalculating.",计划输入 {0} 在计划运算 {1} 中没有唯一有效的已准入需求承诺。请先重建需求基线再重新计算。
+Admitted quantity {0} is below the minimum batch {1}; APS will not silently overproduce beyond the admitted quantity.,准入数量 {0} 低于最小批量 {1}；APS 不会在未提示的情况下超出准入数量生产。
+Adjust demand admission or approve an explicit constraint decision.,请调整需求准入，或明确批准一项约束处理决定。
+Planning Run {0} was not found.,未找到计划运算 {0}。,Injection APS
+P0 Commitment {0} no longer matches its customer schedule row. Rebuild the demand baseline before recalculating.,P0 需求承诺 {0} 与客户排期明细已不一致。请先重建需求基线再重新计算。
+P0 Commitment {0} fails quantity conservation. Rebuild the demand baseline before recalculating.,P0 需求承诺 {0} 数量不守恒。请先重建需求基线再重新计算。
+Admitted P0 quantity from Commitment {0}.,来自需求承诺 {0} 的已准入 P0 数量。
+Exception Type,例外类型,Injection APS
+The current solver does not support temporary constraint overrides. Correct the master data or exclude the affected demand.,当前求解器不支持临时约束例外。请修正主数据或排除受影响的需求。,Injection APS
+New Planning Runs must start in Draft/Pending state without engine results: {0}.,新的计划运算必须以不含引擎结果的草稿/待处理状态开始：{0}。
+This APS payload includes records or linked references outside your permitted scope.,此 APS 数据包含超出您权限范围的记录或关联引用。
+Temporary override fingerprint chain is cyclic. Analyze again after correcting the resolution records.,临时例外的指纹链出现循环。请修正约束处理记录后重新分析。,Injection APS
+"CP-SAT does not implement temporary constraint override semantics. Supersede the approved override, correct the constraint, or exclude the affected demand before analysis.",CP-SAT 尚未实现临时约束例外语义。请作废已批准的例外、修正约束或在分析前排除受影响的需求。
+Fixed production coverage {0} exceeds admitted quantity {1} for Schedule Result {2}. Reconcile execution before analysis.,排产结果 {2} 的固定生产覆盖量 {0} 超过准入数量 {1}。请在分析前核对执行数据。
+Excluded APS result(s) cannot be released to Work Orders: {0}. Regenerate the proposal batch.,已排除的 APS 排产结果不能下达到工单：{0}。请重新生成建议批次。
+The current CP-SAT solver does not support temporary constraint overrides. Correct the master data or exclude the affected demand.,当前 CP-SAT 求解器不支持临时约束例外。请修正主数据或排除受影响的需求。
+New Planning Runs must start without a precomputed planning window or engine results: {0}.,新的计划运算必须在没有预先计算的计划窗口或引擎结果时开始：{0}。
+This APS payload includes linked records outside your permitted scope.,此 APS 数据包含超出您权限范围的关联记录。
+Remaining admitted quantity {0} is below minimum batch {1} for Schedule Result {2}.,排产结果 {2} 的剩余准入数量 {0} 低于最小批量 {1}。
+Manufactured BOM demand {0} quantity {1} is below minimum batch {2}.,制造型 BOM 需求 {0} 的数量 {1} 低于最小批量 {2}。
+Admitted Commitment {0} has no Schedule Result.,已准入需求承诺 {0} 没有对应的排产结果。
+Admitted Commitment {0} has duplicate Schedule Results.,已准入需求承诺 {0} 存在重复的排产结果。
+Schedule Result {0} has no active admitted Commitment.,排产结果 {0} 没有有效的已准入需求承诺。
+Invalid CP-SAT solver input.,CP-SAT 求解器输入无效。,Injection APS
+This APS record links to data outside your permitted scope.,此 APS 记录关联了超出您权限范围的数据。
+The source Delivery Note Item no longer belongs to this delivery row.,源送货单明细已不再属于这条待分配交付记录。
+The selected Demand Identity current schedule row is no longer valid.,所选需求标识当前关联的排期明细已失效。
+A cancellation proposal no longer matches its Scheduling Item.,取消建议已不再匹配对应的排产明细。
+A proposal Scheduling Item no longer belongs to its parent schedule.,建议中的排产明细已不再属于对应的排产单。
+The shift schedule preview permission scope is incomplete. Refresh and retry.,班次排产预览的权限范围不完整。请刷新后重试。
+Schedule Result {0} no longer matches the admitted demand and frozen production-lot boundary for Commitment {1}. Recalculate the Planning Run before analysis.,排产结果 {0} 已不再匹配需求承诺 {1} 的准入需求量及冻结生产批量边界。请重新计算计划运算后再分析。
+Schedule Result {0} has no frozen production quantity evidence.,排产结果 {0} 缺少冻结的生产数量依据。
+Fixed production coverage {0} exceeds production boundary {1} for Schedule Result {2}. Reconcile execution before analysis.,排产结果 {2} 的固定生产覆盖量 {0} 超过生产边界 {1}。请在分析前核对执行数据。

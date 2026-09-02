@@ -60,8 +60,20 @@ def collapse_family_demands_for_solver(demands: list[dict[str, Any]]) -> tuple[l
 			if any(value <= 0 for value in outputs_by_item.values()):
 				continue
 			required_cycles = max(int(math.ceil(flt(row.get("quantity")) / outputs_by_item[row["item_code"]])) for row in candidates)
+			minimum_batch_cycles = max(
+				int(
+					math.ceil(
+						flt(row.get("minimum_batch_qty"))
+						/ outputs_by_item[row["item_code"]]
+					)
+				)
+				for row in candidates
+			)
 			owner_copy = dict(owner)
 			owner_copy["quantity"] = required_cycles * outputs_by_item[owner["item_code"]]
+			owner_copy["minimum_batch_qty"] = (
+				minimum_batch_cycles * outputs_by_item[owner["item_code"]]
+			)
 			owner_copy["alternatives"] = [
 				{**alt, "output_per_cycle": outputs_by_item[owner["item_code"]]}
 				for alt in owner.get("alternatives") or []

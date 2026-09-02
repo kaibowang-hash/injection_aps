@@ -1,18 +1,16 @@
 frappe.pages["aps-run-console"].on_page_load = function (wrapper) {
-	frappe.require("/assets/injection_aps/js/injection_aps_ui_loader.js", () => {
-		ensureInjectionAPSRunConsoleStyles();
-		injection_aps.ui_loader.start("20260821.2", () => {
-			if (!wrapper.injection_aps_controller) {
-				wrapper.injection_aps_controller = new InjectionAPSRunConsole(wrapper);
-			}
-			wrapper.injection_aps_controller.refresh();
-		});
+	ensureInjectionAPSRunConsoleStyles();
+	injection_aps.ui_loader.start("20260901.1", () => {
+		if (!wrapper.injection_aps_controller) {
+			wrapper.injection_aps_controller = new InjectionAPSRunConsole(wrapper);
+		}
+		wrapper.injection_aps_controller.refresh();
 	});
 };
 
 function ensureInjectionAPSRunConsoleStyles() {
 	const styleId = "injection-aps-run-console-style";
-	const styleHref = "/assets/injection_aps/css/aps_run_console.css?v=20260821.2";
+	const styleHref = "/assets/injection_aps/css/aps_run_console.css?v=20260901.1";
 	let style = document.getElementById(styleId);
 	if (!style) {
 		style = document.createElement("link");
@@ -27,6 +25,7 @@ function ensureInjectionAPSRunConsoleStyles() {
 
 frappe.pages["aps-run-console"].on_page_show = function (wrapper) {
 	if (wrapper.injection_aps_controller) {
+		wrapper.injection_aps_controller.syncRouteState();
 		wrapper.injection_aps_controller.refresh();
 	}
 };
@@ -38,6 +37,8 @@ class InjectionAPSRunConsole {
 		this.targetRun = frappe.utils.get_url_arg("run_name") || "";
 		this.fromAdmission = frappe.utils.get_url_arg("from_admission") || "";
 		this.targetRunOpened = false;
+		this.refreshGeneration = 0;
+		this.loadingKey = "";
 		this.v2Enabled = false;
 		this.page = frappe.ui.make_app_page({
 			parent: wrapper,
@@ -50,14 +51,14 @@ class InjectionAPSRunConsole {
 			options: "Company",
 			label: __("Company", null, "Injection APS"),
 			default: frappe.defaults.get_user_default("Company"),
-			change: () => this.refresh(),
+			change: () => this.handleScopeChange(),
 		});
 		this.plantFloorField = this.page.add_field({
 			fieldtype: "Link",
 			fieldname: "plant_floor",
 			options: "Plant Floor",
 			label: __("Plant Floor", null, "Injection APS"),
-			change: () => this.refresh(),
+			change: () => this.handleScopeChange(),
 		});
 		if (injection_aps.ui.can_run_action("run_trial")) {
 			this.page.set_primary_action(__("Recalculate"), () => this.openRunDialog());
@@ -80,15 +81,42 @@ class InjectionAPSRunConsole {
 		this.table = this.page.main.find(".ia-run-table")[0];
 	}
 
+	handleScopeChange() {
+		this.targetRun = "";
+		this.fromAdmission = "";
+		this.targetRunOpened = false;
+		this.refresh();
+	}
+
+	syncRouteState() {
+		const targetRun = frappe.utils.get_url_arg("run_name") || "";
+		const fromAdmission = frappe.utils.get_url_arg("from_admission") || "";
+		if (targetRun === this.targetRun && fromAdmission === this.fromAdmission) return false;
+		this.targetRun = targetRun;
+		this.fromAdmission = fromAdmission;
+		this.targetRunOpened = false;
+		this.loadingKey = "";
+		this.refreshGeneration += 1;
+		return true;
+	}
+
 	async refresh() {
 		injection_aps.ui.ensure_styles();
+		const args = {
+			company: this.companyField.get_value() || undefined,
+			plant_floor: this.plantFloorField.get_value() || undefined,
+			run_name: this.targetRun || undefined,
+		};
+		const loadingKey = JSON.stringify(args);
+		if (this.loadingKey === loadingKey) return;
+		const generation = ++this.refreshGeneration;
+		this.loadingKey = loadingKey;
 		injection_aps.ui.set_feedback(this.feedback, __("Loading APS runs..."));
+		this.workflowHost.innerHTML = "";
+		this.table.innerHTML = `<div class="text-muted">${__("Loading APS runs...", null, "Injection APS")}</div>`;
 		try {
-			const data = await frappe.xcall("injection_aps.api.app.get_run_console_data", {
-				company: this.companyField.get_value() || undefined,
-				plant_floor: this.plantFloorField.get_value() || undefined,
-				run_name: this.targetRun || undefined,
-			});
+			const data = await frappe.xcall("injection_aps.api.app.get_run_console_data", args);
+			if (generation !== this.refreshGeneration) return;
 			this.v2Enabled = Number(data.v2_enabled || 0) === 1;
 			if (injection_aps.ui.can_run_action("run_trial")) {
 				this.page.set_primary_action(
@@ -108,8 +136,13 @@ class InjectionAPSRunConsole {
 				this.fromAdmission ? "warning" : ""
 			);
 		} catch (error) {
+			if (generation !== this.refreshGeneration) return;
 			console.error(error);
+			this.workflowHost.innerHTML = "";
+			this.table.innerHTML = `<div class="alert alert-danger">${__("APS runs could not be loaded for the selected scope.", null, "Injection APS")}</div>`;
 			injection_aps.ui.set_feedback(this.feedback, __("Failed to load APS runs."), "error");
+		} finally {
+			if (generation === this.refreshGeneration) this.loadingKey = "";
 		}
 	}
 

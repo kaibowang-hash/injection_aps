@@ -14,6 +14,39 @@ def _raise_validation(message, *args, **kwargs):
 
 
 class TestProductionSyncPolicies(unittest.TestCase):
+	def test_non_aps_scheduling_item_does_not_force_manufacture_into_aps(self):
+		doc = execution_sync.frappe._dict(
+			name="STE-1",
+			purpose="Manufacture",
+			work_order="WO-1",
+			work_order_scheduling="WOS-1",
+			custom_aps_scheduling_item="SI-1",
+		)
+		work_order = execution_sync.frappe._dict(
+			production_item="FG-1",
+			scrap_warehouse="SCRAP-WH",
+		)
+		non_aps_item = execution_sync.frappe._dict(
+			custom_aps_run=None,
+			custom_aps_result_reference=None,
+			custom_aps_segment_reference=None,
+			custom_aps_campaign=None,
+		)
+		with (
+			patch.object(
+				execution_sync.frappe.db,
+				"get_value",
+				side_effect=[work_order, non_aps_item, None],
+			),
+			patch.object(execution_sync, "_get_eligible_work_order_runs", return_value=[]),
+			patch.object(execution_sync, "_get_run_segment_contexts") as get_contexts,
+			patch.object(execution_sync.frappe.db, "sql") as sql,
+		):
+			execution_sync.validate_manufacture_before_submit(doc)
+
+		get_contexts.assert_not_called()
+		sql.assert_not_called()
+
 	def test_submit_validation_uses_same_scrap_warehouse_signal_as_reconciliation(self):
 		doc = execution_sync.frappe._dict(
 			{
@@ -1018,6 +1051,52 @@ class TestDeliverySyncPolicies(unittest.TestCase):
 		)
 		self.assertEqual(len({call.kwargs["job_id"] for call in enqueue.call_args_list}), 2)
 		self.assertTrue(all("isolate_source_errors" not in call.kwargs for call in enqueue.call_args_list))
+
+	def test_cancel_immediately_retires_delivery_artifacts_without_user_aps_permissions(self):
+		doc = delivery_sync.frappe._dict({"name": "DN-CANCELLED"})
+		allocation = delivery_sync.frappe._dict(
+			{"name": "ALLOC-1", "effective_qty": 12, "reversed_qty": 3}
+		)
+
+		def get_all(doctype, **kwargs):
+			if doctype == "APS Unallocated Delivery":
+				return ["QUEUE-1"]
+			if doctype == "APS Delivery Allocation":
+				return [allocation]
+			return []
+
+		frappe_mock = MagicMock()
+		frappe_mock.get_all.side_effect = get_all
+		with (
+			patch.object(delivery_sync, "frappe", frappe_mock),
+			patch.object(delivery_sync, "now_datetime", return_value="2026-08-31 12:19:05"),
+		):
+			delivery_sync.retire_delivery_artifacts(doc, method="on_cancel")
+
+		set_value = frappe_mock.db.set_value
+		self.assertEqual(set_value.call_count, 2)
+		queue_call, allocation_call = set_value.call_args_list
+		self.assertEqual(queue_call.args[:2], ("APS Unallocated Delivery", "QUEUE-1"))
+		self.assertEqual(queue_call.args[2]["status"], "Source Cancelled")
+		self.assertEqual(queue_call.args[2]["unallocated_qty"], 0)
+		self.assertEqual(allocation_call.args[:2], ("APS Delivery Allocation", "ALLOC-1"))
+		self.assertEqual(allocation_call.args[2]["source_docstatus"], 2)
+		self.assertEqual(allocation_call.args[2]["effective_qty"], 0)
+		self.assertEqual(allocation_call.args[2]["reversed_qty"], 12)
+
+	def test_delete_removes_derived_aps_links_with_system_permissions(self):
+		doc = delivery_sync.frappe._dict({"name": "DN-CANCELLED"})
+		frappe_mock = MagicMock()
+		with patch.object(delivery_sync, "frappe", frappe_mock):
+			delivery_sync.delete_delivery_artifacts(doc, method="on_trash")
+
+		self.assertEqual(
+			[call.args for call in frappe_mock.db.delete.call_args_list],
+			[
+				("APS Unallocated Delivery", {"source_delivery_note": "DN-CANCELLED"}),
+				("APS Delivery Allocation", {"source_delivery_note": "DN-CANCELLED"}),
+			],
+		)
 
 	def test_delivery_planning_run_locks_are_sorted_and_exclusive(self):
 		with patch.object(delivery_sync.frappe.db, "sql") as sql:

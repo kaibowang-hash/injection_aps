@@ -7,7 +7,13 @@ from unittest.mock import MagicMock, call, patch
 
 import frappe
 
-from injection_aps.services import demand_admission, demand_ledger, planning, run_preparation
+from injection_aps.services import (
+	demand_admission,
+	demand_ledger,
+	planning,
+	run_preparation,
+	solver_orchestration,
+)
 
 
 APP_ROOT = Path(__file__).resolve().parents[1]
@@ -15,6 +21,9 @@ APP_ROOT = Path(__file__).resolve().parents[1]
 
 class TestAdmissionGuidedFlow(unittest.TestCase):
 	def setUp(self):
+		self.original_flags = getattr(frappe.local, "flags", None)
+		self.original_session = getattr(frappe.local, "session", None)
+		self.original_db = getattr(frappe.local, "db", None)
 		frappe.local.flags = frappe._dict(in_test=True)
 		frappe.local.session = frappe._dict(user="pmc@example.com")
 		frappe.local.db = MagicMock()
@@ -25,6 +34,11 @@ class TestAdmissionGuidedFlow(unittest.TestCase):
 		)
 		translation.start()
 		self.addCleanup(translation.stop)
+
+	def tearDown(self):
+		frappe.local.flags = self.original_flags
+		frappe.local.session = self.original_session
+		frappe.local.db = self.original_db
 
 	def test_planning_run_schema_tracks_confirmation_and_calculation_fingerprints(self):
 		data = json.loads(
@@ -72,6 +86,7 @@ class TestAdmissionGuidedFlow(unittest.TestCase):
 			name="RUN-1",
 			demand_horizon_end_date="2026-08-31",
 			planning_date="2026-08-21",
+			existing_work_order_policy="Include",
 		)
 		commitment = frappe._dict(
 			name="COM-1",
@@ -95,11 +110,414 @@ class TestAdmissionGuidedFlow(unittest.TestCase):
 		self.assertEqual(rows[0].net_requirement_qty, 37.5)
 		self.assertEqual(rows[0].demand_commitment, "COM-1")
 		self.assertEqual(rows[0].source_doctype, "APS Demand Commitment")
+		self.assertEqual(rows[0].demand_source, "Forecast")
 		self.assertEqual(str(rows[0].demand_date), "2026-08-31")
+		baseline = json.loads(rows[0].fulfillment_baseline_json)
+		self.assertEqual(baseline["version"], 4)
+		self.assertEqual(baseline["net_requirement"]["planning_qty"], 37.5)
+		self.assertEqual(baseline["sales_order_items"], [])
 		filters = get_all.call_args.kwargs["filters"]
 		self.assertEqual(filters["customer"], "CUST-1")
 		self.assertEqual(filters["item_code"], "ITEM-1")
 		self.assertEqual(filters["newly_planned_qty"][0], ">")
+
+	def test_v2_planning_input_uses_run_owned_commitment_quantities(self):
+		run = frappe._dict(
+			name="RUN-1",
+			company="COMPANY-1",
+			existing_work_order_policy="Include",
+		)
+		commitment = frappe._dict(
+			name="COM-P0",
+			company="COMPANY-1",
+			customer="CUST-1",
+			item_code="ITEM-1",
+			demand_identity="DEMAND-1",
+			schedule_item="SCH-ITEM-1",
+			original_due_date="2026-08-31",
+			requested_qty=100,
+			stock_covered_qty=25,
+			carried_qty=15,
+			newly_planned_qty=60,
+			source_work_orders_json="[]",
+			source_snapshot_json=json.dumps(
+				{
+					"schedule_item": "SCH-ITEM-1",
+					"demand_identity": "DEMAND-1",
+					"customer": "CUST-1",
+					"item_code": "ITEM-1",
+					"effective_due_date": "2026-09-02",
+					"effective_qty": 120,
+					"delivered_qty": 20,
+					"schedule_open_qty": 100,
+				}
+			),
+			exclude_from_release=0,
+		)
+		schedule_item = frappe._dict(
+			name="SCH-ITEM-1",
+			parent="SCH-1",
+			demand_identity="DEMAND-1",
+			item_code="ITEM-1",
+			sales_order="SO-1",
+			schedule_date="2026-08-31",
+			effective_schedule_date="2026-09-02",
+			qty=100,
+			effective_qty=120,
+			allocated_qty=10,
+			produced_qty=5,
+			delivered_qty=20,
+			status="Open",
+			production_strategy="Auto Balance",
+			demand_confidence="Confirmed",
+			prebuild_allowed=1,
+		)
+		schedule = frappe._dict(
+			name="SCH-1",
+			company="COMPANY-1",
+			customer="CUST-1",
+			source_type="Customer Delivery Schedule",
+			status="Active",
+		)
+		optional = frappe._dict(
+			name=None,
+			demand_commitment="COM-P1",
+			planning_qty=37.5,
+			admitted_planning_qty=37.5,
+		)
+		with (
+			patch.object(demand_ledger.frappe, "get_doc", return_value=run),
+			patch.object(
+				demand_ledger.frappe,
+				"get_all",
+				side_effect=[[commitment], [schedule_item], [schedule]],
+			),
+			patch.object(
+				demand_ledger,
+				"get_selected_optional_planning_rows",
+				return_value=[optional],
+			),
+			patch.object(
+				demand_ledger.delivery_fulfillment,
+				"get_schedule_delivery_lower_bounds",
+				return_value={"SCH-ITEM-1": 20},
+			),
+			patch.object(planning, "_resolve_unique_sales_order_item", return_value="SO-ITEM-1"),
+			patch.object(demand_ledger, "_", side_effect=lambda message, *args, **kwargs: message),
+		):
+			rows = demand_ledger.get_admitted_planning_rows("RUN-1")
+
+		self.assertEqual(len(rows), 2)
+		self.assertEqual(rows[0].demand_commitment, "COM-P0")
+		self.assertEqual(rows[0].demand_qty, 100)
+		self.assertEqual(rows[0].available_stock_qty, 25)
+		self.assertEqual(rows[0].open_work_order_qty, 15)
+		self.assertEqual(rows[0].admitted_planning_qty, 60)
+		self.assertEqual(str(rows[0].demand_date), "2026-09-02")
+		self.assertEqual(rows[0].sales_order_item, "SO-ITEM-1")
+		baseline = json.loads(rows[0].fulfillment_baseline_json)
+		self.assertEqual(baseline["version"], 4)
+		self.assertEqual(baseline["net_requirement"]["base_residual_qty"], 60)
+		self.assertEqual(baseline["targets"][0]["source_open_qty"], 100)
+		self.assertEqual(baseline["targets"][0]["opening_required_qty"], 120)
+		self.assertEqual(baseline["targets"][0]["opening_delivered_qty"], 20)
+		self.assertEqual(rows[1], optional)
+
+	def test_v2_projection_fails_closed_when_schedule_changed_after_baseline(self):
+		commitment = frappe._dict(
+			name="COM-P0",
+			company="COMPANY-1",
+			customer="CUST-1",
+			item_code="ITEM-1",
+			demand_identity="DEMAND-1",
+			schedule_item="SCH-ITEM-1",
+			requested_qty=100,
+			source_snapshot_json=json.dumps(
+				{
+					"schedule_item": "SCH-ITEM-1",
+					"demand_identity": "DEMAND-1",
+					"customer": "CUST-1",
+					"item_code": "ITEM-1",
+					"effective_due_date": "2026-09-02",
+					"effective_qty": 120,
+					"delivered_qty": 20,
+					"schedule_open_qty": 100,
+				}
+			),
+		)
+		schedule_item = frappe._dict(
+			name="SCH-ITEM-1",
+			parent="SCH-1",
+			demand_identity="DEMAND-1",
+			item_code="ITEM-1",
+			schedule_date="2026-08-31",
+			effective_schedule_date="2026-09-03",
+			qty=100,
+			effective_qty=120,
+			delivered_qty=20,
+			status="Open",
+		)
+		parent = frappe._dict(
+			name="SCH-1",
+			company="COMPANY-1",
+			customer="CUST-1",
+			status="Active",
+		)
+		with (
+			patch.object(
+				demand_ledger.frappe,
+				"get_doc",
+				return_value=frappe._dict(name="RUN-1", company="COMPANY-1"),
+			),
+			patch.object(demand_ledger.frappe, "get_all", side_effect=[[commitment], [schedule_item], [parent]]),
+			patch.object(
+				demand_ledger.delivery_fulfillment,
+				"get_schedule_delivery_lower_bounds",
+				return_value={"SCH-ITEM-1": 20},
+			),
+			patch.object(
+				demand_ledger.frappe,
+				"throw",
+				side_effect=lambda message, *_args, **_kwargs: (_ for _ in ()).throw(ValueError(message)),
+			),
+			patch.object(demand_ledger, "_", side_effect=lambda message, *args, **kwargs: message),
+		):
+			with self.assertRaisesRegex(ValueError, "no longer matches"):
+				demand_ledger.get_admitted_planning_rows("RUN-1")
+
+	def test_solver_target_rejects_stale_non_admitted_quantity(self):
+		result = frappe._dict(
+			name="RES-1",
+			planned_qty=100,
+			fulfillment_baseline_json=json.dumps(
+				{
+					"net_requirement": {
+						"net_requirement_qty": 40,
+						"planning_qty": 100,
+						"minimum_batch_qty": 100,
+						"open_work_order_qty": 0,
+					}
+				}
+			),
+		)
+		commitment = frappe._dict(name="COM-1", newly_planned_qty=37.5)
+		with patch.object(solver_orchestration, "_", side_effect=lambda message, *args, **kwargs: message):
+			with self.assertRaisesRegex(solver_orchestration.SolverInputBlocked, "no longer matches"):
+				solver_orchestration._admitted_result_target(result, commitment)
+
+	def test_admission_batch_boundary_keeps_demand_800_and_plans_1200(self):
+		row = frappe._dict(
+			admitted_planning_qty=800,
+			net_requirement_qty=800,
+			open_work_order_qty=0,
+			fulfillment_baseline_json=json.dumps(
+				{
+					"version": 4,
+					"net_requirement": {
+						"net_requirement_qty": 800,
+						"planning_qty": 800,
+						"open_work_order_qty": 0,
+						"minimum_batch_qty": 0,
+						"new_batch_surplus_qty": 0,
+						"is_safety_stock_group": 0,
+					}
+				}
+			),
+		)
+
+		planning._apply_admission_batch_evidence(row, 1200)
+
+		self.assertEqual(row.admitted_planning_qty, 800)
+		self.assertEqual(row.planning_qty, 1200)
+		self.assertEqual(planning._net_requirement_production_target_qty(row), 1200)
+		evidence = json.loads(row.fulfillment_baseline_json)["net_requirement"]
+		self.assertEqual(evidence["minimum_batch_qty"], 1200)
+		self.assertEqual(evidence["new_batch_surplus_qty"], 400)
+
+		result = frappe._dict(
+			name="RES-1",
+			planned_qty=1200,
+			fulfillment_baseline_json=row.fulfillment_baseline_json,
+		)
+		commitment = frappe._dict(name="COM-1", newly_planned_qty=800)
+		self.assertEqual(
+			solver_orchestration._admitted_result_target(result, commitment),
+			1200,
+		)
+
+		outcome = frappe._dict(
+			on_time_units=900_000,
+			late_units=300_000,
+			unscheduled_units=0,
+		)
+		self.assertEqual(
+			solver_orchestration._commitment_outcome_quantities(
+				commitment,
+				outcome,
+				scale=1000,
+			),
+			{"on_time_qty": 800, "late_qty": 0, "unscheduled_qty": 0},
+		)
+
+	def test_solver_outcome_keeps_late_carried_supply_in_commitment_partition(self):
+		commitment = frappe._dict(carried_qty=60, newly_planned_qty=800)
+		outcome = frappe._dict(
+			on_time_units=800_000,
+			late_units=60_000,
+			unscheduled_units=0,
+		)
+
+		self.assertEqual(
+			solver_orchestration._commitment_outcome_quantities(
+				commitment,
+				outcome,
+				scale=1000,
+			),
+			{"on_time_qty": 800, "late_qty": 60, "unscheduled_qty": 0},
+		)
+
+	def test_admission_guided_recalculation_rejects_frozen_input_changes(self):
+		run = frappe._dict(
+			name="RUN-1",
+			company="COMPANY-1",
+			planning_customer_filter="CUST-1",
+			planning_item_filter="ITEM-1",
+			horizon_days=14,
+			run_type="Trial",
+			existing_work_order_policy="Include",
+			selected_plant_floors=[frappe._dict(plant_floor="FLOOR-1")],
+		)
+		changes = (
+			{"company": "COMPANY-2"},
+			{"customer": "CUST-2"},
+			{"item_code": "ITEM-2"},
+			{"horizon_days": 7},
+			{"run_type": "Formal"},
+			{"existing_work_order_policy": "Exclude"},
+			{"plant_floors": ["FLOOR-2"]},
+		)
+		with (
+			patch.object(planning, "_resolve_item_name", side_effect=lambda value: value),
+			patch.object(planning, "_", side_effect=lambda message, *args, **kwargs: message),
+			patch.object(
+				planning.frappe,
+				"throw",
+				side_effect=lambda message, *_args, **_kwargs: (_ for _ in ()).throw(ValueError(message)),
+			),
+		):
+			for change in changes:
+				with self.subTest(change=change), self.assertRaisesRegex(ValueError, "baseline freezes"):
+					planning._frozen_admission_recalculation_inputs(
+						run,
+						{"planning_horizon_days": 30},
+						**change,
+					)
+
+	def test_admission_guided_recalculation_uses_run_owned_inputs(self):
+		run = frappe._dict(
+			company="COMPANY-1",
+			planning_customer_filter="CUST-1",
+			planning_item_filter="ITEM-1",
+			horizon_days=14,
+			run_type="Trial",
+			existing_work_order_policy="Include",
+			selected_plant_floors=[frappe._dict(plant_floor="FLOOR-1")],
+		)
+		frozen = planning._frozen_admission_recalculation_inputs(
+			run,
+			{"planning_horizon_days": 30},
+		)
+		self.assertEqual(
+			frozen,
+			{
+				"company": "COMPANY-1",
+				"customer": "CUST-1",
+				"item_code": "ITEM-1",
+				"horizon_days": 14,
+				"run_type": "Trial",
+				"existing_work_order_policy": "Include",
+				"plant_floors": ["FLOOR-1"],
+			},
+		)
+
+	def test_solver_projection_requires_exactly_one_result_per_commitment(self):
+		commitments = [
+			frappe._dict(name="COM-1", newly_planned_qty=10, exclude_from_release=0),
+			frappe._dict(name="COM-2", newly_planned_qty=20, exclude_from_release=0),
+		]
+		with patch.object(solver_orchestration, "_", side_effect=lambda message, *args, **kwargs: message):
+			with self.assertRaisesRegex(solver_orchestration.SolverInputBlocked, "missing Results: COM-2"):
+				solver_orchestration._validate_admitted_projection(
+					"RUN-1",
+					[frappe._dict(name="RES-1", demand_commitment="COM-1", planned_qty=10)],
+					commitments,
+				)
+			with self.assertRaisesRegex(solver_orchestration.SolverInputBlocked, "duplicate Results: COM-1"):
+				solver_orchestration._validate_admitted_projection(
+					"RUN-1",
+					[
+						frappe._dict(name="RES-1", demand_commitment="COM-1", planned_qty=5),
+						frappe._dict(name="RES-2", demand_commitment="COM-1", planned_qty=5),
+						frappe._dict(name="RES-3", demand_commitment="COM-2", planned_qty=20),
+					],
+					commitments,
+				)
+
+	def test_solver_projection_allows_audited_minimum_batch_surplus(self):
+		results = [
+			frappe._dict(name="RES-1", demand_commitment="COM-1", planned_qty=100),
+			frappe._dict(name="RES-2", demand_commitment="COM-2", planned_qty=20),
+		]
+		commitments = [
+			frappe._dict(name="COM-1", newly_planned_qty=10, exclude_from_release=0),
+			frappe._dict(name="COM-2", newly_planned_qty=20, exclude_from_release=0),
+		]
+		projected = solver_orchestration._validate_admitted_projection(
+			"RUN-1", results, commitments
+		)
+		self.assertEqual(set(projected), {"COM-1", "COM-2"})
+
+	def test_v2_direct_commitment_must_belong_to_the_same_run(self):
+		row = frappe._dict(demand_commitment="COM-P1")
+		with patch.object(planning.frappe.db, "get_value", return_value=None) as get_value:
+			self.assertIsNone(planning._get_v2_commitment_for_result("RUN-1", row))
+
+		filters = get_value.call_args.args[1]
+		self.assertEqual(filters["name"], "COM-P1")
+		self.assertEqual(filters["planning_run"], "RUN-1")
+		self.assertNotIn("Cancelled", filters["status"][1])
+
+	def test_solver_input_rejects_result_without_active_run_owned_commitment(self):
+		run = frappe._dict(
+			name="RUN-1",
+			company="COMPANY-1",
+			horizon_start="2026-08-21 00:00:00",
+		)
+		result = frappe._dict(
+			name="RES-1",
+			demand_commitment="COM-OTHER-RUN",
+		)
+		with (
+			patch.object(planning, "get_settings_dict", return_value={}),
+			patch.object(
+				solver_orchestration.horizon_status,
+				"run_horizon_values",
+				return_value={"start_date": "2026-08-21", "solver_end_datetime": "2026-08-22 00:00:00"},
+			),
+			patch.object(
+				solver_orchestration.frappe,
+				"get_all",
+				side_effect=[[result], [], []],
+			) as get_all,
+			patch.object(solver_orchestration, "_", side_effect=lambda message, *args, **kwargs: message),
+		):
+			with self.assertRaisesRegex(solver_orchestration.SolverInputBlocked, "no active demand commitment"):
+				solver_orchestration._build_normalized_source(run)
+
+		commitment_filters = get_all.call_args_list[2].kwargs["filters"]
+		self.assertNotIn("name", commitment_filters)
+		self.assertEqual(commitment_filters["planning_run"], "RUN-1")
+		self.assertEqual(commitment_filters["status"], ("in", demand_ledger.ACTIVE_COMMITMENT_STATUSES))
 
 	def test_zero_optional_quantity_is_saved_as_an_explicit_exclusion(self):
 		run = frappe._dict(
@@ -258,6 +676,7 @@ class TestAdmissionGuidedFlow(unittest.TestCase):
 			horizon_start="2026-08-21 09:00:00",
 			planning_date="2026-08-21",
 			horizon_days=14,
+			flags=frappe._dict(),
 		)
 		run.insert = MagicMock()
 		with (
