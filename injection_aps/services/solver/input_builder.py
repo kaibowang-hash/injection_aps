@@ -65,6 +65,7 @@ def build_solver_input(source: dict[str, Any]) -> SolverInput:
 				due_minute=_minute(row.get("due_time"), horizon_start),
 				earliest_minute=max(_minute(row.get("earliest_time") or horizon_start, horizon_start), 0),
 				service_priority=int(row.get("service_priority") or 0),
+				minimum_batch_units=max(_units(row.get("minimum_batch_qty") or 0, scale), 0),
 				original_due_minute=_minute(row.get("original_due_time"), horizon_start) if row.get("original_due_time") else None,
 				fixed_on_time_units=max(_units(row.get("fixed_on_time_qty") or 0, scale), 0),
 				fixed_late_units=max(_units(row.get("fixed_late_qty") or 0, scale), 0),

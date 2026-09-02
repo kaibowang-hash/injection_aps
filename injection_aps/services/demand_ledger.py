@@ -145,7 +145,7 @@ def prepare_run_demand_baseline(
 			"status": "Proposed",
 			"formal_owner": formal_owner,
 			"original_due_date": demand.get("original_due_date"),
-			"effective_due_time": None,
+			"effective_due_time": f"{getdate(demand.get('effective_due_date') or demand.get('original_due_date'))} 23:59:59",
 			"overdue_at_run_start": overdue_at_run_start,
 			"horizon_zone": horizon_zone,
 			"requested_qty": demand["schedule_open_qty"],
@@ -370,11 +370,13 @@ def get_selected_optional_planning_rows(
 		fields=[
 			"name", "customer", "item_code", "admission", "admission_class",
 			"original_due_date", "effective_due_time", "newly_planned_qty",
+			"exclude_from_release", "exclusion_reason",
 		],
 		order_by="admission_class asc, customer asc, item_code asc, name asc",
 		limit_page_length=0,
 	)
 	rows = []
+	existing_work_order_policy = run.get("existing_work_order_policy") or "Include"
 	for commitment in commitments:
 		qty = max(flt(commitment.get("newly_planned_qty")), 0)
 		if qty <= QTY_TOLERANCE:
@@ -387,11 +389,39 @@ def get_selected_optional_planning_rows(
 		)
 		admission_class = commitment.get("admission_class") or "P2"
 		snapshot = {
-			"source": "APS Demand Admission",
+			"demand_pool": commitment.get("name"),
+			"source_doctype": "Item" if admission_class == "P2" else "APS Demand Admission",
+			"source_name": (
+				commitment.get("item_code")
+				if admission_class == "P2"
+				else commitment.get("admission")
+			),
+			"source_detail_name": None,
 			"admission": commitment.get("admission"),
 			"commitment": commitment.get("name"),
 			"admission_class": admission_class,
-			"confirmed_qty": qty,
+			"qty": qty,
+		}
+		baseline = {
+			"version": 4,
+			"net_requirement": {
+				"formula_version": 1,
+				"demand_qty": qty,
+				"available_stock_qty": 0,
+				"open_work_order_qty": 0,
+				"existing_work_order_policy": existing_work_order_policy,
+				"safety_stock_gap_qty": 0,
+				"minimum_batch_qty": 0,
+				"minimum_batch_coverage_qty": 0,
+				"base_residual_qty": qty,
+				"net_requirement_qty": qty,
+				"planning_qty": qty,
+				"new_batch_surplus_qty": 0,
+				"is_safety_stock_group": cint(admission_class == "P2"),
+			},
+			"targets": [],
+			"sales_order_items": [],
+			"optional_admission": snapshot,
 		}
 		rows.append(
 			frappe._dict(
@@ -409,6 +439,9 @@ def get_selected_optional_planning_rows(
 					"available_stock_qty": 0,
 					"open_work_order_qty": 0,
 					"planning_qty": qty,
+					"admitted_planning_qty": qty,
+					"exclude_from_release": cint(commitment.get("exclude_from_release")),
+					"exclusion_reason": commitment.get("exclusion_reason"),
 					"minimum_batch_qty": 0,
 					"production_strategy": "Auto Balance",
 					"demand_confidence": "Forecast",
@@ -420,15 +453,243 @@ def get_selected_optional_planning_rows(
 						"Confirmed {0} optional admission quantity.",
 						context="Injection APS",
 					).format(admission_class),
-					"demand_source": "Sales Order Backlog" if admission_class == "P1" else "Safety Stock",
-					"demand_source_snapshot_json": json.dumps(snapshot, ensure_ascii=True, sort_keys=True),
-					"fulfillment_baseline_json": json.dumps(
-						{"optional_admission": snapshot}, ensure_ascii=True, sort_keys=True
-					),
+					# P1 is currently a Customer/Item aggregate rather than an exact SO
+					# detail.  Treat it as unallocated prebuild inventory; claiming
+					# Sales Order Backlog would create false fulfillment lineage.
+					"demand_source": "Forecast" if admission_class == "P1" else "Safety Stock",
+					"demand_source_snapshot_json": json.dumps([snapshot], ensure_ascii=True, sort_keys=True),
+					"fulfillment_baseline_json": json.dumps(baseline, ensure_ascii=True, sort_keys=True),
 				}
 			)
 		)
 	return rows
+
+
+def get_admitted_planning_rows(
+	planning_run: str,
+	*,
+	customer: str | None = None,
+	item_code: str | None = None,
+) -> list[Any]:
+	"""Return one quantity-exact planning row for every admitted Commitment."""
+	run = frappe.get_doc("APS Planning Run", planning_run)
+	filters: dict[str, Any] = {
+		"planning_run": run.name,
+		"admission_class": "P0",
+		"status": ("in", ACTIVE_COMMITMENT_STATUSES),
+	}
+	if customer:
+		filters["customer"] = customer
+	if item_code:
+		filters["item_code"] = item_code
+	commitments = frappe.get_all(
+		"APS Demand Commitment",
+		filters=filters,
+		fields=[
+			"name", "company", "customer", "item_code", "demand_identity", "schedule_item",
+			"admission", "admission_class", "original_due_date", "effective_due_time",
+			"requested_qty", "stock_covered_qty", "carried_qty", "newly_planned_qty",
+			"source_work_orders_json", "source_snapshot_json", "input_fingerprint",
+			"exclude_from_release", "exclusion_reason",
+		],
+		order_by="original_due_date asc, customer asc, item_code asc, demand_identity asc",
+		limit_page_length=0,
+	)
+	schedule_names = sorted({row.get("schedule_item") for row in commitments if row.get("schedule_item")})
+	schedule_rows = {
+		row.name: row
+		for row in frappe.get_all(
+			"Customer Delivery Schedule Item",
+			filters={"name": ("in", schedule_names or [""])},
+			fields=[
+				"name", "parent", "demand_identity", "sales_order", "item_code",
+				"schedule_date", "original_schedule_date", "effective_schedule_date", "qty", "effective_qty",
+				"allocated_qty", "produced_qty", "delivered_qty", "executed_floor_qty", "status",
+				"production_strategy", "demand_confidence", "cancellation_risk_percent",
+				"prebuild_allowed", "max_prebuild_days",
+			],
+			limit_page_length=0,
+		)
+	}
+	parent_names = sorted({row.get("parent") for row in schedule_rows.values() if row.get("parent")})
+	schedule_parents = {
+		row.name: row
+		for row in frappe.get_all(
+			"Customer Delivery Schedule",
+			filters={"name": ("in", parent_names or [""])},
+			fields=["name", "company", "customer", "source_type", "status"],
+			limit_page_length=0,
+		)
+	}
+	delivery_floors = delivery_fulfillment.get_schedule_delivery_lower_bounds(
+		run.company,
+		"",
+		schedule_names,
+	)
+	from injection_aps.services import planning
+	existing_work_order_policy = run.get("existing_work_order_policy") or "Include"
+
+	rows = []
+	for commitment in commitments:
+		schedule = schedule_rows.get(commitment.get("schedule_item"))
+		parent = schedule_parents.get(schedule.get("parent")) if schedule else None
+		delivered_qty = max(
+			flt(schedule.get("delivered_qty")) if schedule else 0,
+			flt(delivery_floors.get(commitment.get("schedule_item"))),
+			0,
+		)
+		if not _p0_schedule_matches_commitment(commitment, schedule, parent, delivered_qty=delivered_qty):
+			frappe.throw(
+				_(
+					"P0 Commitment {0} no longer matches its customer schedule row. Rebuild the demand baseline before recalculating.",
+					context="Injection APS",
+				).format(commitment.get("name")),
+				frappe.ValidationError,
+			)
+		requested_qty = max(flt(commitment.get("requested_qty")), 0)
+		stock_qty = max(flt(commitment.get("stock_covered_qty")), 0)
+		carried_qty = max(flt(commitment.get("carried_qty")), 0)
+		new_plan_qty = max(flt(commitment.get("newly_planned_qty")), 0)
+		if abs(requested_qty - stock_qty - carried_qty - new_plan_qty) > QTY_TOLERANCE:
+			frappe.throw(
+				_(
+					"P0 Commitment {0} fails quantity conservation. Rebuild the demand baseline before recalculating.",
+					context="Injection APS",
+				).format(commitment.get("name")),
+				frappe.ValidationError,
+			)
+		effective_due_date = getdate(schedule.get("effective_schedule_date") or schedule.get("schedule_date"))
+		effective_qty = max(flt(schedule.get("effective_qty") if schedule.get("effective_qty") is not None else schedule.get("qty")), 0)
+		sales_order_item = planning._resolve_unique_sales_order_item(schedule.get("sales_order"), commitment.get("item_code"))
+		source = {
+			"demand_pool": commitment.get("name"),
+			"source_doctype": "Customer Delivery Schedule",
+			"source_name": parent.get("name"),
+			"source_detail_name": schedule.get("name"),
+			"sales_order": schedule.get("sales_order"),
+			"sales_order_item": sales_order_item,
+			"demand_identity": commitment.get("demand_identity"),
+			"qty": requested_qty,
+		}
+		baseline = {
+			"version": 4,
+			"net_requirement": {
+				"formula_version": 1,
+				"demand_qty": requested_qty,
+				"available_stock_qty": stock_qty,
+				"open_work_order_qty": carried_qty,
+				"existing_work_order_policy": existing_work_order_policy,
+				"safety_stock_gap_qty": 0,
+				"minimum_batch_qty": 0,
+				"minimum_batch_coverage_qty": 0,
+				"base_residual_qty": new_plan_qty,
+				"net_requirement_qty": new_plan_qty,
+				"planning_qty": new_plan_qty,
+				"new_batch_surplus_qty": 0,
+				"is_safety_stock_group": 0,
+			},
+			"targets": [
+				{
+					"customer_schedule": parent.get("name"),
+					"customer_schedule_item": schedule.get("name"),
+					"sales_order": schedule.get("sales_order"),
+					"sales_order_item": sales_order_item,
+					"item_code": commitment.get("item_code"),
+					"schedule_date": str(effective_due_date),
+					"source_open_qty": requested_qty,
+					"opening_required_qty": effective_qty,
+					"opening_allocated_qty": max(flt(schedule.get("allocated_qty")), 0),
+					"opening_produced_qty": max(flt(schedule.get("produced_qty")), 0),
+					"opening_delivered_qty": delivered_qty,
+				}
+			],
+			"sales_order_items": [],
+		}
+		rows.append(
+			frappe._dict(
+				{
+					"name": None,
+					"source_doctype": "APS Demand Commitment",
+					"source_name": commitment.get("name"),
+					"demand_commitment": commitment.get("name"),
+					"demand_identity": commitment.get("demand_identity"),
+					"schedule_item": schedule.get("name"),
+					"customer": commitment.get("customer"),
+					"sales_order": schedule.get("sales_order"),
+					"sales_order_item": sales_order_item,
+					"item_code": commitment.get("item_code"),
+					"demand_date": effective_due_date,
+					"demand_qty": requested_qty,
+					"available_stock_qty": stock_qty,
+					"open_work_order_qty": carried_qty,
+					"planning_qty": new_plan_qty,
+					"admitted_planning_qty": new_plan_qty,
+					"exclude_from_release": cint(commitment.get("exclude_from_release")),
+					"exclusion_reason": commitment.get("exclusion_reason"),
+					"minimum_batch_qty": 0,
+					"production_strategy": schedule.get("production_strategy") or "Auto Balance",
+					"demand_confidence": schedule.get("demand_confidence") or "Confirmed",
+					"cancellation_risk_percent": flt(schedule.get("cancellation_risk_percent")),
+					"prebuild_allowed": cint(schedule.get("prebuild_allowed")),
+					"max_prebuild_days": cint(schedule.get("max_prebuild_days")),
+					"net_requirement_qty": new_plan_qty,
+					"reason_text": _(
+						"Admitted P0 quantity from Commitment {0}.",
+						context="Injection APS",
+					).format(commitment.get("name")),
+					"demand_source": parent.get("source_type") or "Customer Delivery Schedule",
+					"demand_source_snapshot_json": json.dumps([source], ensure_ascii=True, sort_keys=True),
+					"fulfillment_baseline_json": json.dumps(baseline, ensure_ascii=True, sort_keys=True),
+				}
+			)
+		)
+	return rows + get_selected_optional_planning_rows(
+		run.name,
+		customer=customer,
+		item_code=item_code,
+	)
+
+
+def _p0_schedule_matches_commitment(
+	commitment: Any,
+	schedule: Any,
+	parent: Any,
+	*,
+	delivered_qty: float,
+) -> bool:
+	if not schedule or not parent or parent.get("status") != "Active" or schedule.get("status") == "Cancelled":
+		return False
+	snapshot = _parse_json_dict(commitment.get("source_snapshot_json"))
+	effective_due_date = getdate(schedule.get("effective_schedule_date") or schedule.get("schedule_date"))
+	effective_qty = max(
+		flt(schedule.get("effective_qty") if schedule.get("effective_qty") is not None else schedule.get("qty")),
+		0,
+	)
+	open_qty = max(effective_qty - delivered_qty, 0)
+	return bool(
+		schedule.get("name") == commitment.get("schedule_item")
+		and schedule.get("item_code") == commitment.get("item_code")
+		and schedule.get("demand_identity") == commitment.get("demand_identity")
+		and parent.get("company") == commitment.get("company")
+		and parent.get("customer") == commitment.get("customer")
+		and snapshot.get("schedule_item") == schedule.get("name")
+		and snapshot.get("demand_identity") == schedule.get("demand_identity")
+		and snapshot.get("customer") == parent.get("customer")
+		and snapshot.get("item_code") == schedule.get("item_code")
+		and getdate(snapshot.get("effective_due_date")) == effective_due_date
+		and abs(flt(snapshot.get("effective_qty")) - effective_qty) <= QTY_TOLERANCE
+		and abs(flt(snapshot.get("delivered_qty")) - delivered_qty) <= QTY_TOLERANCE
+		and abs(flt(snapshot.get("schedule_open_qty")) - open_qty) <= QTY_TOLERANCE
+		and abs(flt(commitment.get("requested_qty")) - open_qty) <= QTY_TOLERANCE
+	)
+
+
+def _parse_json_dict(value: Any) -> dict[str, Any]:
+	try:
+		parsed = json.loads(value or "{}")
+	except (TypeError, ValueError):
+		return {}
+	return parsed if isinstance(parsed, dict) else {}
 
 
 def transfer_commitment_owner(

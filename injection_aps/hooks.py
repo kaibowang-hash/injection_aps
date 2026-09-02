@@ -22,6 +22,11 @@ required_apps = [
 	_local_app_or_name("mold_management"),
 ]
 
+app_include_js = [
+	"/assets/injection_aps/js/injection_aps_ui_loader.js",
+	"/assets/injection_aps/js/injection_aps_shared.js",
+]
+
 doctype_js = {
 	"APS Planning Run": "public/js/aps_planning_run.js",
 	"APS Work Order Proposal Batch": "public/js/aps_work_order_proposal_batch.js",

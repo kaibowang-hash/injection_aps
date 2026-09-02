@@ -55,7 +55,8 @@ class TestPhase5Contracts(unittest.TestCase):
 	def test_shift_replan_page_matches_backend_role_boundaries(self):
 		page = (ROOT / "injection_aps/page/aps_shift_replan_center/aps_shift_replan_center.js").read_text()
 		shared = (ROOT / "public/js/injection_aps_shared.js").read_text()
-		self.assertIn('frappe.require("/assets/injection_aps/js/injection_aps_shared.js"', page)
+		self.assertIn("injection_aps.ui_loader.start(", page)
+		self.assertNotIn('frappe.require("/assets/injection_aps/js/injection_aps_shared.js"', page)
 		for action in (
 			"create_replan_cycle",
 			"refresh_shift_actuals",

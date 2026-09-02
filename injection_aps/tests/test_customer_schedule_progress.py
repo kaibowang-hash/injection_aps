@@ -293,6 +293,7 @@ class TestCustomerScheduleProgress(FrappeTestCase):
 				"approval_state": "Approved",
 			}
 		)
+		doc.flags.aps_run_transition = True
 		self._insert_doc(doc)
 		return doc
 

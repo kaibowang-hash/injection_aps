@@ -32,6 +32,7 @@ class TestPhase3InstalledContracts(unittest.TestCase):
 			"restricted_horizon_days": 7, "recovery_horizon_days": 5,
 			"horizon_start": "2026-08-02 11:30:00",
 		})
+		run.flags.aps_run_transition = True
 		run.validate()
 		self.assertEqual(getdate(run.demand_horizon_end_date), getdate("2026-08-15"))
 		self.assertEqual(getdate(run.recovery_horizon_start_date), getdate("2026-08-16"))

@@ -264,7 +264,7 @@ async function testRunConsoleStylesDoNotBlockPageInitialization() {
 	let started = 0;
 	context.injection_aps.ui_loader = {
 		start(version, callback) {
-			assert.equal(version, "20260821.2");
+			assert.equal(version, "20260901.1");
 			started += 1;
 			callback();
 		},
@@ -281,18 +281,41 @@ async function testRunConsoleStylesDoNotBlockPageInitialization() {
 	context.frappe.pages["aps-run-console"].on_page_load(wrapper);
 	context.frappe.pages["aps-run-console"].on_page_load(wrapper);
 
-	assert.deepEqual(requiredAssets, [
-		"/assets/injection_aps/js/injection_aps_ui_loader.js",
-		"/assets/injection_aps/js/injection_aps_ui_loader.js",
-	]);
+	assert.deepEqual(requiredAssets, []);
 	assert.equal(started, 2);
 	assert.equal(refreshed, 2);
 	assert.equal(appended.length, 1);
 	assert.equal(appended[0].rel, "stylesheet");
 	assert.equal(
 		appended[0].getAttribute("href"),
-		"/assets/injection_aps/css/aps_run_console.css?v=20260821.2"
+		"/assets/injection_aps/css/aps_run_console.css?v=20260901.1"
 	);
+}
+
+async function testRunConsoleResyncsRouteWhenSpaReusesThePage() {
+	const { Controller, context } = loadPage(
+		"injection_aps/page/aps_run_console/aps_run_console.js",
+		"aps-run-console",
+		"InjectionAPSRunConsole"
+	);
+	const controller = Object.create(Controller.prototype);
+	Object.assign(controller, {
+		targetRun: "RUN-A",
+		fromAdmission: "1",
+		targetRunOpened: true,
+		loadingKey: "old",
+		refreshGeneration: 4,
+	});
+	const route = { run_name: "RUN-B", from_admission: "" };
+	context.frappe.utils = { get_url_arg: (key) => route[key] || "" };
+
+	assert.equal(controller.syncRouteState(), true);
+	assert.equal(controller.targetRun, "RUN-B");
+	assert.equal(controller.fromAdmission, "");
+	assert.equal(controller.targetRunOpened, false);
+	assert.equal(controller.loadingKey, "");
+	assert.equal(controller.refreshGeneration, 5);
+	assert.equal(controller.syncRouteState(), false);
 }
 
 async function testAdmissionBatchPolicyHandlesOneHundredRowsWithoutPerRowCalls() {
@@ -554,6 +577,10 @@ async function testCustomerProgressIgnoresOlderResponse() {
 	const controller = Object.create(Controller.prototype);
 	controller.refreshGeneration = 0;
 	controller.feedback = {};
+	controller.table = { innerHTML: "" };
+	controller.projectionBanner = { innerHTML: "" };
+	controller.statusHost = { innerHTML: "" };
+	controller.summary = { innerHTML: "" };
 	controller.rows = [];
 	let filterGeneration = 0;
 	controller.getFilters = () => ({ request: ++filterGeneration });
@@ -588,6 +615,10 @@ async function testCustomerProgressV2DispatchesDetailAndMatrixWithoutChangingLeg
 	const controller = Object.create(Controller.prototype);
 	controller.refreshGeneration = 0;
 	controller.feedback = {};
+	controller.table = { innerHTML: "" };
+	controller.projectionBanner = { innerHTML: "" };
+	controller.statusHost = { innerHTML: "" };
+	controller.summary = { innerHTML: "" };
 	controller.rows = [];
 	controller.offset = 100;
 	controller.columnOffset = 14;
@@ -631,6 +662,36 @@ async function testCustomerProgressV2DispatchesDetailAndMatrixWithoutChangingLeg
 	assert.equal(calls[1].args.column_limit, 14);
 }
 
+async function testCustomerProgressResyncsAndClearsRouteRunOnPageReuse() {
+	const { Controller, context } = loadPage(
+		"injection_aps/page/aps_customer_schedule_progress/aps_customer_schedule_progress.js",
+		"aps-customer-schedule-progress",
+		"InjectionAPSCustomerScheduleProgress"
+	);
+	const controller = Object.create(Controller.prototype);
+	let fieldValue = "RUN-A";
+	Object.assign(controller, {
+		runField: {
+			get_value: () => fieldValue,
+			set_value: (value) => { fieldValue = value; },
+		},
+		suppressFilterRefresh: false,
+		offset: 25,
+		columnOffset: 14,
+		loadingKey: "old",
+		refreshGeneration: 2,
+	});
+	context.injection_aps.ui.get_query_param = () => "";
+
+	assert.equal(controller.syncRouteState(), true);
+	assert.equal(fieldValue, "");
+	assert.equal(controller.offset, 0);
+	assert.equal(controller.columnOffset, 0);
+	assert.equal(controller.loadingKey, "");
+	assert.equal(controller.refreshGeneration, 3);
+	assert.equal(controller.syncRouteState(), false);
+}
+
 async function testProgressToolbarUsesSharedIconControls() {
 	const { Controller, context } = loadPage(
 		"injection_aps/page/aps_customer_schedule_progress/aps_customer_schedule_progress.js",
@@ -652,7 +713,7 @@ async function testProgressToolbarUsesSharedIconControls() {
 	assert.doesNotMatch(html, />Export Excel</);
 }
 
-async function testProgressMatrixCellShowsOperationalSummaryAndExactDrilldownKey() {
+async function testProgressMatrixCellSeparatesFourOperationalLayersAndUsesGroupedRowKey() {
 	const { Controller, context } = loadPage(
 		"injection_aps/page/aps_customer_schedule_progress/aps_customer_schedule_progress.js",
 		"aps-customer-schedule-progress",
@@ -660,32 +721,39 @@ async function testProgressMatrixCellShowsOperationalSummaryAndExactDrilldownKey
 	);
 	const controller = Object.create(Controller.prototype);
 	context.injection_aps.ui.format_number = (value) => String(value);
-	const html = controller.renderMatrixCell(
-		{ demand_identity: "IDENTITY-1", schedule_item: "SCHEDULE-ROW-1" },
-		"2026-08-20",
-		{
-			schedule_qty: 100,
-			original_plan_qty: 90,
-			current_plan_qty: 80,
-			forecast_qty: 70,
-			actual_good_qty: 30,
-			actual_scrap_qty: 2,
-			delivery_plan_qty: 60,
-			delivered_qty: 20,
-			stock_covered_qty: 10,
-			shortage_qty: 10,
-			recovery_qty: 10,
-		}
-	);
-	for (const value of [80, 30, 20, 10]) {
-		assert.match(html, new RegExp(` ${value}</span>`));
+	const row = {
+		_row_no: 7,
+		status_tone: "yellow",
+		events: [{ date: "2026-08-20", layer: "current_plan_qty", reason: "Plan moved" }],
+	};
+	const cell = {
+		schedule_qty: 100,
+		original_plan_qty: 90,
+		current_plan_qty: 80,
+		forecast_qty: 70,
+		actual_good_qty: 30,
+		actual_scrap_qty: 2,
+		delivery_plan_qty: 60,
+		delivered_qty: 20,
+		stock_covered_qty: 10,
+		shortage_qty: 10,
+		recovery_qty: 10,
+	};
+	const htmlByLayer = Object.fromEntries(controller.getMatrixLayers().map((layer) => [
+		layer.key,
+		controller.renderMatrixLayerCell(row, "2026-08-20", cell, layer),
+	]));
+	assert.match(htmlByLayer.schedule, />Schedule Qty<.*>100</s);
+	assert.match(htmlByLayer.plan, />Current Plan<.*>80</s);
+	assert.match(htmlByLayer.actual, />Actual Good<.*>30</s);
+	assert.match(htmlByLayer.delivery, />Delivered<.*>20</s);
+	assert.match(htmlByLayer.plan, /ia-progress-cell-alert/);
+	assert.doesNotMatch(htmlByLayer.actual, />Delivered</);
+	for (const [layer, html] of Object.entries(htmlByLayer)) {
+		assert.match(html, /data-progress-row="7"/);
+		assert.match(html, new RegExp(`data-progress-layer="${layer}"`));
+		assert.match(html, /data-progress-date="2026-08-20"/);
 	}
-	for (const hiddenLabel of ["Original Plan", "Forecast", "Scrap", "Delivery Plan", "Stock Covered", "Recovery"]) {
-		assert.doesNotMatch(html, new RegExp(`>${hiddenLabel}<`));
-	}
-	assert.match(html, /data-progress-identity="IDENTITY-1"/);
-	assert.match(html, /data-progress-schedule-item="SCHEDULE-ROW-1"/);
-	assert.match(html, /data-progress-date="2026-08-20"/);
 }
 
 async function testUiLoaderReloadsSharedAssetsByVersionAndDeduplicatesRequests() {
@@ -693,6 +761,8 @@ async function testUiLoaderReloadsSharedAssetsByVersionAndDeduplicatesRequests()
 	const scripts = [];
 	const context = {
 		console,
+		setTimeout,
+		clearTimeout,
 		document: {
 			createElement() {
 				const listeners = {};
@@ -942,14 +1012,16 @@ async function main() {
 		testGanttRiskValuesTranslateEachEnum,
 		testRunConsoleRendersFourDecisionColumnsAndKeepsFullExport,
 		testRunConsoleStylesDoNotBlockPageInitialization,
+		testRunConsoleResyncsRouteWhenSpaReusesThePage,
 		testAdmissionBatchPolicyHandlesOneHundredRowsWithoutPerRowCalls,
 		testSheetChangeReplacesOldMapping,
 		testHeaderChangePreservesHeaderAndReplacesOldMapping,
 		testSourceChangeDuringMappingApplyRejectsResponse,
 		testCustomerProgressIgnoresOlderResponse,
 		testCustomerProgressV2DispatchesDetailAndMatrixWithoutChangingLegacyCall,
+		testCustomerProgressResyncsAndClearsRouteRunOnPageReuse,
 		testProgressToolbarUsesSharedIconControls,
-		testProgressMatrixCellShowsOperationalSummaryAndExactDrilldownKey,
+		testProgressMatrixCellSeparatesFourOperationalLayersAndUsesGroupedRowKey,
 		testUiLoaderReloadsSharedAssetsByVersionAndDeduplicatesRequests,
 		testSharedItemIdentityUsesThreeUnlabelledLines,
 		testGanttMachineViewCollapsesCampaignAndRendersFourPlanLayers,

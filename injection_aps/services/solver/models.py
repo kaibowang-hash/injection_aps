@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 
 @dataclass(frozen=True, slots=True)
@@ -38,6 +38,7 @@ class Demand:
 	due_minute: int
 	earliest_minute: int = 0
 	service_priority: int = 0
+	minimum_batch_units: int = 0
 	original_due_minute: int | None = None
 	fixed_on_time_units: int = 0
 	fixed_late_units: int = 0

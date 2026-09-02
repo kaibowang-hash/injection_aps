@@ -474,6 +474,128 @@ def persist_solver_peggings(run, snapshot, solution) -> dict[str, Any]:
 	return {"pegging_count": len(created), "peggings": created}
 
 
+def validate_derived_result_evidence(
+	run_name: str,
+	result_rows: list[dict[str, Any]],
+) -> dict[str, Any]:
+	"""Validate BOM Results against their frozen solver pegging evidence."""
+	results = [dict(row) for row in result_rows or [] if row.get("bom_demand_key")]
+	if not results:
+		return {"valid": True, "checked": 0, "errors": []}
+	peggings = [
+		dict(row)
+		for row in frappe.get_all(
+			"APS BOM Pegging",
+			filters={"planning_run": run_name, "status": ("!=", "Cancelled")},
+			fields=[
+				"name", "parent_demand_key", "child_demand_key", "parent_result",
+				"child_result", "parent_item", "component_item", "bom",
+				"bom_fingerprint", "required_gross_qty", "stock_covered_qty",
+				"wip_covered_qty", "production_qty", "batch_excess_qty",
+				"root_demand_key", "source_snapshot_json",
+			],
+			limit_page_length=0,
+		)
+	]
+	errors = []
+	keys: dict[str, list[str]] = defaultdict(list)
+	for result in results:
+		keys[str(result.get("bom_demand_key") or "")].append(result.get("name") or "<unnamed>")
+	for demand_key, names in keys.items():
+		if not demand_key or len(names) != 1:
+			errors.append({
+				"code": "bom_result_identity",
+				"result": ", ".join(names),
+				"message": f"BOM demand key {demand_key or '<missing>'} is not unique within the Run.",
+			})
+
+	for result in results:
+		name = result.get("name") or "<unnamed>"
+		key = result.get("bom_demand_key") or ""
+		try:
+			decision = json.loads(result.get("solver_decision_json") or "{}")
+		except (TypeError, ValueError):
+			decision = {}
+		solution_fingerprint = str(
+			decision.get("solution_fingerprint") or ""
+			if isinstance(decision, dict)
+			else ""
+		)
+		matching_peggings = [
+			row for row in peggings
+			if _pegging_solution_fingerprint(row) == solution_fingerprint
+		]
+		incoming = [
+			row for row in matching_peggings
+			if row.get("child_result") == name
+			and row.get("child_demand_key") == key
+			and row.get("component_item") == result.get("item_code")
+		]
+		outgoing = [
+			row for row in matching_peggings
+			if row.get("parent_result") == name
+			and row.get("parent_demand_key") == key
+			and row.get("parent_item") == result.get("item_code")
+			and row.get("bom") == result.get("selected_bom")
+			and row.get("bom_fingerprint") == result.get("selected_bom_fingerprint")
+		]
+		if (
+			result.get("demand_source") != "BOM Component"
+			or result.get("demand_commitment")
+			or not result.get("selected_bom")
+			or not result.get("selected_bom_fingerprint")
+			or not solution_fingerprint
+		):
+			errors.append({
+				"code": "bom_result_identity",
+				"result": name,
+				"message": "BOM Result identity or frozen solver/BOM decision is incomplete.",
+			})
+		if not incoming or any(not row.get("parent_result") or not row.get("root_demand_key") for row in incoming):
+			errors.append({
+				"code": "bom_result_lineage",
+				"result": name,
+				"message": "BOM Result has no complete incoming parent/root lineage.",
+			})
+		if not outgoing:
+			errors.append({
+				"code": "bom_result_lineage",
+				"result": name,
+				"message": "BOM Result has no outgoing pegging for its frozen selected BOM.",
+			})
+		planned_qty = flt(result.get("planned_qty"))
+		production_qty = sum(flt(row.get("production_qty")) for row in incoming)
+		quantity_invalid = planned_qty < -QTY_TOLERANCE or abs(planned_qty - production_qty) > QTY_TOLERANCE
+		for row in incoming:
+			quantities = [
+				flt(row.get("required_gross_qty")),
+				flt(row.get("stock_covered_qty")),
+				flt(row.get("wip_covered_qty")),
+				flt(row.get("production_qty")),
+				flt(row.get("batch_excess_qty")),
+			]
+			if min(quantities) < -QTY_TOLERANCE or abs(
+				quantities[1] + quantities[2] + quantities[3]
+				- quantities[0] - quantities[4]
+			) > QTY_TOLERANCE:
+				quantity_invalid = True
+		if quantity_invalid:
+			errors.append({
+				"code": "bom_result_quantity",
+				"result": name,
+				"message": f"BOM Result planned quantity {planned_qty:g} does not match pegged production {production_qty:g}.",
+			})
+	return {"valid": not errors, "checked": len(results), "errors": errors}
+
+
+def _pegging_solution_fingerprint(row: dict[str, Any]) -> str:
+	try:
+		snapshot = json.loads(row.get("source_snapshot_json") or "{}")
+	except (TypeError, ValueError):
+		return ""
+	return str(snapshot.get("solution_fingerprint") or "") if isinstance(snapshot, dict) else ""
+
+
 def propagate_forecast_to_roots(run_name: str, forecast_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
 	"""Propagate manufactured-child forecast completion to root customer Results."""
 	if not frappe.db.exists("DocType", "APS BOM Pegging"):

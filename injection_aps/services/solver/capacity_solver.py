@@ -102,7 +102,12 @@ def solve_capacity(
 					machine_load_terms[alternative.machine].append(duration)
 					if alternative.mold:
 						mold_time_durations[(alternative.mold, bucket.start_minute, bucket.end_minute)].append(duration)
-		model.Add(sum(quantity_terms) + unscheduled[demand.key] == demand.quantity_units)
+		scheduled_qty = sum(quantity_terms)
+		model.Add(scheduled_qty + unscheduled[demand.key] == demand.quantity_units)
+		if demand.minimum_batch_units and quantity_terms:
+			has_scheduled_qty = model.NewBoolVar(f"has_scheduled_qty|{demand.key}")
+			model.Add(scheduled_qty <= demand.quantity_units * has_scheduled_qty)
+			model.Add(scheduled_qty >= demand.minimum_batch_units * has_scheduled_qty)
 
 	for bucket in snapshot.buckets:
 		model.Add(sum(machine_bucket_durations.get(bucket.key) or ()) <= bucket.available_minutes)

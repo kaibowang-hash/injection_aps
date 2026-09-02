@@ -1,5 +1,4 @@
-const UNALLOCATED_DELIVERY_SHARED_READY = frappe.require("/assets/injection_aps/js/injection_aps_ui_loader.js")
-	.then(() => injection_aps.ui_loader.load("20260821.2"));
+const UNALLOCATED_DELIVERY_SHARED_READY = injection_aps.ui_loader.load("20260901.1");
 
 frappe.ui.form.on("APS Unallocated Delivery", {
 	async refresh(frm) {

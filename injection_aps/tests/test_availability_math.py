@@ -190,7 +190,7 @@ class TestAvailabilityQuantityMath(unittest.TestCase):
 					"get_settings_dict",
 					return_value={"item_safety_stock_field": "safety_stock"},
 				),
-				patch.object(planning, "_get_item_mapping_value", return_value=0),
+				patch.object(planning, "_get_item_mapping_values", return_value={"FG-1": 0}),
 			):
 				usable_stock = availability._get_company_fulfillment_finished_goods_stock(
 					"COMPANY-1",
@@ -228,7 +228,7 @@ class TestAvailabilityQuantityMath(unittest.TestCase):
 				"get_settings_dict",
 				return_value={"item_safety_stock_field": "safety_stock"},
 			),
-			patch.object(planning, "_get_item_mapping_value", return_value=20),
+			patch.object(planning, "_get_item_mapping_values", return_value={"FG-1": 20}),
 		):
 			usable_stock = availability._get_company_fulfillment_finished_goods_stock(
 				"COMPANY-1",

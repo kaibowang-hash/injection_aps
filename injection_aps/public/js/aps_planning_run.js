@@ -1,13 +1,19 @@
-const PLANNING_RUN_SHARED_READY = frappe.require("/assets/injection_aps/js/injection_aps_ui_loader.js")
-	.then(() => injection_aps.ui_loader.load("20260821.2"));
+let PLANNING_RUN_SHARED_READY = injection_aps.ui_loader.load("20260901.1");
 
 frappe.ui.form.on("APS Planning Run", {
 	async refresh(frm) {
 		if (frm.is_new()) {
 			return;
 		}
-		await PLANNING_RUN_SHARED_READY;
+		try {
+			await PLANNING_RUN_SHARED_READY;
+		} catch (error) {
+			console.error(error);
+			show_ui_load_failure(frm);
+			return;
+		}
 		injection_aps.ui.ensure_styles();
+		void render_flow(frm);
 		try {
 			const capabilities = await frappe.xcall("injection_aps.api.app.get_v2_capabilities");
 			frm.__aps_v2_enabled = Number(((capabilities || {}).settings || {}).enable_aps_v2 || 0) === 1;
@@ -18,13 +24,21 @@ frappe.ui.form.on("APS Planning Run", {
 			frm.__aps_solver_engine = "Legacy";
 			frm.__aps_multilevel_bom = false;
 		}
-		await render_flow(frm);
 		render_quantity_indicators(frm);
 		render_v2_horizons(frm);
 		render_capacity_analysis(frm);
 		add_actions(frm);
 	},
 });
+
+function show_ui_load_failure(frm) {
+	frm.clear_custom_buttons();
+	frm.add_custom_button(__("Retry APS Interface", null, "Injection APS"), () => {
+		PLANNING_RUN_SHARED_READY = injection_aps.ui_loader.load("20260901.1");
+		frm.refresh();
+	});
+	frm.dashboard.set_headline(`<div class="alert alert-danger">${__("APS Interface Failed to Load", null, "Injection APS")}</div>`);
+}
 
 function render_quantity_indicators(frm) {
 	frm.dashboard.add_indicator(`${__("Prebuild", null, "Injection APS")}: ${injection_aps.ui.format_number(frm.doc.total_prebuild_qty || 0)}`, "orange");
@@ -369,8 +383,8 @@ function add_actions(frm) {
 
 	if (frm.__aps_v2_enabled && frm.doc.capacity_balance_status === "Hard Blocked") {
 		addButton("Open Resolution Center", () => {
-			frappe.set_route("aps-constraint-resolution-center", { run_name: frm.doc.name });
-		}, "APS V2", "primary");
+			injection_aps.ui.go_to(`aps-constraint-resolution-center?run_name=${encodeURIComponent(frm.doc.name)}`);
+		}, "APS V2", "primary", "open_constraint_resolution_center");
 	}
 
 	const capacityReadyToApply = (

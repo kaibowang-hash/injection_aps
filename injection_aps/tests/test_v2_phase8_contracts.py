@@ -10,8 +10,8 @@ ROOT = Path(__file__).resolve().parents[1]
 class TestPhase8Contracts(unittest.TestCase):
 	def test_progress_projection_uses_current_formal_owner_across_runs(self):
 		source = (ROOT / "services/progress_v2.py").read_text()
-		self.assertIn("formal_owner = 1", source)
-		self.assertIn("owner_state = 'Owned'", source)
+		self.assertIn('"formal_owner": 1', source)
+		self.assertIn('"owner_state": "Owned"', source)
 		self.assertIn('projection_type = "Single Run" if run_name else "Effective Cross-Run"', source)
 		self.assertNotIn("order by status", source.lower())
 		for layer in (
@@ -36,10 +36,10 @@ class TestPhase8Contracts(unittest.TestCase):
 		source = (ROOT / "injection_aps/page/aps_customer_schedule_progress/aps_customer_schedule_progress.js").read_text()
 		for token in (
 			"Date Matrix", "renderV2Table", "renderMatrix", "column_offset", "page_length",
-			"export_rows_to_excel", "get_progress_cell_drilldown", "renderProgressToolbar",
+			"export_rows_to_excel", "getMatrixLayers", "renderProgressToolbar", "Actual Inbound",
 		):
 			self.assertIn(token, source)
-		self.assertIn('this.progressView = "Detail"', source)
+		self.assertIn('this.progressView = "Date Matrix"', source)
 		self.assertNotIn("Previous Rows</button>", source)
 		self.assertNotIn("Next Rows</button>", source)
 		self.assertEqual(source.count("injection_aps.api.app.get_customer_schedule_progress_data"), 1)

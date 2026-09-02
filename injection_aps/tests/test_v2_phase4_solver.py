@@ -128,6 +128,53 @@ class TestV2Phase4Solver(unittest.TestCase):
 		task = solve_scenarios(snapshot)[0].tasks[0]
 		self.assertEqual(task.end_minute - task.production_start_minute, 8)
 
+	def test_minimum_batch_prevents_partial_schedule_below_the_lot_size(self):
+		demand = self._demand("A", 100, "2026-08-14T20:00:00")
+		demand["minimum_batch_qty"] = 60
+		snapshot = self._snapshot(
+			demands=[demand],
+			buckets=[self._bucket("B", "2026-08-14T08:00:00", "2026-08-14T09:00:00", 50)],
+		)
+		for solution in solve_scenarios(snapshot):
+			self.assertTrue(dict(solution.validation)["valid"])
+			self.assertEqual(sum(row.quantity_units for row in solution.tasks), 0)
+			self.assertEqual(solution.outcomes[0].unscheduled_units, 100)
+
+	def test_minimum_batch_applies_to_total_new_schedule_across_buckets(self):
+		demand = self._demand("A", 100, "2026-08-14T20:00:00")
+		demand["minimum_batch_qty"] = 60
+		snapshot = self._snapshot(
+			demands=[demand],
+			buckets=[
+				self._bucket("B1", "2026-08-14T08:00:00", "2026-08-14T08:30:00", 30),
+				self._bucket("B2", "2026-08-14T08:30:00", "2026-08-14T09:00:00", 30),
+			],
+		)
+		solution = solve_scenarios(snapshot)[0]
+		self.assertTrue(dict(solution.validation)["valid"])
+		self.assertEqual(sum(row.quantity_units for row in solution.tasks), 60)
+		self.assertEqual(solution.outcomes[0].unscheduled_units, 40)
+
+	def test_validator_rejects_a_tampered_schedule_below_minimum_batch(self):
+		demand = self._demand("A", 100, "2026-08-14T20:00:00")
+		demand["minimum_batch_qty"] = 60
+		snapshot = self._snapshot(
+			demands=[demand],
+			buckets=[self._bucket("B", "2026-08-14T08:00:00", "2026-08-14T10:00:00", 120)],
+		)
+		solution = solve_scenarios(snapshot)[0]
+		allocation = replace(solution.allocations[0], quantity_units=50, cycles=50)
+		task = replace(solution.tasks[0], quantity_units=50, cycles=50)
+		outcome = replace(solution.outcomes[0], on_time_units=50, unscheduled_units=50)
+		tampered = replace(
+			solution,
+			allocations=(allocation,),
+			tasks=(task,),
+			outcomes=(outcome,),
+		)
+		validation = validate_solution(snapshot, tampered, raise_on_error=False)
+		self.assertIn("minimum_batch", {row["code"] for row in validation["errors"]})
+
 	def test_global_time_limit_stops_rebuilding_models_for_later_scenarios(self):
 		snapshot = replace(
 			self._snapshot(

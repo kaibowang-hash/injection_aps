@@ -128,6 +128,8 @@ WORK_ORDER_PROPOSAL_RESULT_FIELDS = (
 	"is_urgent",
 	"is_locked",
 	"is_manual",
+	"exclude_from_release",
+	"exclusion_reason",
 	"status",
 	"flow_step",
 	"blocking_reason",
@@ -648,7 +650,7 @@ def _build_planning_run_context(doc) -> dict[str, Any]:
 
 
 def get_recent_run_contexts(limit: int = 8) -> list[dict[str, Any]]:
-	rows = frappe.get_all(
+	rows = frappe.get_list(
 		"APS Planning Run",
 		filters={"status": ("in", RUN_OPEN_STATUSES)},
 		fields=[
@@ -669,20 +671,18 @@ def get_recent_run_contexts(limit: int = 8) -> list[dict[str, Any]]:
 	)
 	context_rows = []
 	for row in rows:
-		doc = frappe._dict(row)
-		context = _build_planning_run_context(doc)
 		context_rows.append(
 			{
 				"name": row.name,
 				"company": row.company,
-				"selected_plant_floors": context.get("selected_plant_floors") or _coerce_plant_floor_list(
+				"selected_plant_floors": _coerce_plant_floor_list(
 					plant_floors=(row.selected_plant_floor_summary or "").split(","), plant_floor=row.plant_floor
 				),
 				"horizon_days": cint(row.horizon_days or 0),
 				"status": row.status,
-				"status_label": context.get("status_label"),
+				"status_label": _label_run_status(row.status),
 				"approval_state": row.approval_state,
-				"approval_state_label": context.get("approval_state_label"),
+				"approval_state_label": _label_approval_state(row.approval_state),
 				"exception_count": cint(row.exception_count or 0),
 				"modified": row.modified,
 				"route": f"aps-run-console?run_name={row.name}",
@@ -3269,6 +3269,76 @@ def _extend_minimum_batch_owner_lineage(
 	)
 
 
+def _frozen_admission_recalculation_inputs(
+	run_doc: Any,
+	settings: dict[str, Any],
+	*,
+	company: str | None = None,
+	plant_floor: str | None = None,
+	plant_floors: list[str] | str | None = None,
+	horizon_days: int | None = None,
+	item_code: str | None = None,
+	customer: str | None = None,
+	run_type: str | None = None,
+	existing_work_order_policy: str | None = None,
+) -> dict[str, Any]:
+	"""Reject scope changes after admission and return the Run-owned inputs."""
+	def text_value(value: Any) -> str | None:
+		return (str(value).strip() or None) if value is not None else None
+
+	frozen_item = text_value(run_doc.get("planning_item_filter"))
+	requested_item = text_value(item_code)
+	if requested_item:
+		requested_item = _resolve_item_name(requested_item) or requested_item
+	frozen_floors = _get_run_selected_plant_floors(run_doc)
+	requested_floors = _coerce_plant_floor_list(
+		plant_floors=plant_floors,
+		plant_floor=plant_floor,
+	)
+	frozen = {
+		"company": text_value(run_doc.get("company")),
+		"customer": text_value(run_doc.get("planning_customer_filter")),
+		"item_code": frozen_item,
+		"horizon_days": cint(
+			run_doc.get("horizon_days") or settings.get("planning_horizon_days") or 14
+		),
+		"run_type": text_value(run_doc.get("run_type")) or "Trial",
+		"existing_work_order_policy": _normalize_existing_work_order_policy(
+			run_doc.get("existing_work_order_policy")
+		),
+		"plant_floors": frozen_floors,
+	}
+	mismatches = []
+	if company is not None and text_value(company) != frozen["company"]:
+		mismatches.append(_("company", context="Injection APS"))
+	if customer is not None and text_value(customer) != frozen["customer"]:
+		mismatches.append(_("customer", context="Injection APS"))
+	if item_code is not None and requested_item != frozen["item_code"]:
+		mismatches.append(_("item", context="Injection APS"))
+	if horizon_days is not None and cint(horizon_days) != frozen["horizon_days"]:
+		mismatches.append(_("planning horizon", context="Injection APS"))
+	if run_type is not None and text_value(run_type) != frozen["run_type"]:
+		mismatches.append(_("run type", context="Injection APS"))
+	if (
+		existing_work_order_policy is not None
+		and text_value(existing_work_order_policy) != frozen["existing_work_order_policy"]
+	):
+		mismatches.append(_("existing work order policy", context="Injection APS"))
+	if (plant_floor is not None or plant_floors is not None) and set(requested_floors) != set(
+		frozen_floors
+	):
+		mismatches.append(_("plant floor scope", context="Injection APS"))
+	if mismatches:
+		frappe.throw(
+			_(
+				"The prepared demand baseline freezes {0}. Create a new Planning Run to change these inputs.",
+				context="Injection APS",
+			).format(", ".join(mismatches)),
+			frappe.ValidationError,
+		)
+	return frozen
+
+
 def run_planning_run(
 	run_name: str | None = None,
 	company: str | None = None,
@@ -3291,14 +3361,40 @@ def run_planning_run(
 	v2_enabled = is_v2_enabled()
 	if run_name:
 		run_doc = frappe.get_doc("APS Planning Run", run_name)
-		company = run_doc.company or company or settings["default_company"]
-		customer = customer if customer is not None else run_doc.get("planning_customer_filter")
-		item_code = item_code if item_code is not None else run_doc.get("planning_item_filter")
-		horizon_days = cint(horizon_days or run_doc.horizon_days or settings["planning_horizon_days"] or 14)
-		existing_work_order_policy = _normalize_existing_work_order_policy(
-			existing_work_order_policy or run_doc.get("existing_work_order_policy")
-		)
+		admission_guided = bool(v2_enabled and run_doc.get("demand_baseline_fingerprint"))
+		if admission_guided:
+			frozen = _frozen_admission_recalculation_inputs(
+				run_doc,
+				settings,
+				company=company,
+				plant_floor=plant_floor,
+				plant_floors=plant_floors,
+				horizon_days=horizon_days,
+				item_code=item_code,
+				customer=customer,
+				run_type=run_type,
+				existing_work_order_policy=existing_work_order_policy,
+			)
+			company = frozen["company"]
+			customer = frozen["customer"]
+			item_code = frozen["item_code"]
+			horizon_days = frozen["horizon_days"]
+			run_type = frozen["run_type"]
+			existing_work_order_policy = frozen["existing_work_order_policy"]
+			plant_floors = frozen["plant_floors"]
+			plant_floor = None
+		else:
+			company = run_doc.company or company or settings["default_company"]
+			customer = customer if customer is not None else run_doc.get("planning_customer_filter")
+			item_code = item_code if item_code is not None else run_doc.get("planning_item_filter")
+			horizon_days = cint(
+				horizon_days or run_doc.horizon_days or settings["planning_horizon_days"] or 14
+			)
+			existing_work_order_policy = _normalize_existing_work_order_policy(
+				existing_work_order_policy or run_doc.get("existing_work_order_policy")
+			)
 	else:
+		admission_guided = False
 		company = company or settings["default_company"]
 		horizon_days = cint(horizon_days or settings["planning_horizon_days"] or 14)
 		existing_work_order_policy = _normalize_existing_work_order_policy(existing_work_order_policy)
@@ -3344,7 +3440,11 @@ def run_planning_run(
 		window_values = horizon_status.planning_run_window_fields(run_doc, settings)
 		for fieldname, value in window_values.items():
 			run_doc.set(fieldname, value)
-		run_doc.due_time_policy = settings.get("due_time_policy") or "Delivery Date End Of Day"
+		run_doc.due_time_policy = (
+			run_doc.get("due_time_policy")
+			if admission_guided and run_doc.get("due_time_policy")
+			else settings.get("due_time_policy") or "Delivery Date End Of Day"
+		)
 		horizon_end = get_datetime(window_values["horizon_end"])
 	else:
 		run_doc.horizon_end = horizon_end
@@ -3366,6 +3466,7 @@ def run_planning_run(
 	}.items():
 		setattr(run_doc, fieldname, value)
 	_apply_selected_plant_floors_to_run(run_doc, selected_plant_floors)
+	run_doc.flags.aps_run_transition = True
 	if run_doc.is_new():
 		run_doc.insert(ignore_permissions=True)
 	else:
@@ -3423,15 +3524,13 @@ def run_planning_run(
 	# Fully stock-covered demand still consumes a finite physical resource. Keep a
 	# zero-production Result so capacity analysis can reserve that stock across Runs.
 	net_rows = [row for row in net_rows if _net_requirement_requires_result(row)]
-	if v2_enabled and run_doc.get("demand_baseline_fingerprint"):
+	if admission_guided:
 		from injection_aps.services import demand_ledger
 
-		net_rows.extend(
-			demand_ledger.get_selected_optional_planning_rows(
-				run_doc.name,
-				customer=customer,
-				item_code=item_code,
-			)
+		net_rows = demand_ledger.get_admitted_planning_rows(
+			run_doc.name,
+			customer=customer,
+			item_code=item_code,
 		)
 
 	capability_rows = _get_machine_capability_rows(plant_floors=selected_plant_floors)
@@ -3454,6 +3553,11 @@ def run_planning_run(
 	total_scheduled_qty = 0
 	total_unscheduled_qty = 0
 	family_credit_map: dict[tuple[str, str, str, str, str], float] = defaultdict(float)
+	minimum_batch_field = settings.get("item_min_batch_field")
+	minimum_batch_by_item = _get_item_mapping_values(
+		[row.get("item_code") for row in net_rows],
+		minimum_batch_field,
+	)
 
 	for row in net_rows:
 		if v2_enabled:
@@ -3461,10 +3565,26 @@ def run_planning_run(
 				row.demand_date,
 				horizon_status.run_horizon_values(run_doc, settings),
 			)
-			demand_commitment = _get_v2_commitment_for_result(run_doc.name, row)
+			demand_commitment = (
+				_get_v2_commitment_for_result(run_doc.name, row)
+				if admission_guided
+				else None
+			)
+			if admission_guided and not demand_commitment:
+				frappe.throw(
+					_(
+						"Planning input {0} has no unique active admitted commitment in Run {1}. Rebuild the demand baseline before recalculating.",
+						context="Injection APS",
+					).format(row.get("name") or row.get("source_name") or row.get("item_code"), run_doc.name),
+					frappe.ValidationError,
+				)
 		else:
 			overdue_at_run_start, horizon_zone, demand_commitment = 0, None, None
+		minimum_batch_qty = max(flt(minimum_batch_by_item.get(row.item_code)), 0)
+		if admission_guided:
+			_apply_admission_batch_evidence(row, minimum_batch_qty)
 		original_planning_qty = _net_requirement_production_target_qty(row)
+		excluded_from_release = admission_guided and cint(row.get("exclude_from_release"))
 		credit_key = (
 			row.customer or "",
 			row.sales_order or "",
@@ -3472,10 +3592,14 @@ def run_planning_run(
 			str(getdate(row.demand_date)),
 			row.item_code,
 		)
-		credit_applied = min(original_planning_qty, flt(family_credit_map.get(credit_key)))
+		credit_applied = (
+			0
+			if excluded_from_release
+			else min(original_planning_qty, flt(family_credit_map.get(credit_key)))
+		)
 		if credit_applied:
 			family_credit_map[credit_key] = max(flt(family_credit_map.get(credit_key)) - credit_applied, 0)
-		planning_qty = max(original_planning_qty - credit_applied, 0)
+		planning_qty = 0 if excluded_from_release else max(original_planning_qty - credit_applied, 0)
 		item_context = _get_item_context(row.item_code, settings)
 		demand_source = row.get("demand_source") or _get_primary_demand_source(
 			row.item_code,
@@ -3566,7 +3690,11 @@ def run_planning_run(
 					downtime_windows=downtime_windows,
 				)
 		total_scheduled_for_row = credit_applied + flt(best["scheduled_qty"])
-		total_unscheduled_for_row = max(original_planning_qty - total_scheduled_for_row, 0)
+		total_unscheduled_for_row = (
+			0
+			if excluded_from_release
+			else max(original_planning_qty - total_scheduled_for_row, 0)
+		)
 		family_messages = []
 		if credit_applied:
 			family_messages.append(
@@ -3589,7 +3717,10 @@ def run_planning_run(
 		flow_step = "Recalculation Completed"
 		next_step_hint = "Confirm Run"
 		blocking_reason = ""
-		if best["result_status"] == "Blocked":
+		if excluded_from_release:
+			flow_step = "Excluded from Release"
+			next_step_hint = "Review Constraint Decision"
+		elif best["result_status"] == "Blocked":
 			flow_step = "Blocked"
 			next_step_hint = "Handle Exceptions"
 			blocking_reason = "; ".join(
@@ -3630,6 +3761,8 @@ def run_planning_run(
 				"blocking_reason": blocking_reason,
 				"overdue_at_run_start": overdue_at_run_start,
 				"horizon_zone": horizon_zone,
+				"exclude_from_release": cint(excluded_from_release),
+				"exclusion_reason": row.get("exclusion_reason") if excluded_from_release else None,
 				"copy_mold_parallel": best.get("copy_mold_parallel") or 0,
 				"family_mold_result": best.get("family_mold_result") or (1 if credit_applied else 0),
 				"primary_mould_reference": best.get("primary_mould_reference"),
@@ -3748,11 +3881,20 @@ def run_planning_run(
 def _get_v2_commitment_for_result(run_name: str, net_row: Any) -> str | None:
 	"""Resolve only an unambiguous Run-owned Commitment; never date-fuzz here."""
 	if net_row.get("demand_commitment"):
-		return net_row.get("demand_commitment")
+		return frappe.db.get_value(
+			"APS Demand Commitment",
+			{
+				"name": net_row.get("demand_commitment"),
+				"planning_run": run_name,
+				"status": ("in", ["Draft", "Proposed", "Approved", "Released", "In Progress"]),
+			},
+			"name",
+		)
 	rows = frappe.get_all(
 		"APS Demand Commitment",
 		filters={
 			"planning_run": run_name,
+			"admission_class": "P0",
 			"customer": net_row.get("customer") or ("is", "not set"),
 			"item_code": net_row.get("item_code"),
 			"original_due_date": net_row.get("demand_date"),
@@ -3788,6 +3930,37 @@ def _net_requirement_production_target_qty(row: dict[str, Any] | Any) -> float:
 		flt(row.get("planning_qty") or row.get("net_requirement_qty")),
 		flt(row.get("open_work_order_qty")) + flt(row.get("net_requirement_qty")),
 		0,
+	)
+
+
+def _apply_admission_batch_evidence(row: dict[str, Any] | Any, minimum_batch_qty: float) -> None:
+	"""Keep admitted demand exact while restoring the normal production-lot boundary."""
+	net_requirement_qty = max(flt(row.get("net_requirement_qty")), 0)
+	minimum_batch_qty = max(flt(minimum_batch_qty), 0)
+	planning_qty = (
+		max(net_requirement_qty, minimum_batch_qty)
+		if net_requirement_qty > QTY_TOLERANCE and minimum_batch_qty > QTY_TOLERANCE
+		else net_requirement_qty
+	)
+	row["minimum_batch_qty"] = minimum_batch_qty
+	row["planning_qty"] = planning_qty
+
+	baseline = _parse_json_object(row.get("fulfillment_baseline_json"), {})
+	evidence = baseline.get("net_requirement")
+	if not isinstance(evidence, dict):
+		evidence = {}
+		baseline["net_requirement"] = evidence
+	evidence["minimum_batch_qty"] = minimum_batch_qty
+	evidence["planning_qty"] = planning_qty
+	evidence["new_batch_surplus_qty"] = (
+		0
+		if cint(evidence.get("is_safety_stock_group"))
+		else max(planning_qty - net_requirement_qty, 0)
+	)
+	row["fulfillment_baseline_json"] = json.dumps(
+		baseline,
+		ensure_ascii=True,
+		sort_keys=True,
 	)
 
 
@@ -3934,7 +4107,7 @@ def generate_work_order_proposals(run_name: str) -> dict[str, Any]:
 	matched_work_orders = set(campaign_scope["work_orders"])
 	for result in frappe.get_all(
 		"APS Schedule Result",
-		filters={"planning_run": run_name, "machine_scheduled_qty": (">", 0), "status": ("!=", "Blocked")},
+		filters={"planning_run": run_name, "machine_scheduled_qty": (">", 0), "status": ("!=", "Blocked"), "exclude_from_release": 0},
 		fields=list(WORK_ORDER_PROPOSAL_RESULT_FIELDS),
 		order_by="requested_date asc, item_code asc",
 	):
@@ -4351,6 +4524,29 @@ def _assert_destructive_work_order_action_permission(row) -> None:
 	)
 
 
+def _assert_work_order_proposal_results_releasable(planning_run: str, rows: list[Any]) -> None:
+	result_names = sorted({row.get("result_reference") for row in rows if row.get("result_reference")})
+	if not result_names:
+		return
+	excluded = frappe.get_all(
+		"APS Schedule Result",
+		filters={
+			"name": ("in", result_names),
+			"planning_run": planning_run,
+			"exclude_from_release": 1,
+		},
+		pluck="name",
+		limit_page_length=0,
+	)
+	if excluded:
+		frappe.throw(
+			_(
+				"Excluded APS result(s) cannot be released to Work Orders: {0}. Regenerate the proposal batch."
+			).format(", ".join(sorted(excluded))),
+			frappe.ValidationError,
+		)
+
+
 def _validate_work_order_proposal_row_current(
 	*,
 	row,
@@ -4726,6 +4922,7 @@ def _apply_work_order_proposals(batch_name: str) -> dict[str, Any]:
 	approved_rows = [row for row in batch.items if row.review_status == "Approved"]
 	if not approved_rows:
 		frappe.throw(_("No work order proposal rows are marked Approved. Review the batch before formal creation."))
+	_assert_work_order_proposal_results_releasable(batch.planning_run, approved_rows)
 	campaign_rows = [row for row in approved_rows if row.get("production_campaign")]
 	standard_rows = [row for row in approved_rows if not row.get("production_campaign")]
 	approved_result_names = [row.result_reference for row in standard_rows if row.result_reference]
@@ -5773,6 +5970,7 @@ def preview_shift_schedule_release(
 		"total_planned_qty": summary["total_planned_qty"],
 		"pending_batches": pending_batches,
 		"preview_rows": items[:80],
+		"_permission_rows": items,
 		"truncated": len(items) > 80,
 	}
 
@@ -11726,9 +11924,10 @@ def _get_customer_claimable_stock_map(
 		return {}
 	settings = get_settings_dict()
 	safety_field = settings.get("item_safety_stock_field")
+	safety_stock_map = _get_item_mapping_values(stock_map, safety_field)
 	return {
 		item_code: max(
-			flt(qty) - max(flt(_get_item_mapping_value(item_code, safety_field)), 0),
+			flt(qty) - max(flt(safety_stock_map.get(item_code)), 0),
 			0,
 		)
 		for item_code, qty in stock_map.items()
@@ -12026,6 +12225,25 @@ def _get_item_mapping_value(item_code: str, fieldname: str | None):
 	return frappe.db.get_value("Item", item_code, fieldname)
 
 
+def _get_item_mapping_values(item_codes, fieldname: str | None) -> dict[str, Any]:
+	item_codes = sorted({item_code for item_code in item_codes if item_code})
+	if (
+		not item_codes
+		or not fieldname
+		or not frappe.db.exists("DocType", "Item")
+		or not frappe.get_meta("Item").has_field(fieldname)
+	):
+		return {}
+	return {
+		row.name: row.get(fieldname)
+		for row in frappe.get_all(
+			"Item",
+			filters={"name": ("in", item_codes)},
+			fields=["name", fieldname],
+		)
+	}
+
+
 def _get_item_context(item_code: str, settings: dict[str, Any]) -> dict[str, Any]:
 	item_code = _require_item_name(item_code)
 	meta = frappe.get_meta("Item")
@@ -12035,7 +12253,7 @@ def _get_item_context(item_code: str, settings: dict[str, Any]) -> dict[str, Any
 	material_code = item_doc.get(settings["item_material_field"]) if meta.has_field(settings["item_material_field"]) else ""
 	first_article = item_doc.get(settings["item_first_article_field"]) if meta.has_field(settings["item_first_article_field"]) else 0
 
-	if (not color_code or not material_code) and frappe.db.exists("DocType", "Mold"):
+	if not color_code or not material_code:
 		mold_row = _get_primary_mold_row(item_code)
 		if mold_row and (not color_code or not material_code):
 			material_row = frappe.db.sql(
@@ -12065,7 +12283,7 @@ def _get_item_context(item_code: str, settings: dict[str, Any]) -> dict[str, Any
 
 
 def _get_available_mold_rows(item_code: str) -> list[dict[str, Any]]:
-	if not frappe.db.exists("DocType", "Mold"):
+	if not frappe.db.exists("DocType", "Mold", cache=True):
 		return []
 	item_code = _resolve_item_name(item_code)
 	if not item_code:
@@ -14415,6 +14633,8 @@ def _work_order_result_proposal_state_token(
 			"is_urgent": cint(result.get("is_urgent")),
 			"is_locked": cint(result.get("is_locked")),
 			"is_manual": cint(result.get("is_manual")),
+			"exclude_from_release": cint(result.get("exclude_from_release")),
+			"exclusion_reason": result.get("exclusion_reason") or "",
 			"modified": str(result.get("modified") or ""),
 			"primary_segments": segments,
 		}

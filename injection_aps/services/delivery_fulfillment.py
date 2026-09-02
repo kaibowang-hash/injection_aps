@@ -161,6 +161,22 @@ def resolve_unallocated_delivery(*, name: str, demand_identity: str, reason: str
 		frappe.throw(_("The selected Demand Identity does not match this delivery row."), frappe.ValidationError)
 	if not identity.current_schedule_item:
 		frappe.throw(_("The selected Demand Identity has no current schedule row."), frappe.ValidationError)
+	source_parent = frappe.db.get_value(
+		"Delivery Note Item", queue_doc.source_delivery_note_item, "parent"
+	)
+	if not source_parent or source_parent != queue_doc.source_delivery_note:
+		frappe.throw(
+			_("The source Delivery Note Item no longer belongs to this delivery row."),
+			frappe.ValidationError,
+		)
+	target_parent = frappe.db.get_value(
+		"Customer Delivery Schedule Item", identity.current_schedule_item, "parent"
+	)
+	if not target_parent or target_parent != identity.current_schedule:
+		frappe.throw(
+			_("The selected Demand Identity current schedule row is no longer valid."),
+			frappe.ValidationError,
+		)
 	frappe.db.set_value(
 		"Delivery Note Item",
 		queue_doc.source_delivery_note_item,

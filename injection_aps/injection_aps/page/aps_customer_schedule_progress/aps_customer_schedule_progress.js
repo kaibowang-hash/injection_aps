@@ -1,14 +1,15 @@
 frappe.pages["aps-customer-schedule-progress"].on_page_load = function (wrapper) {
-	frappe.require("/assets/injection_aps/js/injection_aps_ui_loader.js", () => injection_aps.ui_loader.start("20260821.2", () => {
+	injection_aps.ui_loader.start("20260901.1", () => {
 		if (!wrapper.injection_aps_controller) {
 			wrapper.injection_aps_controller = new InjectionAPSCustomerScheduleProgress(wrapper);
 		}
 		wrapper.injection_aps_controller.refresh();
-	}));
+	});
 };
 
 frappe.pages["aps-customer-schedule-progress"].on_page_show = function (wrapper) {
 	if (wrapper.injection_aps_controller) {
+		wrapper.injection_aps_controller.syncRouteState();
 		wrapper.injection_aps_controller.refresh();
 	}
 };
@@ -22,8 +23,9 @@ class InjectionAPSCustomerScheduleProgress {
 		this.rows = [];
 		this.offset = 0;
 		this.columnOffset = 0;
-		this.pageLength = 100;
-		this.progressView = "Detail";
+		this.pageLength = 25;
+		this.loadingKey = "";
+		this.progressView = "Date Matrix";
 		this.page = frappe.ui.make_app_page({
 			parent: wrapper,
 			title: __("Customer Schedule Progress"),
@@ -109,17 +111,21 @@ class InjectionAPSCustomerScheduleProgress {
 	}
 
 	async refresh() {
-		const refreshGeneration = ++this.refreshGeneration;
 		const filters = this.getFilters();
+		const requestedView = this.progressView || "Date Matrix";
+		const loadingKey = JSON.stringify({ ...filters, requestedView, offset: this.offset, columnOffset: this.columnOffset });
+		if (this.loadingKey === loadingKey) return;
+		const refreshGeneration = ++this.refreshGeneration;
+		this.loadingKey = loadingKey;
 		injection_aps.ui.ensure_styles();
 		injection_aps.ui.set_feedback(this.feedback, __("Loading customer schedule progress..."));
+		this.table.innerHTML = `<div class="text-muted">${__("Loading customer schedule progress...", null, "Injection APS")}</div>`;
 		try {
-			const requestedView = this.progressView || "Detail";
 			const data = await frappe.xcall("injection_aps.api.app.get_customer_schedule_progress_data", Object.assign({}, filters, {
 				limit: 1000,
 				progress_view: requestedView,
 				offset: this.offset || 0,
-				page_length: this.pageLength || 100,
+				page_length: this.pageLength || 25,
 				column_offset: requestedView === "Date Matrix" ? (this.columnOffset || 0) : undefined,
 				column_limit: requestedView === "Date Matrix" ? 14 : undefined,
 			}));
@@ -151,7 +157,15 @@ class InjectionAPSCustomerScheduleProgress {
 				return;
 			}
 			console.error(error);
+			this.data = {};
+			this.rows = [];
+			this.projectionBanner.innerHTML = "";
+			this.statusHost.innerHTML = "";
+			this.summary.innerHTML = "";
+			this.table.innerHTML = `<div class="alert alert-danger">${__("No progress data is shown because the selected scope could not be loaded.", null, "Injection APS")}</div>`;
 			injection_aps.ui.set_feedback(this.feedback, __("Failed to load customer schedule progress."), "error");
+		} finally {
+			if (refreshGeneration === this.refreshGeneration) this.loadingKey = "";
 		}
 	}
 
@@ -161,6 +175,19 @@ class InjectionAPSCustomerScheduleProgress {
 			this.columnOffset = 0;
 			this.refresh();
 		}
+	}
+
+	syncRouteState() {
+		const runName = injection_aps.ui.get_query_param("run_name") || "";
+		if ((this.runField.get_value() || "") === runName) return false;
+		this.suppressFilterRefresh = true;
+		this.runField.set_value(runName);
+		this.suppressFilterRefresh = false;
+		this.offset = 0;
+		this.columnOffset = 0;
+		this.loadingKey = "";
+		this.refreshGeneration += 1;
+		return true;
 	}
 
 	getFilters() {
@@ -235,7 +262,7 @@ class InjectionAPSCustomerScheduleProgress {
 		const lateRows = Number(statusCounts.Late || 0) + Number(statusCounts.Uncovered || 0);
 		this.summary.classList.add("ia-progress-summary");
 		this.summary.innerHTML = [
-			this.progressSummaryGroup(__("Demand", null, "Injection APS"), [
+			this.progressSummaryGroup(__("Current Page Demand", null, "Injection APS"), [
 				[__("Rows"), summary.rows || 0],
 				[__("Schedule Qty"), summary.schedule_qty || 0],
 			]),
@@ -257,7 +284,7 @@ class InjectionAPSCustomerScheduleProgress {
 				[__("Shortage", null, "Injection APS"), summary.shortage_qty || 0, Number(summary.shortage_qty || 0) > 0 ? "danger" : ""],
 				[__("Recovery", null, "Injection APS"), summary.recovery_qty || 0],
 			]),
-			this.progressSummaryGroup(__("Status", null, "Injection APS"), [
+			this.progressSummaryGroup(__("Current Page Status", null, "Injection APS"), [
 				[__("On Track", null, "Injection APS"), healthyRows, "success"],
 				[__("At Risk", null, "Injection APS"), riskRows, riskRows > 0 ? "warning" : ""],
 				[__("Late", null, "Injection APS"), lateRows, lateRows > 0 ? "danger" : ""],
@@ -410,49 +437,107 @@ class InjectionAPSCustomerScheduleProgress {
 
 	renderMatrix(rows, matrix) {
 		const dates = matrix.dates || [];
+		const layers = this.getMatrixLayers();
 		const headers = dates.map((dateValue) => `<th class="ia-progress-date-header">${injection_aps.ui.escape(injection_aps.ui.format_date(dateValue))}</th>`).join("");
 		const body = rows.map((row) => {
-			const cells = dates.map((dateValue) => this.renderMatrixCell(row, dateValue, (row.cells || {})[dateValue])).join("");
-			return `<tr><th class="ia-progress-row-header"><div>${injection_aps.ui.escape(row.customer || "")}</div>${injection_aps.ui.item_identity(row)}<div class="ia-muted">${injection_aps.ui.escape(injection_aps.ui.format_number(row.schedule_qty || 0))} / ${injection_aps.ui.escape(injection_aps.ui.translate(row.status || ""))}</div></th>${cells}</tr>`;
+			return layers.map((layer, layerIndex) => {
+				const cells = dates.map((dateValue) => this.renderMatrixLayerCell(row, dateValue, (row.cells || {})[dateValue], layer)).join("");
+				const identity = layerIndex === 0 ? `<th class="ia-progress-row-header" rowspan="${layers.length}">
+					<div class="ia-progress-row-customer">${this.safeDocLink("Customer", row.customer)}</div>
+					${injection_aps.ui.item_identity(row)}
+					<div class="ia-progress-row-meta">
+						${injection_aps.ui.pill(injection_aps.ui.translate(row.status || ""), row.status_tone || "gray")}
+						<span>${injection_aps.ui.escape(injection_aps.ui.format_number(row.schedule_qty || 0))}</span>
+						<span>${Number(row.schedule_count || 0)} ${__("Rows")}</span>
+					</div>
+				</th>` : "";
+				return `<tr class="ia-progress-layer-row ${layerIndex === 0 ? "group-start" : ""}">${identity}<th class="ia-progress-layer-header">${injection_aps.ui.escape(layer.label)}</th>${cells}</tr>`;
+			}).join("");
 		}).join("");
 		this.table.innerHTML = `
 			<div class="ia-table-toolbar ia-progress-matrix-toolbar">
 				<div class="ia-table-count">${injection_aps.ui.escape(this.getProgressRowRangeLabel())}</div>
+				<div class="ia-progress-legend" aria-label="${injection_aps.ui.escape(__("Cell color legend", null, "Injection APS"))}">
+					<span class="red">${__("Short / Late", null, "Injection APS")}</span>
+					<span class="yellow">${__("Progress Risk", null, "Injection APS")}</span>
+					<span class="green">${__("Actual / Delivered", null, "Injection APS")}</span>
+				</div>
 				<div class="ia-table-actions">
 					${this.renderProgressToolbar(true)}
 					${injection_aps.ui.icon_button("download", __("Export Excel", null, "Injection APS"), { "data-progress-export": "1" })}
 				</div>
 			</div>
-			<div class="ia-progress-matrix-shell"><table class="ia-progress-matrix"><thead><tr><th class="ia-progress-corner">${__("Customer / Item", null, "Injection APS")}</th>${headers}</tr></thead><tbody>${body}</tbody></table></div>
+			<div class="ia-progress-matrix-shell"><table class="ia-progress-matrix"><thead><tr><th class="ia-progress-corner">${__("Customer / Item", null, "Injection APS")}</th><th class="ia-progress-layer-corner">${__("Progress Layer", null, "Injection APS")}</th>${headers}</tr></thead><tbody>${body}</tbody></table></div>
 		`;
 		this.bindProgressToolbar();
-		this.table.querySelectorAll("[data-progress-cell]").forEach((button) => button.addEventListener("click", () => this.openProgressCell(button.dataset.progressIdentity || "", button.dataset.progressScheduleItem || "", button.dataset.progressDate)));
+		this.table.querySelectorAll("[data-progress-cell]").forEach((button) => button.addEventListener("click", () => this.openMatrixCell(Number(button.dataset.progressRow || 0), button.dataset.progressDate, button.dataset.progressLayer)));
 	}
 
-	renderMatrixCell(row, dateValue, cell) {
-		if (!cell) return `<td class="ia-progress-cell empty"></td>`;
-		const layers = [
-			["current_plan_qty", __("Current Plan", null, "Injection APS")],
-			["actual_good_qty", __("Actual Good", null, "Injection APS")],
-			["delivered_qty", __("Delivered", null, "Injection APS")],
-			["shortage_qty", __("Shortage", null, "Injection APS"), Number(cell.shortage_qty || 0) > 0 ? "danger" : ""],
+	getMatrixLayers() {
+		return [
+			{ key: "schedule", label: __("Customer Schedule", null, "Injection APS"), fields: [["schedule_qty", __("Schedule Qty")], ["stock_covered_qty", __("Stock Covered")], ["shortage_qty", __("Shortage", null, "Injection APS"), "danger"]] },
+			{ key: "plan", label: __("APS Plan", null, "Injection APS"), fields: [["current_plan_qty", __("Current Plan", null, "Injection APS")], ["original_plan_qty", __("Original Plan", null, "Injection APS")], ["forecast_qty", __("Forecast", null, "Injection APS")], ["recovery_qty", __("Recovery", null, "Injection APS")]] },
+			{ key: "actual", label: __("Actual Inbound", null, "Injection APS"), fields: [["actual_good_qty", __("Actual Good", null, "Injection APS")], ["actual_scrap_qty", __("Scrap", null, "Injection APS"), "warning"]] },
+			{ key: "delivery", label: __("Delivery", null, "Injection APS"), fields: [["delivered_qty", __("Delivered", null, "Injection APS")], ["delivery_plan_qty", __("Delivery Plan", null, "Injection APS")]] },
 		];
-		const lines = layers.map(([fieldname, label, tone]) => `<span class="${injection_aps.ui.escape(tone || "")}"><b>${injection_aps.ui.escape(label)}</b> ${injection_aps.ui.escape(injection_aps.ui.format_number(cell[fieldname] || 0))}</span>`).join("");
-		return `<td class="ia-progress-cell ${injection_aps.ui.escape(row.status_tone || "gray")}"><button type="button" data-progress-cell="1" data-progress-identity="${injection_aps.ui.escape(row.demand_identity || "")}" data-progress-schedule-item="${injection_aps.ui.escape(row.schedule_item || "")}" data-progress-date="${injection_aps.ui.escape(dateValue)}" title="${injection_aps.ui.escape(__("Open source documents for this date cell.", null, "Injection APS"))}">${lines}</button></td>`;
 	}
 
-	async openProgressCell(demandIdentity, scheduleItem, dateValue) {
-		const detail = await injection_aps.ui.xcall({ message: __("Loading progress lineage...", null, "Injection APS"), feedback_target: this.feedback }, "injection_aps.api.app.get_progress_cell_drilldown", {
-			date_value: dateValue,
-			demand_identity: demandIdentity || undefined,
-			schedule_item: scheduleItem || undefined,
-			run_name: this.runField.get_value() || undefined,
+	renderMatrixLayerCell(row, dateValue, cell, layer) {
+		if (!cell) return `<td class="ia-progress-cell empty"></td>`;
+		const visibleFields = layer.fields.filter(([fieldname]) => Math.abs(Number(cell[fieldname] || 0)) > 1e-9);
+		const alerts = (cell.alerts || []).filter((alertRow) => alertRow.layer === layer.key);
+		const reasons = [
+			...(row.events || []).filter((event) => event.date === dateValue && layer.fields.some(([fieldname]) => fieldname === event.layer) && event.reason).map((event) => event.reason),
+			...alerts.map((alertRow) => alertRow.reason),
+		];
+		if (!visibleFields.length && !reasons.length) return `<td class="ia-progress-cell empty"></td>`;
+		const lines = visibleFields.map(([fieldname, label, tone]) => `<span class="${injection_aps.ui.escape(tone || "")}"><b>${injection_aps.ui.escape(label)}</b><strong>${injection_aps.ui.escape(injection_aps.ui.format_number(cell[fieldname] || 0))}</strong></span>`).join("");
+		const reason = [...new Set(reasons)].join(" ");
+		const alert = reason ? `<span class="ia-progress-cell-alert" aria-hidden="true">!</span>` : "";
+		const title = reason || __("Open source documents for this date cell.", null, "Injection APS");
+		const tone = this.getMatrixCellTone(cell, layer, alerts);
+		const quantityLabel = visibleFields.length
+			? visibleFields.map(([fieldname, label]) => `${label} ${injection_aps.ui.format_number(cell[fieldname] || 0)}`).join(", ")
+			: __("No quantity", null, "Injection APS");
+		const ariaLabel = [row.customer, row.item_code, layer.label, dateValue, quantityLabel, reason].filter(Boolean).join(" · ");
+		return `<td class="ia-progress-cell ${injection_aps.ui.escape(tone)}"><button type="button" data-progress-cell="1" data-progress-row="${Number(row._row_no || 0)}" data-progress-date="${injection_aps.ui.escape(dateValue)}" data-progress-layer="${injection_aps.ui.escape(layer.key)}" title="${injection_aps.ui.escape(title)}" aria-label="${injection_aps.ui.escape(ariaLabel)}">${alert}${lines}</button></td>`;
+	}
+
+	getMatrixCellTone(cell, layer, alerts) {
+		if (alerts.some((row) => row.tone === "red")) return "red";
+		if (alerts.length || (layer.key === "actual" && Number(cell.actual_scrap_qty || 0) > 0)) return "yellow";
+		if (layer.key === "delivery" && Number(cell.delivered_qty || 0) > 0) return "green";
+		if (layer.key === "actual" && Number(cell.actual_good_qty || 0) > 0) return "green";
+		if (layer.key === "plan") return "blue";
+		return "gray";
+	}
+
+	openMatrixCell(rowNumber, dateValue, layerKey) {
+		const row = this.rows.find((candidate) => Number(candidate._row_no || 0) === rowNumber);
+		const layer = this.getMatrixLayers().find((candidate) => candidate.key === layerKey);
+		if (!row || !layer) return;
+		const events = (row.events || []).filter((event) => event.date === dateValue && layer.fields.some(([fieldname]) => fieldname === event.layer));
+		const cell = (row.cells || {})[dateValue] || {};
+		const quantities = layer.fields
+			.filter(([fieldname]) => Math.abs(Number(cell[fieldname] || 0)) > 1e-9)
+			.map(([fieldname, label]) => [label, injection_aps.ui.escape(injection_aps.ui.format_number(cell[fieldname] || 0))]);
+		const reasons = [...new Set([
+			...events.map((event) => event.reason),
+			...(cell.alerts || []).filter((alertRow) => alertRow.layer === layerKey).map((alertRow) => alertRow.reason),
+		].filter(Boolean))];
+		const sources = [];
+		const seen = new Set();
+		events.flatMap((event) => event.sources || []).forEach((source) => {
+			const key = `${source.doctype}|${source.name}`;
+			if (!seen.has(key)) {
+				seen.add(key);
+				sources.push(source);
+			}
 		});
-		if (!detail) return;
-		const cell = detail.cell || {};
-		const quantities = Object.entries(cell).filter(([key, value]) => key.endsWith("_qty") && Math.abs(Number(value || 0)) > 1e-9).map(([key, value]) => [injection_aps.ui.translate(key.replaceAll("_", " ")), injection_aps.ui.escape(injection_aps.ui.format_number(value))]);
-		const html = `<div style="display:grid;gap:10px;">${this.detailSection(__("Date Cell", null, "Injection APS"), [[__("Date", null, "Injection APS"), injection_aps.ui.escape(injection_aps.ui.format_date(dateValue))], ...quantities])}${this.detailSection(__("Source Documents", null, "Injection APS"), [[__("Documents", null, "Injection APS"), this.sourceDocumentsHtml(detail.source_documents || [])]])}</div>`;
-		injection_aps.ui.open_drawer(__("Progress Cell Drilldown", null, "Injection APS"), [demandIdentity, dateValue].filter(Boolean).join(" · "), html);
+		const entries = [[__("Date", null, "Injection APS"), injection_aps.ui.escape(injection_aps.ui.format_date(dateValue))], ...quantities];
+		if (reasons.length) entries.push([__("Reason", null, "Injection APS"), injection_aps.ui.escape(reasons.join(" "))]);
+		const html = `<div class="ia-progress-cell-detail">${this.detailSection(layer.label, entries)}${this.detailSection(__("Source Documents", null, "Injection APS"), [[__("Documents", null, "Injection APS"), this.sourceDocumentsHtml(sources)]])}</div>`;
+		injection_aps.ui.open_drawer(__("Progress Cell Drilldown", null, "Injection APS"), [row.customer, row.item_code, dateValue].filter(Boolean).join(" · "), html);
 	}
 
 	sourceDocumentsHtml(sources) {

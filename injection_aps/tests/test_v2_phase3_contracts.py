@@ -70,12 +70,14 @@ class TestPhase3Contracts(unittest.TestCase):
 	def test_exclusion_api_requires_approver_and_scoped_resolution(self):
 		with (
 			patch.object(app, "_require_approve_access") as approve,
-			patch.object(app, "_require_scoped_document_access") as scoped,
+			patch.object(app, "_require_derived_run_scope") as require_run,
 			patch.object(app.constraint_resolution, "exclude_commitment_from_release", return_value={"status": "Excluded"}) as service,
 		):
 			result = app.exclude_commitment_from_release("CR-1", "approved exception", "fp-1")
 		approve.assert_called_once_with()
-		scoped.assert_called_once_with("APS Constraint Resolution", "CR-1", ptype="read")
+		require_run.assert_called_once_with(
+			"APS Constraint Resolution", "CR-1", "planning_run", run_ptype="write"
+		)
 		service.assert_called_once_with("CR-1", reason="approved exception", expected_fingerprint="fp-1")
 		self.assertEqual(result["status"], "Excluded")
 
@@ -83,6 +85,7 @@ class TestPhase3Contracts(unittest.TestCase):
 		run = app.frappe._dict(name="RUN-1", capacity_balance_fingerprint="fp-1")
 		with (
 			patch.object(constraint_resolution, "_require_v2"),
+			patch.object(constraint_resolution, "_expire_overrides"),
 			patch.object(constraint_resolution.frappe, "get_doc", return_value=run),
 			patch("injection_aps.services.v2_flags.get_v2_settings", return_value={"enable_aps_v2": 1, "solver_engine": "CP-SAT"}),
 			patch("injection_aps.services.solver_orchestration.analyze_v2_schedule", return_value={"status": "Queued"}) as solver,
@@ -92,6 +95,32 @@ class TestPhase3Contracts(unittest.TestCase):
 		self.assertEqual(result["status"], "Queued")
 		solver.assert_called_once_with("RUN-1", run_in_background=True)
 		legacy.assert_not_called()
+
+	def test_resolution_read_is_side_effect_free_and_projects_expired_override(self):
+		run = app.frappe._dict(name="RUN-1", company="COMPANY-1", capacity_balance_status="Hard Blocked", capacity_balance_fingerprint="FP-1")
+		row = app.frappe._dict(
+			name="CR-1", blocker_policy="Temporary Override", status="Approved",
+			expires_on="2026-01-01 00:00:00", affected_qty=10,
+		)
+		with (
+			patch.object(constraint_resolution, "_require_v2"),
+			patch.object(constraint_resolution, "now_datetime", return_value="2026-09-01 00:00:00"),
+			patch.object(constraint_resolution.frappe, "get_doc", return_value=run),
+			patch.object(constraint_resolution.frappe, "get_all", return_value=[row]),
+			patch.object(constraint_resolution, "_expire_overrides") as expire,
+		):
+			response = constraint_resolution.get_constraint_resolutions("RUN-1")
+		expire.assert_not_called()
+		self.assertEqual(response["rows"][0]["status"], "Expired")
+
+	def test_constraint_quantity_falls_back_to_unscheduled_result_quantity(self):
+		self.assertEqual(
+			constraint_resolution._affected_blocker_qty(
+				{"planned_qty": 0},
+				{"planned_qty": 1000, "unscheduled_qty": 902, "critical_unplanned_qty": 902},
+			),
+			902,
+		)
 
 
 if __name__ == "__main__":

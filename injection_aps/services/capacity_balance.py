@@ -1949,22 +1949,6 @@ def analyze_capacity_balance(run_name: str, persist: bool = True) -> dict[str, A
 		result_rows,
 		cross_result_rows,
 	)
-	if v2_enabled:
-		analysis["excluded_demands"] = [
-			{
-				"result": row.get("result"), "segment": row.get("segment"),
-				"planned_qty": max(flt(row.get("qty")), 0), "status": "Excluded",
-			}
-			for row in excluded_demands
-		]
-		analysis["approved_overrides"] = constraint_resolution.apply_approved_overrides_to_analysis(
-			run_name, analysis
-		)
-		horizon_status.classify_v2_analysis(
-			analysis,
-			optional_admission_qty=flt(run_doc.get("total_selected_p1_qty")) + flt(run_doc.get("total_selected_p2_qty")),
-			excluded_qty=sum(max(flt(row.get("qty")), 0) for row in excluded_demands),
-		)
 	source_snapshot = _build_source_snapshot(
 		run_doc,
 		result_rows,
@@ -1977,6 +1961,28 @@ def analyze_capacity_balance(run_name: str, persist: bool = True) -> dict[str, A
 		high_cancellation_risk_percent=high_cancellation_risk_percent,
 		finished_goods_stock_by_item=finished_goods_stock_by_item,
 	)
+	if v2_enabled:
+		analysis["excluded_demands"] = [
+			{
+				"result": row.get("result"), "segment": row.get("segment"),
+				"planned_qty": max(flt(row.get("qty")), 0), "status": "Excluded",
+			}
+			for row in excluded_demands
+		]
+		optional_admission_qty = flt(run_doc.get("total_selected_p1_qty")) + flt(run_doc.get("total_selected_p2_qty"))
+		excluded_qty = sum(max(flt(row.get("qty")), 0) for row in excluded_demands)
+		horizon_status.classify_v2_analysis(
+			analysis,
+			optional_admission_qty=optional_admission_qty,
+			excluded_qty=excluded_qty,
+		)
+		analysis["approved_overrides"] = _apply_approved_override_chain(
+			run_name,
+			analysis,
+			source_snapshot=source_snapshot,
+			optional_admission_qty=optional_admission_qty,
+			excluded_qty=excluded_qty,
+		)
 	analysis["run"] = run_name
 	analysis["source_fingerprint"] = fingerprint(source_snapshot)
 	analysis["analysis_fingerprint"] = fingerprint(
@@ -1992,6 +1998,48 @@ def analyze_capacity_balance(run_name: str, persist: bool = True) -> dict[str, A
 		if v2_enabled:
 			constraint_resolution.sync_from_analysis(run_doc, analysis)
 	return analysis
+
+
+def _apply_approved_override_chain(
+	run_name: str,
+	analysis: dict[str, Any],
+	*,
+	source_snapshot: dict[str, Any],
+	optional_admission_qty: float,
+	excluded_qty: float,
+) -> list[dict[str, Any]]:
+	from injection_aps.services import constraint_resolution, horizon_status
+
+	used: list[dict[str, Any]] = []
+	seen_fingerprints = set()
+	while True:
+		current_fingerprint = fingerprint(
+			{
+				"run": run_name,
+				"source": source_snapshot,
+				"demands": analysis.get("demands"),
+				"buckets": analysis.get("buckets"),
+			}
+		)
+		if current_fingerprint in seen_fingerprints:
+			frappe.throw(
+				_("Temporary override fingerprint chain is cyclic. Analyze again after correcting the resolution records.", context="Injection APS"),
+				frappe.ValidationError,
+			)
+		seen_fingerprints.add(current_fingerprint)
+		current = constraint_resolution.apply_approved_overrides_to_analysis(
+			run_name,
+			analysis,
+			expected_input_fingerprint=current_fingerprint,
+		)
+		if not current:
+			return used
+		used.extend(current)
+		horizon_status.classify_v2_analysis(
+			analysis,
+			optional_admission_qty=optional_admission_qty,
+			excluded_qty=excluded_qty,
+		)
 
 
 def _remaining_finished_goods_stock_claim(result: dict[str, Any] | None) -> float:
@@ -2080,7 +2128,9 @@ def _missing_net_requirement_evidence_results(
 	return sorted(
 		row.get("name")
 		for row in result_rows.values()
-		if row.get("name") and not cint(row.get("net_requirement_evidence_complete"))
+		if row.get("name")
+		and not row.get("bom_demand_key")
+		and not cint(row.get("net_requirement_evidence_complete"))
 	)
 
 
@@ -2090,15 +2140,52 @@ def _assert_net_requirement_evidence_complete(
 	operation: str,
 ) -> None:
 	missing = _missing_net_requirement_evidence_results(result_rows)
-	if not missing:
-		return
-	frappe.throw(
-		_(
-			"APS Result(s) {0} no longer have their original Net Requirement and their historical stock evidence is incomplete. Rebuild net requirements and recalculate the affected run before {1}.",
-			context="Injection APS",
-		).format(", ".join(missing), operation),
-		frappe.ValidationError,
-	)
+	if missing:
+		frappe.throw(
+			_(
+				"APS Result(s) {0} no longer have their original Net Requirement and their historical stock evidence is incomplete. Rebuild net requirements and recalculate the affected run before {1}.",
+				context="Injection APS",
+			).format(", ".join(missing), operation),
+			frappe.ValidationError,
+		)
+	_assert_bom_result_evidence_complete(result_rows, operation=operation)
+
+
+def _assert_bom_result_evidence_complete(
+	result_rows: dict[str, dict[str, Any]],
+	*,
+	operation: str,
+) -> None:
+	from injection_aps.services import bom_planning
+
+	by_run = defaultdict(list)
+	missing_run = []
+	for row in result_rows.values():
+		if not row.get("bom_demand_key") or cint(row.get("exclude_from_release")):
+			continue
+		run_name = row.get("planning_run") or row.get("reservation_run")
+		if not run_name:
+			missing_run.append(row.get("name") or "<unnamed>")
+			continue
+		by_run[run_name].append(row)
+	if missing_run:
+		frappe.throw(
+			_("BOM-derived APS Result(s) {0} have no Planning Run lineage before {1}.").format(
+				", ".join(sorted(missing_run)), operation
+			),
+			frappe.ValidationError,
+		)
+	for run_name, rows in sorted(by_run.items()):
+		evidence = bom_planning.validate_derived_result_evidence(run_name, rows)
+		if evidence["valid"]:
+			continue
+		details = "; ".join(row["message"] for row in evidence["errors"][:5])
+		frappe.throw(
+			_("BOM-derived APS Result evidence is invalid before {0}: {1}").format(
+				operation, details
+			),
+			frappe.ValidationError,
+		)
 
 
 def _get_physical_finished_goods_stock_map(
@@ -2988,7 +3075,11 @@ def _load_capacity_analysis(run_doc) -> dict[str, Any]:
 	return analysis
 
 
-def invalidate_capacity_balance(run_name: str) -> None:
+def invalidate_capacity_balance(
+	run_name: str,
+	*,
+	preserve_constraint_resolutions: bool = False,
+) -> None:
 	"""Invalidate every approval artefact that belongs to an older plan state."""
 	if not run_name:
 		return
@@ -3009,6 +3100,18 @@ def invalidate_capacity_balance(run_name: str) -> None:
 		},
 		update_modified=False,
 	)
+	if (
+		not preserve_constraint_resolutions
+		and frappe.db.exists("DocType", "APS Constraint Resolution")
+	):
+		frappe.db.sql(
+			"""
+			update `tabAPS Constraint Resolution`
+			set status = 'Superseded', resolved_by = %s, resolved_on = %s
+			where planning_run = %s and status not in ('Superseded', 'Excluded')
+			""",
+			(frappe.session.user, now_datetime(), run_name),
+		)
 	frappe.db.sql(
 		"""
 		update `tabAPS Schedule Result`
@@ -3615,6 +3718,12 @@ def _get_run_balance_rows(
 			"company",
 			"plant_floor",
 			"net_requirement",
+			"demand_commitment",
+			"bom_demand_key",
+			"selected_bom",
+			"selected_bom_fingerprint",
+			"solver_decision_json",
+			"exclude_from_release",
 			"customer",
 			"sales_order",
 			"sales_order_item",
@@ -3746,6 +3855,12 @@ def _get_locked_run_balance_rows(
 			res.company,
 			res.plant_floor,
 			res.net_requirement,
+			res.demand_commitment,
+			res.bom_demand_key,
+			res.selected_bom,
+			res.selected_bom_fingerprint,
+			res.solver_decision_json,
+			res.exclude_from_release,
 			res.customer,
 			res.sales_order,
 			res.sales_order_item,
@@ -3891,9 +4006,16 @@ def _get_cross_run_applied_commitments(run_doc, *, lock_rows: bool = False):
 	result_query = """
 		select
 			res.name,
+			res.planning_run,
 			res.company,
 			res.plant_floor,
 			res.net_requirement,
+			res.demand_commitment,
+			res.bom_demand_key,
+			res.selected_bom,
+			res.selected_bom_fingerprint,
+			res.solver_decision_json,
+			res.exclude_from_release,
 			res.customer,
 			res.sales_order,
 			res.sales_order_item,
