@@ -1994,6 +1994,35 @@ class TestImportAndTransactionGuards(unittest.TestCase):
 				)
 		self.assertEqual(production_sync.call_count, 2)
 
+	def test_initial_schedule_replays_tracked_unallocated_delivery(self):
+		database = MagicMock()
+		database.exists.return_value = False
+		with (
+			patch.object(planning.frappe, "db", database),
+			patch(
+				"injection_aps.services.delivery_sync.sync_delivery_allocations",
+				return_value={},
+			) as delivery_sync,
+		):
+			counts = planning._rebuild_schedule_execution_allocations(
+				previous_item_rows=[],
+				new_item_rows=[{
+					"name": "NEW-1",
+					"parent": "SCHEDULE-1",
+					"company": "COMPANY-1",
+					"customer": "CUSTOMER-1",
+					"item_code": "ITEM-1",
+				}],
+				diff_rows=[],
+			)
+		delivery_sync.assert_called_once_with(
+			company="COMPANY-1",
+			customer="CUSTOMER-1",
+			item_codes=["ITEM-1"],
+			target_remap={},
+		)
+		self.assertEqual(counts["delivery_syncs"], 1)
+
 	def test_result_baseline_adds_run_to_production_resync_before_ledger_exists(self):
 		result = frappe._dict(
 			name="RESULT-BASELINE",

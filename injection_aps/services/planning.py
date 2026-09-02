@@ -2015,12 +2015,11 @@ def _apply_customer_delivery_schedule_import(
 	)
 	schedule.flags.aps_schedule_import_transition = True
 	schedule.insert(ignore_permissions=True)
-	if previous_schedule_items:
-		_remap_schedule_execution_allocations(
-			previous_item_rows=previous_schedule_items,
-			new_item_rows=[row.as_dict() for row in schedule.items],
-			diff_rows=preview.get("rows") or [],
-		)
+	_remap_schedule_execution_allocations(
+		previous_item_rows=previous_schedule_items,
+		new_item_rows=[row.as_dict() for row in schedule.items],
+		diff_rows=preview.get("rows") or [],
+	)
 	frappe.db.set_value("APS Schedule Import Batch", import_batch.name, "schedule_reference", schedule.name)
 	_record_schedule_deltas(
 		import_batch=import_batch.name,
@@ -2137,11 +2136,8 @@ def _rebuild_schedule_execution_allocations(
 		"delivery_syncs": 0,
 		"production_syncs": 0,
 	}
-	if not old_item_names:
-		return counts
-
 	production_runs = []
-	if frappe.db.exists("DocType", "APS Production Allocation"):
+	if old_item_names and frappe.db.exists("DocType", "APS Production Allocation"):
 		production_rows = frappe.get_all(
 			"APS Production Allocation",
 			filters={"customer_schedule_item": ("in", old_item_names)},
@@ -2151,7 +2147,7 @@ def _rebuild_schedule_execution_allocations(
 		production_runs = sorted({row.get("planning_run") for row in production_rows if row.get("planning_run")})
 
 	delivery_rows = []
-	if frappe.db.exists("DocType", "APS Delivery Allocation"):
+	if old_item_names and frappe.db.exists("DocType", "APS Delivery Allocation"):
 		delivery_rows = frappe.get_all(
 			"APS Delivery Allocation",
 			filters={"customer_schedule_item": ("in", old_item_names)},
@@ -2161,7 +2157,7 @@ def _rebuild_schedule_execution_allocations(
 
 	direct_rows = []
 	direct_link_updates = []
-	if frappe.db.exists("DocType", "Delivery Note Item") and frappe.get_meta("Delivery Note Item").has_field(
+	if old_item_names and frappe.db.exists("DocType", "Delivery Note Item") and frappe.get_meta("Delivery Note Item").has_field(
 		"custom_aps_customer_schedule_item"
 	):
 		direct_rows = frappe.get_all(

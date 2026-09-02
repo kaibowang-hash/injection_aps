@@ -75,7 +75,7 @@ class InjectionAPSCustomerScheduleProgress {
 			fieldtype: "Select",
 			fieldname: "status",
 			label: __("Status", null, "Injection APS"),
-			options: ["", "Delivered", "Stock Covered", "On Track", "At Risk", "Late", "Uncovered"].join("\n"),
+			options: ["", "Delivered", "Stock Covered", "On Track", "At Risk", "Late", "Uncovered", "No Formal Plan"].join("\n"),
 			context: "Injection APS",
 			change: () => this.refreshFromFilter(),
 		});
@@ -137,7 +137,7 @@ class InjectionAPSCustomerScheduleProgress {
 			const matrixMode = this.v2Enabled && requestedView === "Date Matrix";
 			this.rows = (this.data.rows || []).map((row, index) => Object.assign({ _row_no: index + 1 }, row));
 			if (this.v2Enabled) {
-				this.renderProjectionStatus(this.data.projection || {});
+				this.renderProjectionStatus(this.data.projection || {}, this.data.summary || {});
 				this.renderV2Summary(this.data.summary || {});
 				if (matrixMode) {
 					this.renderMatrix(this.rows, this.data.matrix || {});
@@ -229,17 +229,21 @@ class InjectionAPSCustomerScheduleProgress {
 		]);
 	}
 
-	renderProjectionStatus(projection) {
+	renderProjectionStatus(projection, summary = {}) {
 		const singleRun = Number(projection.single_run_view || 0) === 1;
-		const toneClass = singleRun ? "warning" : "success";
+		const projectionAvailable = projection.available == null || Number(projection.available) === 1;
+		const toneClass = !projectionAvailable ? "warning" : (singleRun ? "warning" : "success");
 		const runNames = projection.run_names || [];
 		const visibleRunNames = runNames.slice(0, 3);
 		const runSummary = visibleRunNames.length
 			? `${visibleRunNames.join(", ")}${runNames.length > visibleRunNames.length ? ` +${runNames.length - visibleRunNames.length}` : ""}`
 			: "";
-		const guidance = singleRun
+		const guidance = !projectionAvailable
+			? __("Select a Trial Run to inspect it. Until a Run is selected, plan and allocated-stock quantities are not projected.", null, "Injection APS")
+			: singleRun
 			? __("Clear APS Run to return to the effective cross-Run view.", null, "Injection APS")
 			: __("Select a Run only when an explicit single-Run audit is required.", null, "Injection APS");
+		const unprojectedQty = Number(summary.unprojected_open_qty || 0);
 		this.projectionBanner.innerHTML = `
 			<div class="ia-progress-projection ${toneClass}" role="status">
 				<div class="ia-progress-projection-copy">
@@ -248,6 +252,7 @@ class InjectionAPSCustomerScheduleProgress {
 				</div>
 				<div class="ia-progress-projection-meta">
 					<span>${injection_aps.ui.escape(guidance)}</span>
+					${unprojectedQty > 0 ? `<span>${__("Unfulfilled Qty", null, "Injection APS")}: ${injection_aps.ui.escape(injection_aps.ui.format_number(unprojectedQty))}</span>` : ""}
 					${runSummary ? `<span title="${injection_aps.ui.escape(runNames.join(", "))}">${__("APS Runs", null, "Injection APS")}: ${injection_aps.ui.escape(runSummary)}</span>` : ""}
 				</div>
 			</div>
@@ -265,23 +270,24 @@ class InjectionAPSCustomerScheduleProgress {
 			this.progressSummaryGroup(__("Current Page Demand", null, "Injection APS"), [
 				[__("Rows"), summary.rows || 0],
 				[__("Schedule Qty"), summary.schedule_qty || 0],
+				[__("Unfulfilled Qty", null, "Injection APS"), summary.open_demand_qty || 0],
 			]),
 			this.progressSummaryGroup(__("Plan", null, "Injection APS"), [
 				[__("Original Plan", null, "Injection APS"), summary.original_plan_qty || 0],
 				[__("Current Plan", null, "Injection APS"), summary.current_plan_qty || 0, "strong"],
 				[__("Forecast", null, "Injection APS"), summary.forecast_qty || 0],
 			]),
-			this.progressSummaryGroup(__("Execution", null, "Injection APS"), [
+			this.progressSummaryGroup(__("APS Attributed Production", null, "Injection APS"), [
 				[__("Actual Good", null, "Injection APS"), summary.actual_good_qty || 0, "strong"],
 				[__("Scrap", null, "Injection APS"), summary.actual_scrap_qty || 0, Number(summary.actual_scrap_qty || 0) > 0 ? "warning" : ""],
 			]),
-			this.progressSummaryGroup(__("Delivery", null, "Injection APS"), [
+			this.progressSummaryGroup(__("Allocated Delivery", null, "Injection APS"), [
 				[__("Delivery Plan", null, "Injection APS"), summary.delivery_plan_qty || 0],
 				[__("Delivered", null, "Injection APS"), summary.delivered_qty || 0, "strong"],
 			]),
 			this.progressSummaryGroup(__("Coverage", null, "Injection APS"), [
-				[__("Stock Covered"), summary.stock_covered_qty || 0],
-				[__("Shortage", null, "Injection APS"), summary.shortage_qty || 0, Number(summary.shortage_qty || 0) > 0 ? "danger" : ""],
+				[__("Allocated Stock", null, "Injection APS"), summary.stock_covered_qty || 0],
+				[__("APS Unscheduled", null, "Injection APS"), summary.shortage_qty || 0, Number(summary.shortage_qty || 0) > 0 ? "danger" : ""],
 				[__("Recovery", null, "Injection APS"), summary.recovery_qty || 0],
 			]),
 			this.progressSummaryGroup(__("Current Page Status", null, "Injection APS"), [
@@ -362,8 +368,8 @@ class InjectionAPSCustomerScheduleProgress {
 			{ label: __("Delivery Date", null, "Injection APS"), fieldname: "schedule_date", className: "ia-progress-col-date" },
 			{ label: __("Schedule Qty"), fieldname: "schedule_qty", fieldtype: "Float", className: "ia-progress-col-qty" },
 			{ label: __("Plan", null, "Injection APS"), fieldname: "plan_layers", className: "ia-progress-col-metrics" },
-			{ label: __("Execution", null, "Injection APS"), fieldname: "actual_layers", className: "ia-progress-col-metrics" },
-			{ label: __("Delivery", null, "Injection APS"), fieldname: "delivery_layers", className: "ia-progress-col-metrics" },
+			{ label: __("APS Attributed Production", null, "Injection APS"), fieldname: "actual_layers", className: "ia-progress-col-metrics" },
+			{ label: __("Allocated Delivery", null, "Injection APS"), fieldname: "delivery_layers", className: "ia-progress-col-metrics" },
 			{ label: __("Coverage", null, "Injection APS"), fieldname: "coverage_layers", className: "ia-progress-col-metrics" },
 			{ label: __("Status", null, "Injection APS"), fieldname: "v2_status", className: "ia-progress-col-status" },
 			{ label: __("Actions", null, "Injection APS"), fieldname: "v2_actions", exportable: false, className: "ia-progress-col-actions" },
@@ -398,7 +404,7 @@ class InjectionAPSCustomerScheduleProgress {
 		if (column.fieldname === "plan_layers") return this.progressMetricList([[__("Current Plan", null, "Injection APS"), row.current_plan_qty, "strong"], [__("Forecast", null, "Injection APS"), row.forecast_qty], [__("Original Plan", null, "Injection APS"), row.original_plan_qty]]);
 		if (column.fieldname === "actual_layers") return this.progressMetricList([[__("Actual Good", null, "Injection APS"), row.actual_good_qty, "strong"], [__("Scrap", null, "Injection APS"), row.actual_scrap_qty, Number(row.actual_scrap_qty || 0) > 0 ? "warning" : ""]]);
 		if (column.fieldname === "delivery_layers") return this.progressMetricList([[__("Delivery Plan", null, "Injection APS"), row.delivery_plan_qty], [__("Delivered", null, "Injection APS"), row.delivered_qty, "strong"]]);
-		if (column.fieldname === "coverage_layers") return `${this.progressMetricList([[__("Stock Covered"), row.stock_covered_qty], [__("Shortage", null, "Injection APS"), row.shortage_qty, Number(row.shortage_qty || 0) > 0 ? "danger" : ""], [__("Recovery", null, "Injection APS"), row.recovery_qty]])}${row.recovery_completion_time ? `<div class="ia-progress-recovery-time">${injection_aps.ui.escape(injection_aps.ui.format_datetime(row.recovery_completion_time))}</div>` : ""}`;
+		if (column.fieldname === "coverage_layers") return `${this.progressMetricList([[__("Allocated Stock", null, "Injection APS"), row.stock_covered_qty], [__("APS Unscheduled", null, "Injection APS"), row.shortage_qty, Number(row.shortage_qty || 0) > 0 ? "danger" : ""], [__("Recovery", null, "Injection APS"), row.recovery_qty]])}${row.recovery_completion_time ? `<div class="ia-progress-recovery-time">${injection_aps.ui.escape(injection_aps.ui.format_datetime(row.recovery_completion_time))}</div>` : ""}`;
 		if (column.fieldname === "v2_status") return `${injection_aps.ui.pill(injection_aps.ui.translate(row.status || ""), row.status_tone || "gray")}<div class="ia-muted" title="${injection_aps.ui.escape(injection_aps.ui.translate(row.reason || ""))}">${injection_aps.ui.escape(injection_aps.ui.shorten(injection_aps.ui.translate(row.reason || ""), 64))}</div>`;
 		if (column.fieldname === "v2_actions") return `<button type="button" class="btn btn-xs btn-default" data-v2-progress-details="${Number(row._row_no || 0)}">${__("View Details", null, "Injection APS")}</button>`;
 		return injection_aps.ui.escape(value == null ? "" : value);
@@ -419,8 +425,8 @@ class InjectionAPSCustomerScheduleProgress {
 			{ label: __("Scrap", null, "Injection APS"), fieldname: "actual_scrap_qty", fieldtype: "Float" },
 			{ label: __("Delivery Plan", null, "Injection APS"), fieldname: "delivery_plan_qty", fieldtype: "Float" },
 			{ label: __("Delivered", null, "Injection APS"), fieldname: "delivered_qty", fieldtype: "Float" },
-			{ label: __("Stock Covered"), fieldname: "stock_covered_qty", fieldtype: "Float" },
-			{ label: __("Shortage", null, "Injection APS"), fieldname: "shortage_qty", fieldtype: "Float" },
+			{ label: __("Allocated Stock", null, "Injection APS"), fieldname: "stock_covered_qty", fieldtype: "Float" },
+			{ label: __("APS Unscheduled", null, "Injection APS"), fieldname: "shortage_qty", fieldtype: "Float" },
 			{ label: __("Recovery", null, "Injection APS"), fieldname: "recovery_qty", fieldtype: "Float" },
 			{ label: __("Status", null, "Injection APS"), fieldname: "status" },
 			{ label: __("Reason", null, "Injection APS"), fieldname: "reason" },
@@ -475,10 +481,10 @@ class InjectionAPSCustomerScheduleProgress {
 
 	getMatrixLayers() {
 		return [
-			{ key: "schedule", label: __("Customer Schedule", null, "Injection APS"), fields: [["schedule_qty", __("Schedule Qty")], ["stock_covered_qty", __("Stock Covered")], ["shortage_qty", __("Shortage", null, "Injection APS"), "danger"]] },
+			{ key: "schedule", label: __("Customer Schedule", null, "Injection APS"), fields: [["schedule_qty", __("Schedule Qty")], ["stock_covered_qty", __("Allocated Stock", null, "Injection APS")], ["shortage_qty", __("APS Unscheduled", null, "Injection APS"), "danger"]] },
 			{ key: "plan", label: __("APS Plan", null, "Injection APS"), fields: [["current_plan_qty", __("Current Plan", null, "Injection APS")], ["original_plan_qty", __("Original Plan", null, "Injection APS")], ["forecast_qty", __("Forecast", null, "Injection APS")], ["recovery_qty", __("Recovery", null, "Injection APS")]] },
-			{ key: "actual", label: __("Actual Inbound", null, "Injection APS"), fields: [["actual_good_qty", __("Actual Good", null, "Injection APS")], ["actual_scrap_qty", __("Scrap", null, "Injection APS"), "warning"]] },
-			{ key: "delivery", label: __("Delivery", null, "Injection APS"), fields: [["delivered_qty", __("Delivered", null, "Injection APS")], ["delivery_plan_qty", __("Delivery Plan", null, "Injection APS")]] },
+			{ key: "actual", label: __("APS Attributed Inbound", null, "Injection APS"), fields: [["actual_good_qty", __("Actual Good", null, "Injection APS")], ["actual_scrap_qty", __("Scrap", null, "Injection APS"), "warning"]] },
+			{ key: "delivery", label: __("Allocated Delivery", null, "Injection APS"), fields: [["delivered_qty", __("Delivered", null, "Injection APS")], ["delivery_plan_qty", __("Delivery Plan", null, "Injection APS")]] },
 		];
 	}
 
@@ -551,7 +557,7 @@ class InjectionAPSCustomerScheduleProgress {
 		const html = `<div style="display:grid;gap:10px;">
 			${this.detailSection(__("Demand Identity", null, "Injection APS"), [[__("Demand Identity", null, "Injection APS"), this.safeDocLink("APS Demand Identity", row.demand_identity)], [__("Customer", null, "Injection APS"), this.safeDocLink("Customer", row.customer)], [__("Item", null, "Injection APS"), injection_aps.ui.item_identity(row)], [__("Delivery Date", null, "Injection APS"), injection_aps.ui.escape(injection_aps.ui.format_date(row.schedule_date))], [__("Schedule Qty"), number(row.schedule_qty)]])}
 			${this.detailSection(__("Original / Current / Forecast / Actual", null, "Injection APS"), [[__("Original Plan", null, "Injection APS"), `${number(row.original_plan_qty)} / ${injection_aps.ui.escape(injection_aps.ui.format_datetime(row.original_completion_time))}`], [__("Current Plan", null, "Injection APS"), `${number(row.current_plan_qty)} / ${injection_aps.ui.escape(injection_aps.ui.format_datetime(row.current_completion_time))}`], [__("Forecast", null, "Injection APS"), `${number(row.forecast_qty)} / ${injection_aps.ui.escape(injection_aps.ui.format_datetime(row.forecast_completion_time))}`], [__("Actual Good / Scrap", null, "Injection APS"), `${number(row.actual_good_qty)} / ${number(row.actual_scrap_qty)}`]])}
-			${this.detailSection(__("Delivery and Recovery", null, "Injection APS"), [[__("Delivery Plan / Delivered", null, "Injection APS"), `${number(row.delivery_plan_qty)} / ${number(row.delivered_qty)}`], [__("Stock Covered"), number(row.stock_covered_qty)], [__("Shortage / Recovery", null, "Injection APS"), `${number(row.shortage_qty)} / ${number(row.recovery_qty)}`], [__("Recovery Completion", null, "Injection APS"), injection_aps.ui.escape(injection_aps.ui.format_datetime(row.recovery_completion_time))]])}
+			${this.detailSection(__("Delivery and Recovery", null, "Injection APS"), [[__("Delivery Plan / Delivered", null, "Injection APS"), `${number(row.delivery_plan_qty)} / ${number(row.delivered_qty)}`], [__("Allocated Stock", null, "Injection APS"), number(row.stock_covered_qty)], [__("APS Unscheduled / Recovery", null, "Injection APS"), `${number(row.shortage_qty)} / ${number(row.recovery_qty)}`], [__("Recovery Completion", null, "Injection APS"), injection_aps.ui.escape(injection_aps.ui.format_datetime(row.recovery_completion_time))]])}
 			${this.detailSection(__("Status and Conservation", null, "Injection APS"), [[__("Status", null, "Injection APS"), injection_aps.ui.pill(injection_aps.ui.translate(row.status || ""), row.status_tone || "gray")], [__("Reason", null, "Injection APS"), injection_aps.ui.escape(injection_aps.ui.translate(row.reason || ""))], [__("Conservation Status", null, "Injection APS"), injection_aps.ui.escape(row.conservation_status || "")], [__("Demand / Solver Delta", null, "Injection APS"), `${number(row.demand_conservation_delta)} / ${number(row.solver_partition_delta)}`]])}
 			${this.detailSection(__("Source Documents", null, "Injection APS"), [[__("Documents", null, "Injection APS"), this.sourceDocumentsHtml(row.source_documents || [])]])}
 		</div>`;

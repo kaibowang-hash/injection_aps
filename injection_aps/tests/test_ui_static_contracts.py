@@ -437,7 +437,7 @@ class TestUIStaticContracts(unittest.TestCase):
 	def test_dynamic_select_options_use_app_translation_context(self):
 		contracts = {
 			"injection_aps/page/aps_customer_schedule_progress/aps_customer_schedule_progress.js": (
-				'["", "Delivered", "Stock Covered", "On Track", "At Risk", "Late", "Uncovered"].join("\\n")',
+				'["", "Delivered", "Stock Covered", "On Track", "At Risk", "Late", "Uncovered", "No Formal Plan"].join("\\n")',
 			),
 			"injection_aps/page/aps_change_impact_center/aps_change_impact_center.js": (
 				'options: "\\nDraft\\nAnalyzed\\nPMC Confirmed\\nApproved\\nApplied\\nRejected\\nCancelled"',
@@ -468,6 +468,7 @@ class TestUIStaticContracts(unittest.TestCase):
 		keys = {(row[0], row[2] if len(row) > 2 else "") for row in rows}
 		for value in (
 			"Stock Covered",
+			"No Formal Plan",
 			"At Risk",
 			"Uncovered",
 			"Draft",
